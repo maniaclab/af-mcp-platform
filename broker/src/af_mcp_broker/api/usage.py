@@ -26,7 +26,8 @@ from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import Principal, keycloak_dependency, require_admin
+from af_mcp_broker.identity import keycloak_dependency, require_admin
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 from af_mcp_broker.usage.summary import (
     UsageResponse,

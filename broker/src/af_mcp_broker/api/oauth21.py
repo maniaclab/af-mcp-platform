@@ -16,7 +16,7 @@ from af_mcp_broker.credentials.oauth21 import (
     normalize_token_response,
 )
 from af_mcp_broker.http import get_http_client
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
@@ -30,6 +30,7 @@ from af_mcp_broker.oauth_state import (
     generate_pkce_pair,
     sanitize_return_url,
 )
+from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet

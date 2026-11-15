@@ -15,7 +15,7 @@ from pydantic import SecretStr
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import service as service_module
 from af_mcp_broker.credentials.service import ServiceProvider
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.principal import Principal
 
 
 def _principal() -> Principal:

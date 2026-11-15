@@ -5,7 +5,7 @@ permission check in the authorization middleware, which denies unauthorized
 calls outright and remains authoritative) AND a *model-facing* policy layer --
 guidance the LLM agent itself reads and reasons over. This module builds that
 second layer: a platform preamble plus one policy line per service that
-declares an ``agent_policy`` (mcp/registry.py's ``ServiceSpec.agent_policy``).
+declares an ``agent_policy`` (service_registry.py's ``ServiceSpec.agent_policy``).
 The result is passed as FastMCP's ``instructions`` on the aggregator (see
 mcp/aggregator.py's ``build_aggregator``/``populate_aggregator``), which surface
 it to clients in the MCP ``initialize`` response.
@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
-    from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.service_registry import ServiceRegistry
 
 # The platform preamble: guidance that applies to every call through the
 # gateway, independent of which service is targeted. The deny-is-policy and

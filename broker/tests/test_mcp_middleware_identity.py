@@ -21,6 +21,7 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     AsgiAuthMiddleware,
     IdentityMiddleware,
 )
+from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
@@ -642,12 +643,19 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
 
 
 # ---------------------------------------------------------------------------
-# Maintenance mode enforcement on /mcp (Task C7) -- one check_not_maintenance()
-# call in AsgiAuthMiddleware, right after principal resolution converges for
+# Maintenance mode enforcement on /mcp (Task C7) -- AsgiMaintenanceMiddleware,
+# installed inside AsgiAuthMiddleware so it sees the principal resolved for
 # both JWT and PAT bearers. Fails open on store-unavailability, exactly like
 # /v1's require_not_in_maintenance (test_maintenance_v1_enforcement.py) --
 # same module-level metrics.maintenance_store_unavailable_total counter.
 # ---------------------------------------------------------------------------
+
+
+def _gated(inner: Any, identity_mw: IdentityMiddleware) -> AsgiAuthMiddleware:
+    """Compose the /mcp ASGI stack the way ``build_asgi_middleware`` does: identity outermost, maintenance inside it."""
+    return AsgiAuthMiddleware(
+        AsgiMaintenanceMiddleware(inner, identity_mw), identity_mw
+    )
 
 
 def _store_unavailable_count() -> float:
@@ -689,7 +697,7 @@ async def test_mcp_blocks_non_admin_jwt_during_maintenance(
     )
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = _gated(
         inner,
         IdentityMiddleware(
             settings, principal_cache=principal_cache, maintenance_mode_store=store
@@ -714,7 +722,7 @@ async def test_mcp_blocks_non_admin_pat_during_maintenance(settings):
     )
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = _gated(
         inner,
         IdentityMiddleware(
             settings,
@@ -748,7 +756,7 @@ async def test_mcp_allows_admin_during_maintenance(
     )
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = _gated(
         inner,
         IdentityMiddleware(
             admin_settings,
@@ -775,7 +783,7 @@ async def test_mcp_not_blocked_when_maintenance_disabled(
     store = InMemoryMaintenanceModeStore()  # disabled by default
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = _gated(
         inner,
         IdentityMiddleware(
             settings, principal_cache=principal_cache, maintenance_mode_store=store
@@ -800,7 +808,7 @@ async def test_mcp_non_admin_not_blocked_when_store_unavailable(
     token = sig_key.sign(make_claims())
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = _gated(
         inner,
         IdentityMiddleware(
             settings,
@@ -826,7 +834,7 @@ async def test_mcp_store_unavailable_is_logged_and_shares_v1s_counter(
     token = sig_key.sign(make_claims())
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = _gated(
         inner,
         IdentityMiddleware(
             settings,
@@ -840,6 +848,29 @@ async def test_mcp_store_unavailable_is_logged_and_shares_v1s_counter(
 
     assert _status(messages) == 200
     assert _store_unavailable_count() == before + 1
+
+
+async def test_maintenance_middleware_fails_closed_without_a_stashed_principal(
+    settings,
+):
+    """Installed outside AsgiAuthMiddleware there is no principal to judge;
+    that is a wiring error, never a reason to wave the request through."""
+    inner = _InnerApp()
+    middleware = AsgiMaintenanceMiddleware(inner, IdentityMiddleware(settings))
+
+    with pytest.raises(RuntimeError, match="AsgiAuthMiddleware to run first"):
+        await _run(middleware, _http_scope())
+
+    assert not inner.called
+
+
+async def test_maintenance_middleware_passes_non_http_scopes_through(settings):
+    inner = _InnerApp()
+    middleware = AsgiMaintenanceMiddleware(inner, IdentityMiddleware(settings))
+
+    await _run(middleware, {"type": "lifespan"})
+
+    assert inner.called
 
 
 # ---------------------------------------------------------------------------

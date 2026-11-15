@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from af_mcp_broker.config import Settings
-from af_mcp_broker.mcp.registry import (
-    BUILTIN_SERVICE_NAME,
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
+from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     DISABLED_PERMISSION,
     LINK_IDENTITY_TOOL_NAME,
@@ -192,8 +192,8 @@ def test_registry_self_registers_the_builtin_gateway_service() -> None:
     # Open to any authenticated principal: af_whoami/af_link_identity are the
     # bootstrap methods a caller with zero permissions needs.
     assert spec.required_permission == "__none__"
-    # No per-user credential concept at all -- keeps _service_status
-    # (api/permissions.py) reporting it "available" unconditionally.
+    # No per-user credential concept at all -- keeps service_status
+    # (service_status.py) reporting it "available" unconditionally.
     assert spec.auth_type == "none"
     assert spec in registry.all_services()
 

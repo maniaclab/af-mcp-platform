@@ -11,7 +11,6 @@ from fastmcp import Client, FastMCP
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
@@ -21,6 +20,7 @@ from af_mcp_broker.principal_directory import (
     PrincipalAttributes,
     PrincipalDirectory,
 )
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRecord
 
 if TYPE_CHECKING:

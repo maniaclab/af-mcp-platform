@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import yaml  # type: ignore[import-untyped]
 
 from af_mcp_broker.authorization import DISABLED_PERMISSION
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
@@ -24,10 +25,10 @@ if TYPE_CHECKING:
 # ServiceRegistry.register() below.
 #
 # These names live here rather than in mcp/diagnostics.py itself so that
-# api/permissions.py (which names them in a status_detail sentence -- see
-# _STATUS_DETAILS) and mcp/aggregator.py (which names them in the not-linked
+# service_status.py (which names them in a status_detail sentence -- see
+# STATUS_DETAILS) and mcp/aggregator.py (which names them in the not-linked
 # ToolError text) can import them without importing mcp/diagnostics.py
-# itself, which in turn imports api/permissions.py's _service_status -- that
+# itself, which in turn imports service_status.py's service_status -- that
 # would be a straight import cycle.
 # Elwood v5 / Shannon trust tiers, as defined in docs/architecture.md's
 # "Trust tiers" section: user-tier acts only with per-user credentials;
@@ -38,13 +39,6 @@ TrustTier = Literal["user-tier", "service-tier", "infrastructure-tier"]
 TRUST_TIERS: frozenset[str] = frozenset(get_args(TrustTier))
 
 RESERVED_PREFIX = "af"
-# Default name of the registry's self-registered entry for the broker's own
-# af_* methods (see _builtin_service_spec() below). Configurable per deployment
-# via BUILTIN_SERVICE_NAME (config.py) so a facility can align it with its
-# service-naming convention -- the `<backend>_service` form here. Only the
-# *name* is configurable; the reserved `af` prefix stays fixed because the
-# method wire-names (af_whoami, ...) are built from it.
-BUILTIN_SERVICE_NAME = "gateway_service"
 WHOAMI_TOOL_NAME = f"{RESERVED_PREFIX}_whoami"
 LIST_IDENTITIES_TOOL_NAME = f"{RESERVED_PREFIX}_list_identities"
 LIST_MCP_SERVERS_TOOL_NAME = f"{RESERVED_PREFIX}_list_mcp_servers"
@@ -114,7 +108,7 @@ def namespaced_tool_name(spec: ServiceSpec, native_name: str) -> str:
 
     Mirrors fastmcp's own ``Namespace`` transform (``f"{prefix}_{name}"``,
     applied only when ``apply_namespace`` is true) -- the exact rule
-    aggregator.py's ``fetch_service_tool_listing`` independently replicates
+    backend_client.py's ``fetch_service_tool_listing`` independently replicates
     for the ``/v1/catalog`` listing path, since neither that path nor
     services.yaml parsing has a live FastMCP mount to ask. This is the one
     place that rule is written down for permission-key resolution
@@ -265,7 +259,7 @@ class ServiceSpec:
         permission a group needs to grant). Used where the exact tool being
         called doesn't matter: the "your access" grants list
         (api/permissions.py's _grants_for), a service's coarse availability
-        status (_service_status), and app.py's startup check that every
+        status (service_status.py's service_status), and app.py's startup check that every
         declared permission is reachable by at least one group.
         """
         rp = self.required_permission
@@ -328,7 +322,7 @@ def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
         # exactly the bootstrap methods a caller with zero permissions needs.
         required_permission="__none__",
         # No per-user credential concept at all -- which also makes
-        # api/permissions.py's _service_status report it "available"
+        # service_status.py's service_status report it "available"
         # unconditionally (it is the thing serving the status).
         auth_type="none",
         description=(
@@ -419,8 +413,8 @@ class ToolRouting:
     provider's own ``_get_tool`` short-circuit) matches its tools on
     ``<prefix>_``, which a namespaced service's tools always carry but a
     self-prefixed backend's only carry until it renames them. Lets drift
-    (EntitlementMiddleware), service status (api/permissions.py's
-    ``_service_status``) and metrics attribute those tools to their service,
+    (EntitlementMiddleware), service status (service_status.py's
+    ``service_status``) and metrics attribute those tools to their service,
     which no prefix match can.
     """
 
@@ -433,7 +427,7 @@ class ToolRouting:
         return self.advertised - len(self.unroutable)
 
 
-# tools/list failure reasons (aggregator.py's _classify_failure) that describe
+# tools/list failure reasons (backend_client.py's classify_failure) that describe
 # the backend itself and hold for every caller; any other reason describes one
 # caller's credential ("unauthorized": the backend rejected it; "not_linked":
 # the caller has none).

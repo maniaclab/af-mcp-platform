@@ -25,10 +25,6 @@ from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
-from af_mcp_broker.audit.pipeline import (
-    aclose_metering_pipeline,
-    init_metering_pipeline,
-)
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     PERMISSIONS,
@@ -70,6 +66,7 @@ from af_mcp_broker.identity import (
     get_jwks,
     issuer_is_local,
 )
+from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.logging import (
     CorrelatedHTTPException,
     bind_new_correlation_id,
@@ -87,15 +84,17 @@ from af_mcp_broker.maintenance import (
 )
 from af_mcp_broker.mcp.aggregator import (
     build_aggregator,
-    build_asgi_auth_middleware,
+    build_asgi_middleware,
     invalidate_all_subject_caches,
     invalidate_subject_cache,
     populate_aggregator,
 )
 from af_mcp_broker.mcp.cache_invalidation import ListCacheInvalidator
-from af_mcp_broker.mcp.lint_observations import LintObservationStore
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
+from af_mcp_broker.metering import (
+    aclose_metering_pipeline,
+    init_metering_pipeline,
+)
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
@@ -104,6 +103,7 @@ from af_mcp_broker.principal_cache import (
     VaultPrincipalCacheBackend,
 )
 from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.shared_state import build_shared_state
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
@@ -1084,7 +1084,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         else None
     )
     # Where the tool-listing lint's findings are recorded for the admin tables
-    # (mcp/lint_observations.py): shared, so every replica reports the same.
+    # (lint_observations.py): shared, so every replica reports the same.
     lint_observations = LintObservationStore(shared_state)
     populate_aggregator(
         _mcp_aggregator,
@@ -1114,7 +1114,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # first record is counted.
     init_otel_metrics(settings)
     # --- Metering: success/error audit records are measured and written by a
-    # background worker (audit/pipeline.py) so tool calls never wait on
+    # background worker (metering.py) so tool calls never wait on
     # measurement or audit I/O; without init the helper degrades to inline.
     # The transport is the MeteringBackend selected by METERING_BACKEND.
     await init_metering_pipeline(settings)
@@ -1282,8 +1282,8 @@ _mcp_aggregator = build_aggregator(
 # above already reflects the real MCP_STATELESS_HTTP value -- no need to
 # wait for populate_aggregator() to push in a later value.
 #
-# middleware=[build_asgi_auth_middleware(...)] (issue #138/#144 step 1):
-# enforces identity at the ASGI layer, in front of FastMCP's own
+# middleware=build_asgi_middleware(...) (issue #138/#144 step 1):
+# enforces identity (then maintenance mode) at the ASGI layer, in front of FastMCP's own
 # message-processing pipeline, so a missing/invalid/expired bearer token
 # produces a genuine HTTP 401 instead of a 200 carrying a JSON-RPC error --
 # see mcp/middleware/identity_mw.py's module docstring for the full mechanism
@@ -1292,7 +1292,7 @@ _mcp_aggregator = build_aggregator(
 _mcp_aggregator_app = _mcp_aggregator.http_app(
     path="/",
     stateless_http=_mcp_aggregator_placeholder_settings.mcp_stateless_http,
-    middleware=[build_asgi_auth_middleware(_mcp_aggregator)],
+    middleware=build_asgi_middleware(_mcp_aggregator),
 )
 
 app = FastAPI(

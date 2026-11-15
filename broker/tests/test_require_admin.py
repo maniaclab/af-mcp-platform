@@ -9,7 +9,8 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import Principal, keycloak_dependency, require_admin
+from af_mcp_broker.identity import keycloak_dependency, require_admin
+from af_mcp_broker.principal import Principal
 
 
 @pytest.fixture

@@ -7,8 +7,8 @@ ABC-plus-selectable-backend shape as
 ``token_registry.TokenRegistryBackend``/``usage.UsageStore`` in anticipation
 of that shared-visibility requirement. ``check_not_maintenance`` is the
 request-path enforcement gate that reads a store; it is wired into /v1 (see
-``identity.require_not_in_maintenance``) and /mcp (see
-``mcp.middleware.identity_mw.AsgiAuthMiddleware``). The admin-facing
+``api.maintenance_gate.require_not_in_maintenance``) and /mcp (see
+``mcp.middleware.maintenance_mw.AsgiMaintenanceMiddleware``). The admin-facing
 endpoint to toggle the state is ``api/admin.py``'s ``POST /v1/admin/maintenance``.
 
 ``MaintenanceModeStore`` has ``start()``/``aclose()`` like ``UsageStore``
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 logger = structlog.get_logger(__name__)
 
@@ -338,9 +338,9 @@ async def check_not_maintenance(
 ) -> None:
     """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
 
-    Called from /v1 (``identity.require_not_in_maintenance``) and /mcp
-    (AsgiAuthMiddleware, mcp/middleware/identity_mw.py) right after a
-    Principal is resolved (JWT or PAT) -- one gate, two call sites, so both
+    Called from /v1 (``api.maintenance_gate.require_not_in_maintenance``) and
+    /mcp (``mcp.middleware.maintenance_mw.AsgiMaintenanceMiddleware``) right
+    after a Principal is resolved (JWT or PAT) -- one gate, two call sites, so both
     credential types and both surfaces are covered uniformly.
     A None *store* (maintenance mode unconfigured -- unreachable in a
     properly started app, but matches the getattr-default-None pattern every
@@ -355,7 +355,7 @@ async def check_not_maintenance(
     around ``store.get()`` -- an outage there surfaces as an unclassified
     exception, not a clean 503 (see the admin-check comment below). Every
     caller of this function fails OPEN on that exception rather than
-    treating it as "blocked": ``identity.require_not_in_maintenance``'s
+    treating it as "blocked": ``api.maintenance_gate.require_not_in_maintenance``'s
     docstring has the full reasoning and, importantly, the resulting
     limitation -- maintenance mode is a planned-maintenance convenience
     feature, not an incident-containment control, precisely because a
@@ -387,9 +387,9 @@ async def check_not_maintenance_or_fail_open(
 ) -> HTTPException | None:
     """Run ``check_not_maintenance``, converting its store-unavailability fail-open behavior into a return value instead of a raise.
 
-    Both call sites (/v1's ``identity.require_not_in_maintenance``, a FastAPI
+    Both call sites (/v1's ``api.maintenance_gate.require_not_in_maintenance``, a FastAPI
     dependency that raises to reject a request, and /mcp's
-    ``AsgiAuthMiddleware``, an ASGI middleware that builds its own error
+    ``AsgiMaintenanceMiddleware``, an ASGI middleware that builds its own error
     response) need the exact same "what to do when the store itself is
     unreachable" observability -- log at ERROR with a traceback and increment
     ``metrics.maintenance_store_unavailable_total`` -- but differ in how they

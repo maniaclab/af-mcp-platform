@@ -54,6 +54,8 @@ httpx2 = ">=2.7.0,<3"
 pytest-timeout = ">=2.4.0,<3"
 postgresql = ">=18.4,<19"
 redis-server = ">=8.0"
+# Enforces the broker's import layers (see [tool.importlinter] in broker/pyproject.toml).
+import-linter = ">=2.0"
 
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
@@ -100,7 +102,8 @@ lint = { cmd = "ruff check broker skills && ruff format --check broker skills", 
 fmt = { cmd = "ruff format broker skills && ruff check --fix broker skills", description = "Format and auto-fix broker source" }
 typecheck = { cmd = "mypy broker/src skills --exclude evals/fixtures", description = "Type-check broker source and skill scripts" }
 pre-commit = { cmd = "prek run --all-files", description = "Run pre-commit hooks on all files" }
-lint-all = { depends-on = ["lint", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
+lint-imports = { cmd = "lint-imports", cwd = "broker", description = "Check the broker's import layers (import-linter contracts in broker/pyproject.toml)" }
+lint-all = { depends-on = ["lint", "lint-imports", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
 test = { cmd = "pytest broker/ skills/ -v", description = "Broker unit tests and skill script tests" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
 # COVERAGE_CORE=sysmon: coverage.py's sys.monitoring core (PEP 669, py3.12+)

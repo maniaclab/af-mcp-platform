@@ -180,7 +180,7 @@ async def test_list_subjects_excludes_outside_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Module-level wiring -- mirrors audit/pipeline.py's init/aclose/helper shape.
+# Module-level wiring -- mirrors metering.py's init/aclose/helper shape.
 # ---------------------------------------------------------------------------
 
 

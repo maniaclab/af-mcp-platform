@@ -10,11 +10,11 @@ import yaml  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 
 # Sentinel a per-tool required_permission resolution can produce
-# (mcp/registry.py's ServiceRegistry.required_permission_for) when a
+# (service_registry.py's ServiceRegistry.required_permission_for) when a
 # service's required_permission is a dict, the tool being called isn't one of
 # its explicit keys, and no "__default__" was declared: opt-in-only per-tool
 # gating means an unlisted tool is disabled, never silently open. Distinct

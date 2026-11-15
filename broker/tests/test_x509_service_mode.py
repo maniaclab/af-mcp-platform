@@ -44,7 +44,7 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.credentials.voms_service import VomsTokenServiceClient
 from af_mcp_broker.credentials.x509 import X509Provider
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.principal import Principal
 
 _PEM = PEM
 _DN = DN

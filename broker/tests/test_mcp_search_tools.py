@@ -19,7 +19,7 @@ from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,
     SEARCH_TOOLS_TOOL_NAME,
     ServiceRegistry,

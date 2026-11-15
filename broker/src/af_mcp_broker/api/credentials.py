@@ -32,8 +32,9 @@ from af_mcp_broker.credentials.errors import (
     VomsServicePreflightError,
     VomsServiceRejectedError,
 )
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import CorrelatedHTTPException
+from af_mcp_broker.principal import PosixPrincipal, Principal
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import IdentityProviderConfig
@@ -484,8 +485,9 @@ async def issue_credential(
     # message issue() itself would raise. Surface that message here too,
     # before the generic gate, rather than only reaching it via the
     # POST /v1/x509/proxy route below.
-    if isinstance(provider, X509Provider) and (
-        principal.uid is None or principal.gid is None or principal.unixname is None
+    if (
+        isinstance(provider, X509Provider)
+        and PosixPrincipal.from_principal(principal) is None
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

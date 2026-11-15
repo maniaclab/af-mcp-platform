@@ -13,7 +13,7 @@ from af_mcp_broker.authorization import (
     get_principal_permissions,
     resolve_action_type,
 )
-from af_mcp_broker.mcp.registry import AnnotationMismatch, ToolMappingDrift
+from af_mcp_broker.service_registry import AnnotationMismatch, ToolMappingDrift
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import Tool
 
-    from af_mcp_broker.mcp.lint_observations import LintObservationStore
-    from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.lint_observations import LintObservationStore
+    from af_mcp_broker.service_registry import ServiceRegistry
 
 logger = structlog.get_logger(__name__)
 

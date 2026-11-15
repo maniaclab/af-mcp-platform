@@ -16,7 +16,7 @@ from af_mcp_broker.api import (
     tokens,
     usage,
 )
-from af_mcp_broker.identity import require_not_in_maintenance
+from af_mcp_broker.api.maintenance_gate import require_not_in_maintenance
 
 # All routes are grouped under /v1 at the application level. Sub-routers
 # carry their own path prefixes relative to this root.

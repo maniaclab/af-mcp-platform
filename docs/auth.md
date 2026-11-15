@@ -1109,7 +1109,7 @@ still gets the friendly not-linked error rather than "Unknown tool"
 reaches the authorized branch above). `unauthorized` ("Your linked
 credential was rejected") is reserved for a caller whose credential the
 backend rejected. The x509, servicex and bearer branches do the same: a
-`bearer` service's list-time mint (`_resolve_list_time_headers`) raises
+`bearer` service's list-time mint (`resolve_list_time_headers`) raises
 `NotLinkedForListingError` for a caller whose provider is not linked, so for
 every auth type that carries a per-user credential an unlinked caller's
 listing sends the backend no request. A provider that needs no user action

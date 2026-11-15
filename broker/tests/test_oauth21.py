@@ -26,7 +26,6 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from af_mcp_broker.api import oauth21 as oauth21_module
-from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials import CredentialRegistry
@@ -37,8 +36,7 @@ from af_mcp_broker.credentials.oauth21 import (
     StoredOAuthCredential,
     normalize_token_response,
 )
-from af_mcp_broker.identity import Principal, keycloak_dependency
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,
@@ -49,6 +47,9 @@ from af_mcp_broker.oauth_state import (
     decrypt_state_token,
     sanitize_return_url,
 )
+from af_mcp_broker.principal import Principal
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_status import service_status
 
 ALIAS = "rucio-mcp-atlas"
 SUBJECT = "kc-subject-123"
@@ -947,7 +948,7 @@ async def test_issue_refresh_clears_refreshed_after_rejection(
 
 
 # ---------------------------------------------------------------------------
-# A rejected credential in the catalog (api/permissions.py::_service_status)
+# A rejected credential in the catalog (service_status.py::service_status)
 # ---------------------------------------------------------------------------
 
 
@@ -965,7 +966,7 @@ async def _catalog_state(
     )
     credentials = CredentialRegistry()
     credentials.register(ALIAS, provider)
-    status, detail, _correlation_id, link_state = await _service_status(
+    status, detail, _correlation_id, link_state = await service_status(
         spec, _principal(), set(), credentials, service_registry or ServiceRegistry()
     )
     return status, detail, link_state

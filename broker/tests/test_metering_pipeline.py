@@ -1,4 +1,4 @@
-"""Tests for ``audit/pipeline.py`` -- the asynchronous metering pipeline.
+"""Tests for ``metering.py`` -- the asynchronous metering pipeline.
 
 The pipeline exists so a tool call never waits on result measurement or
 audit I/O: the middleware hands ``(record, result)`` over and returns; a
@@ -29,16 +29,17 @@ import structlog
 from fastmcp.tools.base import ToolResult
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import metering as pipeline
 from af_mcp_broker import usage
-from af_mcp_broker.audit import AuditRecord, measure, pipeline
-from af_mcp_broker.audit.pipeline import (
+from af_mcp_broker.audit import AuditRecord, measure
+from af_mcp_broker.config import Settings
+from af_mcp_broker.metering import (
     InProcessMeteringBackend,
     MeteringBackend,
     aclose_metering_pipeline,
     init_metering_pipeline,
     submit_metered_audit,
 )
-from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import InMemoryUsageStore, aclose_usage_store, init_usage_store
 
 

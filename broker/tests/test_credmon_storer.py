@@ -28,7 +28,7 @@ from af_mcp_broker.credmon.storer import (
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit import AuditRecord
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 _TTL = 86400
 

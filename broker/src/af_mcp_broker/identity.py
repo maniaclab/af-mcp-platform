@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urlparse
 
@@ -18,7 +18,7 @@ from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import bind_subject, current_correlation_id
-from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
     PrincipalRejectedError,
     PrincipalUnavailableError,
@@ -111,62 +111,6 @@ async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
         _jwks_cache[uri] = _JwksEntry(keys=keys, fetched_at=now)
         logger.debug("jwks_cache_refreshed", uri=uri, key_count=len(keys))
         return keys
-
-
-# ---------------------------------------------------------------------------
-# Principal — immutable identity snapshot extracted from a validated JWT.
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Principal:
-    """An authenticated caller's identity, as resolved from a JWT or a PAT.
-
-    ``uid``/``gid``/``unixname`` are optional (issue #148): POSIX identity
-    is only meaningful to backends that need a filesystem identity (x509/VOMS
-    proxy minting -- see credentials/x509.py), not to the broker's identity
-    or authorization layers themselves. ``None`` fields are used rather than
-    an ``int | None`` default hiding behind a truthy-looking sentinel, so
-    every call site that reads one of these three directly is forced (by
-    mypy, since the shipped config enables strict optional checking) to
-    handle the absent case rather than silently treating a missing identity
-    as uid/gid 0 or an empty unixname. Every OTHER field remains required:
-    ``subject`` is always present (a validated JWT's `sub` claim, or a PAT's
-    stored owner id), so it -- not uid -- is the identifier incidental
-    consumers (cache keys, audit fields, log context) should use.
-
-    ``permission_grant`` (issue #144 step 4) is ``None`` for every JWT and
-    every identity PAT -- the overwhelming majority of principals -- and is
-    only ever set for a **permission PAT**: an explicit set of permission
-    names copied from ``token_registry.TokenRecord.permission_grant`` by
-    ``pat_auth._resolve_authority``. It is a RESTRICTION, never a source of
-    authority: ``authorization.get_principal_permissions`` intersects it
-    with whatever permissions the principal's *current* groups already
-    grant, rather than substituting for that computation. Intersecting
-    (not substituting) is what keeps a permission PAT killable by a group
-    removal exactly like every other credential, and what makes it
-    structurally impossible for a grant to hand out more than the principal
-    currently holds, however it got into the record -- see that function's
-    docstring for the mechanics.
-    """
-
-    subject: str
-    email: str
-    uid: int | None
-    gid: int | None
-    unixname: str | None
-    groups: list[str]
-    # Keep the raw token for downstream credential flows; SecretStr prevents
-    # accidental logging.
-    raw_token: SecretStr = field(compare=False, repr=False)
-    permission_grant: frozenset[str] | None = None
-    # Which token made the call (issue #247): the presenting PAT's public,
-    # non-secret lookup_id (the same registry index touch_last_used keys
-    # on), set only by pat_auth.resolve_pat_principal. None for every JWT
-    # -- a session JWT is not a distinct long-lived credential worth
-    # attributing separately from ``subject``. NEVER secret material or the
-    # full token.
-    token_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +226,7 @@ class TokenAudienceError(IdentityError):
     carrying a stable ``error`` discriminator (RFC 6750's
     ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
     when contacting an administrator -- the same pattern
-    ``api/permissions.py``'s ``_service_status`` already uses for
+    ``service_status.py``'s ``service_status`` already uses for
     ``permission_required``/``misconfigured``.
     """
 
@@ -579,63 +523,6 @@ async def require_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This action requires membership in the admin group.",
         )
-    return principal
-
-
-async def require_not_in_maintenance(
-    request: Request,
-    principal: Annotated[Principal, Depends(keycloak_dependency)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> Principal:
-    """FastAPI dependency: 503s when maintenance mode is on and the caller isn't an admin.
-
-    A separate dependency from keycloak_dependency (not folded into it)
-    because GET /v1/admin/maintenance (api/admin.py) must stay reachable by
-    every caller (so the portal can show a maintenance banner to non-admins
-    too) and /v1's health probes must never be gated (Kubernetes would
-    otherwise restart pods during a deliberate maintenance window) -- see
-    api/router.py for exactly which routers this is applied to.
-
-    Store-unavailability decision: fail OPEN. If the maintenance store
-    backend itself is unreachable (a Vault or Postgres outage),
-    ``check_not_maintenance``'s ``store.get()`` call raises an unclassified
-    exception (its docstring notes this explicitly is not handled there).
-    Unlike ``PrincipalDirectoryUnavailableError`` -- which fails CLOSED
-    because it answers a security-relevant question ("what groups/POSIX
-    identity does this principal currently have") that every authorization
-    decision on /v1 depends on -- maintenance mode is an operational
-    convenience toggle, not a security boundary: it is normally disabled,
-    and an admin used it to voluntarily take the platform offline. Failing
-    closed here would mean a transient outage of an auxiliary store turns
-    into a broker-wide 503 for every non-admin caller on /v1, which is a
-    strictly worse outcome than momentarily not knowing whether a
-    maintenance window is active. So a store failure is treated the same as
-    a disabled store: the request proceeds, and the failure is logged (and
-    counted -- ``metrics.maintenance_store_unavailable_total``) so it's
-    visible to operators. That logging/counting -- shared with /mcp's
-    identical fail-open behavior -- lives in
-    ``maintenance.check_not_maintenance_or_fail_open``, which this dependency
-    calls rather than ``check_not_maintenance`` directly.
-
-    IMPORTANT LIMITATION this implies: non-admins keep their pre-incident
-    access whenever the maintenance store can't be reached, rather than
-    being blocked. ``is_admin`` is checked before ``store.get()`` (see
-    ``check_not_maintenance``), so fail-open only ever changes the outcome
-    for non-admins -- an admin's own access is never affected by the
-    store's health either way. But it does mean maintenance mode must NOT
-    be relied on as an incident-containment control (e.g. "lock everyone
-    out right now because something is actively wrong") if the maintenance
-    store could plausibly be within that incident's blast radius -- the
-    same outage or attack that motivated the lockdown could also be what
-    takes out Vault/Postgres, silently defeating the lockdown for exactly
-    the population it was meant to stop. Maintenance mode is a planned-
-    maintenance convenience feature; it is not, and should not be treated
-    as, an incident-response kill switch.
-    """
-    store = getattr(request.app.state, "maintenance_mode_store", None)
-    exc = await check_not_maintenance_or_fail_open(principal, settings, store)
-    if exc is not None:
-        raise exc
     return principal
 
 

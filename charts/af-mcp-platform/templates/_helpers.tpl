@@ -483,7 +483,7 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: PRINCIPAL_CACHE_KV_PATH_PREFIX
   value: {{ .Values.broker.principalCache.kvPathPrefix | quote }}
 {{- end }}
-# Metering pipeline backend (audit/pipeline.py) -- transport for
+# Metering pipeline backend (metering.py) -- transport for
 # success/error audit records between the tool-call hot path and the
 # worker that measures and writes them. Only "in-process" exists today;
 # the broker fails closed at startup on any unknown value. Always set,

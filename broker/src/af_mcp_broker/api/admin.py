@@ -30,20 +30,21 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker import metrics
-from af_mcp_broker.api.permissions import _get_registry
+from af_mcp_broker.api.app_state import get_registry
 from af_mcp_broker.audit import AuditRecord, write_audit
-from af_mcp_broker.identity import Principal, require_admin
+from af_mcp_broker.identity import require_admin
 from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
     MaintenanceState,
     MaintenanceStateConflictError,
 )
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:
     from af_mcp_broker.credmon.sync import CredmonSyncService
-    from af_mcp_broker.mcp.lint_observations import (
+    from af_mcp_broker.lint_observations import (
         LintObservationStore,
         ServiceLintObservation,
     )
@@ -245,7 +246,7 @@ async def set_maintenance_status(
 class AnnotationMismatchResponse(BaseModel):
     """One tool whose declared read_only_hint disagrees with policy.yaml's resolved action_type (issue #238 B.8).
 
-    See mcp/registry.py's
+    See service_registry.py's
     AnnotationMismatch, which this mirrors field-for-field.
     """
 
@@ -284,7 +285,7 @@ async def _lint_observations(request: Request) -> list[ServiceLintObservation | 
     """Each non-builtin service's last lint observation, in service-name order; None where there is none."""
     store: LintObservationStore = request.app.state.lint_observations
     names = sorted(
-        s.name for s in _get_registry(request).all_services() if not s.builtin
+        s.name for s in get_registry(request).all_services() if not s.builtin
     )
     return [await store.get(name) for name in names]
 
@@ -293,7 +294,7 @@ def _lint_service_statuses(
     request: Request, observations: list[ServiceLintObservation | None]
 ) -> list[LintServiceStatus]:
     names = sorted(
-        s.name for s in _get_registry(request).all_services() if not s.builtin
+        s.name for s in get_registry(request).all_services() if not s.builtin
     )
     return [
         LintServiceStatus(service=name, last_observed=obs.observed_at if obs else None)
@@ -350,7 +351,7 @@ async def get_annotation_mismatches(
 class ToolMappingDriftResponse(BaseModel):
     """One service whose dict-form required_permission and advertised tools have drifted apart (issue #330).
 
-    See mcp/registry.py's ToolMappingDrift, which this mirrors field-for-field.
+    See service_registry.py's ToolMappingDrift, which this mirrors field-for-field.
     """
 
     model_config = ConfigDict(frozen=True)

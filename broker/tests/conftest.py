@@ -39,17 +39,18 @@ from pydantic import SecretStr
 from x509_fakes import FakeX509Store
 
 from af_mcp_broker import app as broker_app_module
-from af_mcp_broker import identity
+from af_mcp_broker import backend_client, identity, lint_observations
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credmon.state import CredmonSyncState
-from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp import cache_invalidation, lint_observations
-from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
+from af_mcp_broker.mcp import cache_invalidation
+from af_mcp_broker.mcp.aggregator import build_asgi_middleware
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PrincipalCache,
@@ -548,7 +549,7 @@ class _BackendRouter(httpx2.AsyncBaseTransport):
 @pytest.fixture(autouse=True)
 def _route_backends_in_process(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Route the aggregator's outbound backend traffic through _BackendRouter."""
-    orig = aggregator_module._checked_httpx_client_factory
+    orig = backend_client._checked_httpx_client_factory
 
     def routed(*args: Any, **kwargs: Any) -> Callable[..., httpx2.AsyncClient]:
         inner = orig(*args, **kwargs)
@@ -559,7 +560,7 @@ def _route_backends_in_process(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 
         return factory
 
-    monkeypatch.setattr(aggregator_module, "_checked_httpx_client_factory", routed)
+    monkeypatch.setattr(backend_client, "_checked_httpx_client_factory", routed)
     yield
     _IN_PROCESS_BACKENDS.clear()
 
@@ -592,9 +593,9 @@ async def run_aggregator_async(
     ASGIServer a test builds its clients from (``server.transport(...)``,
     ``server.client(...)``, ``server.http_client()``).
 
-    Installs the ASGI-layer identity middleware (build_asgi_auth_middleware)
-    the same way app.py does when mounting /mcp, since issue #138/#144 step 1
-    moved identity enforcement to that layer, out of FastMCP's own middleware
+    Installs the ASGI-layer identity and maintenance middleware
+    (build_asgi_middleware) the same way app.py does when mounting /mcp, since
+    issue #138/#144 step 1 moved identity enforcement to that layer, out of FastMCP's own middleware
     pipeline -- asgi_server forwards ``middleware`` to ``http_app()``, the
     same call run_http_async makes.
 
@@ -602,7 +603,7 @@ async def run_aggregator_async(
     too, through _route_backends_in_process (see run_inprocess_server).
     """
     async with asgi_server(
-        mcp, path=path, middleware=[build_asgi_auth_middleware(mcp)]
+        mcp, path=path, middleware=build_asgi_middleware(mcp)
     ) as server:
         yield server
 

@@ -4,7 +4,7 @@ from typing import Any
 
 from af_mcp_broker.credmon.guidance import JobCredentialGuide
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 
 def _spec(**overrides: Any) -> ServiceSpec:

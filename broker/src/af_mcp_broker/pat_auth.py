@@ -58,9 +58,10 @@ import structlog
 from fastapi import HTTPException, status
 from pydantic import SecretStr
 
-from af_mcp_broker.identity import Principal, TokenExpiredError
+from af_mcp_broker.identity import TokenExpiredError
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.pat import parse_pat, verify_secret
+from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
 if TYPE_CHECKING:

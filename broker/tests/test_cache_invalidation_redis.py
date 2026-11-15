@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 pytestmark = pytest.mark.usefixtures("unpinned_loggers")
 

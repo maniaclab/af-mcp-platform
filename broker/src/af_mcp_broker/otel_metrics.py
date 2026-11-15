@@ -16,7 +16,7 @@ token, jti, request-id or argument attribute, because the per-call record
 with identity lives in the audit log (and, opt-in, in OTel log events -- a
 different signal with no cardinality cost).
 
-Where a call is recorded: the metering worker (``audit/pipeline.py``) calls
+Where a call is recorded: the metering worker (``metering.py``) calls
 :func:`record_tool_call` after each audit write, because ``result_bytes`` and
 ``result_tokens_est`` only exist once the worker has measured the result.
 That makes the instruments below usage-shaped: success and error tool calls

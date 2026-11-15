@@ -48,6 +48,7 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.principal import PosixPrincipal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -56,7 +57,7 @@ if TYPE_CHECKING:
 
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials.cache import CredentialCache
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 log = structlog.get_logger(__name__)
 
@@ -373,11 +374,8 @@ class BrokerIssuedProvider(CredentialProvider):
 
         posix: dict[str, Any] = {}
         if requires_posix:
-            if (
-                principal.uid is None
-                or principal.gid is None
-                or principal.unixname is None
-            ):
+            posix_principal = PosixPrincipal.from_principal(principal)
+            if posix_principal is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=(
@@ -389,9 +387,9 @@ class BrokerIssuedProvider(CredentialProvider):
                     ),
                 )
             posix = {
-                "uid": principal.uid,
-                "gid": principal.gid,
-                "unixname": principal.unixname,
+                "uid": posix_principal.uid,
+                "gid": posix_principal.gid,
+                "unixname": posix_principal.unixname,
             }
 
         cached = await self._cache.get(

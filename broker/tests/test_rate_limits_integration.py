@@ -13,7 +13,7 @@ from fastmcp.exceptions import ToolError
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.shared_state import InMemorySharedState
 
 if TYPE_CHECKING:

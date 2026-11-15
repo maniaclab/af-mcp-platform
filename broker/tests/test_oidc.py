@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import oidc
 from af_mcp_broker.credentials.cache import CredentialCache
-from af_mcp_broker.identity import Principal
+from af_mcp_broker.principal import Principal
 
 REAL_TOKEN = "real-af-access-token-value"
 

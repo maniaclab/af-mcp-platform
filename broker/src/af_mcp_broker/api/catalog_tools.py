@@ -2,9 +2,9 @@ from __future__ import annotations
 
 # GET /v1/catalog/{service}/tools -- the portal's per-service tool listing
 # (the fetch-on-expand companion to GET /v1/catalog). Lives in its own module
-# rather than api/permissions.py because it imports mcp/aggregator.py's
-# list-time helpers, and permissions.py importing the aggregator would be a
-# straight import cycle (aggregator -> mcp/diagnostics -> permissions).
+# rather than api/permissions.py because it is the one route that opens a
+# connection to a backend service, through backend_client.py's list-time
+# helpers.
 import asyncio
 import time
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -17,35 +17,36 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.types import ToolAnnotations  # noqa: TC002
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.permissions import (
-    _get_credential_registry,
-    _get_policy,
-    _get_registry,
-    _holds_any_required_permission,
+from af_mcp_broker.api.app_state import (
+    get_credential_registry,
+    get_policy,
+    get_registry,
 )
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     get_action_type,
     get_principal_permissions,
 )
-from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import Principal, keycloak_dependency
-from af_mcp_broker.mcp.aggregator import (
+from af_mcp_broker.backend_client import (
     ToolListingEntry,
     fetch_service_tool_listing,
     resolve_list_time_credential,
 )
-from af_mcp_broker.mcp.errors import NotLinkedForListingError
+from af_mcp_broker.backend_errors import NotLinkedForListingError
+from af_mcp_broker.config import get_settings
+from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.principal import Principal
+from af_mcp_broker.service_status import holds_any_required_permission
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
-    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+    from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["permissions"])
 
-# The status vocabulary matches aggregator.py's _classify_failure one-to-one
+# The status vocabulary matches backend_client.py's classify_failure one-to-one
 # (plus "ok" and the locally-derived "permission_required"), so a portal
 # status and an `aggregator.service_list_failed` log line for the same
 # service always speak the same language. Sentences are short, human, and
@@ -245,13 +246,13 @@ async def get_service_tools(
     so what the portal shows always matches what a tools/list through /mcp
     would return for this caller.
     """
-    registry = _get_registry(request)
+    registry = get_registry(request)
     spec = registry.get(service)
     if spec is None:
         raise HTTPException(
             status_code=404, detail=f"service '{service}' is not registered"
         )
-    policy = _get_policy(request)
+    policy = get_policy(request)
     caps = get_principal_permissions(principal, policy)
 
     # Same pre-fetch gate /v1/catalog's status derivation applies (issue #60,
@@ -259,7 +260,7 @@ async def get_service_tools(
     # service could possibly require, no tool of it could be visible either
     # -- skip the fetch entirely rather than probing the service (or the
     # cache) just to filter everything back out.
-    if not _holds_any_required_permission(spec, caps):
+    if not holds_any_required_permission(spec, caps):
         return _respond(spec, "permission_required", [], policy, registry, caps)
 
     if spec.builtin:
@@ -296,7 +297,7 @@ async def get_service_tools(
     deadline = asyncio.timeout(settings.mcp_list_timeout_seconds)
     try:
         async with deadline:
-            credential_registry = _get_credential_registry(request)
+            credential_registry = get_credential_registry(request)
             broker_token_issuer = getattr(
                 request.app.state, "broker_token_issuer", None
             )

@@ -23,7 +23,7 @@ from af_mcp_broker.http import get_http_client
 if TYPE_CHECKING:
     from pydantic import SecretBytes
 
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 log = structlog.get_logger(__name__)
 

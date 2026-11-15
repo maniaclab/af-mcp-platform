@@ -42,7 +42,7 @@ if TYPE_CHECKING:
         StoredServiceXCredential,
         VaultServiceXStore,
     )
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 _LINK_ENDPOINT = "/v1/servicex/link"
 

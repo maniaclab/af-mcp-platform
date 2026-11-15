@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.mcp.registry import BUILTIN_SERVICE_NAME
+from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 
 
 def test_get_settings_is_cached():
@@ -792,7 +792,7 @@ def test_vault_config_required_by_x509_entry():
 
 
 # ---------------------------------------------------------------------------
-# Metering backend selection (audit/pipeline.py's MeteringBackend seam)
+# Metering backend selection (metering.py's MeteringBackend seam)
 # ---------------------------------------------------------------------------
 
 

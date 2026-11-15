@@ -15,7 +15,7 @@ from fastmcp.utilities.http import find_available_port
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import _make_client_factory, build_aggregator
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 # ---------------------------------------------------------------------------
 # Call-time upstream-failure mapping.

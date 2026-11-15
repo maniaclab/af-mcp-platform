@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from af_mcp_broker.mcp.registry import AnnotationMismatch, ToolMappingDrift
+from af_mcp_broker.service_registry import AnnotationMismatch, ToolMappingDrift
 from af_mcp_broker.shared_state import FallbackSharedState
 
 if TYPE_CHECKING:

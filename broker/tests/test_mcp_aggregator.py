@@ -32,8 +32,16 @@ from mcp.types import Tool as McpTool
 from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker import metrics
-from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.backend_client import (
+    classify_failure,
+    resolve_list_time_credential,
+    unauthorized_raising_httpx_client_factory,
+)
+from af_mcp_broker.backend_errors import (
+    NotEntitledForListingError,
+    NotLinkedForListingError,
+)
 from af_mcp_broker.config import BrokerIssuedProviderConfig
 from af_mcp_broker.credentials import (
     CredentialKind,
@@ -46,21 +54,15 @@ from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.errors import NeedsUnlockError
 from af_mcp_broker.mcp import aggregator
 from af_mcp_broker.mcp.aggregator import (
-    _classify_failure,
     _make_client_factory,
     _require_linked,
     build_aggregator,
     populate_aggregator,
-    resolve_list_time_credential,
-)
-from af_mcp_broker.mcp.errors import (
-    NotEntitledForListingError,
-    NotLinkedForListingError,
 )
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
 from af_mcp_broker.mcp.middleware.identity_mw import IdentityMiddleware
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.service_registry import (
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     WHOAMI_TOOL_NAME,
@@ -68,9 +70,10 @@ from af_mcp_broker.mcp.registry import (
     ServiceSpec,
     ToolRouting,
 )
+from af_mcp_broker.service_status import RELINK_DETAIL
 
 if TYPE_CHECKING:
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 
 def _spec(**overrides: Any) -> ServiceSpec:
@@ -620,7 +623,7 @@ class TestUnauthorizedHook:
         async def _on_unauthorized() -> None:
             reported.append(None)
 
-        http_client = aggregator._unauthorized_raising_httpx_client_factory(
+        http_client = unauthorized_raising_httpx_client_factory(
             on_unauthorized=_on_unauthorized, transport=_status_transport(401)
         )
         async with http_client:
@@ -635,7 +638,7 @@ class TestUnauthorizedHook:
         async def _on_unauthorized() -> None:
             reported.append(None)
 
-        http_client = aggregator._unauthorized_raising_httpx_client_factory(
+        http_client = unauthorized_raising_httpx_client_factory(
             on_unauthorized=_on_unauthorized, transport=_status_transport(200)
         )
         async with http_client:
@@ -648,7 +651,7 @@ class TestUnauthorizedHook:
         async def _on_unauthorized() -> None:
             raise RuntimeError("token store unreachable")
 
-        http_client = aggregator._unauthorized_raising_httpx_client_factory(
+        http_client = unauthorized_raising_httpx_client_factory(
             on_unauthorized=_on_unauthorized, transport=_status_transport(401)
         )
         with structlog.testing.capture_logs() as logs:
@@ -2648,7 +2651,7 @@ async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
     branch enforces (see
     test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issue).
     Without a dedicated krb5 branch here, this falls through to
-    _resolve_list_time_headers, which calls provider.issue() directly --
+    resolve_list_time_headers, which calls provider.issue() directly --
     exactly what the auth_type=krb5 design (backend redeems the ticket
     itself via POST /v1/credentials/krb5/redeem) exists to prevent."""
     issuer = _make_issuer()
@@ -3013,7 +3016,7 @@ async def test_require_linked_rejected_credential_says_relink_without_elicitatio
     with pytest.raises(ToolError) as excinfo:
         await _require_linked(provider, make_principal(), spec, settings, None)
 
-    assert _RELINK_DETAIL in str(excinfo.value)
+    assert RELINK_DETAIL in str(excinfo.value)
     assert "not linked" not in str(excinfo.value)
     assert f"{settings.portal_url.rstrip('/')}/identities" in str(excinfo.value)
 
@@ -3030,7 +3033,7 @@ async def test_require_linked_rejected_credential_still_elicits_and_names_the_re
     with pytest.raises(ToolError) as excinfo:
         await _require_linked(provider, make_principal(), spec, settings, None)
 
-    assert _RELINK_DETAIL in str(excinfo.value)
+    assert RELINK_DETAIL in str(excinfo.value)
     assert len(ctx.elicit_calls) == 1
     message, options = ctx.elicit_calls[0]
     assert "rejected" in message
@@ -3068,7 +3071,7 @@ async def test_client_factory_bearer_call_with_rejected_credential_says_relink(
     with pytest.raises(ToolError) as excinfo:
         await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
 
-    assert _RELINK_DETAIL in str(excinfo.value)
+    assert RELINK_DETAIL in str(excinfo.value)
     assert provider.issue_calls == []
 
 
@@ -3131,22 +3134,22 @@ class TestClassifyFailureUnavailable:
     failure, timeouts included, normalizes to a plain ``INTERNAL_ERROR``
     (``_proxy_upstream_error``) -- so that probe is gone and every case
     below (including what used to be the "timeout" cases) is "unavailable"
-    now. See _classify_failure's docstring for the full removal rationale."""
+    now. See classify_failure's docstring for the full removal rationale."""
 
     def test_mcp_error_is_unavailable(self) -> None:
         exc = _mcp_error(
             httpx2.codes.INTERNAL_SERVER_ERROR,
             "Timed out while waiting for response to CallToolRequest. Waited 30.0 seconds.",
         )
-        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+        assert classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
     def test_mcp_error_other_code_is_also_unavailable(self) -> None:
         exc = _mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")
-        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+        assert classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
     def test_connect_error_is_unavailable(self) -> None:
         exc = httpx2.ConnectError("connection refused")
-        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+        assert classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
     def test_mcp_error_wrapped_in_exception_group_is_still_unavailable(self) -> None:
         """Mirrors the existing 401-in-a-BaseExceptionGroup coverage this
@@ -3156,7 +3159,7 @@ class TestClassifyFailureUnavailable:
             "unhandled",
             [_mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")],
         )
-        assert _classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
+        assert classify_failure(exc, injected=False, skip_reason=None) == "unavailable"
 
     def test_skip_reason_still_takes_priority(self) -> None:
         """A deliberately-skipped credential mint is the precise reason
@@ -3164,7 +3167,7 @@ class TestClassifyFailureUnavailable:
         same rule the docstring already states for "unavailable"."""
         exc = _mcp_error(httpx2.codes.INTERNAL_SERVER_ERROR, "boom")
         assert (
-            _classify_failure(exc, injected=False, skip_reason="not_linked")
+            classify_failure(exc, injected=False, skip_reason="not_linked")
             == "not_linked"
         )
 
@@ -3175,7 +3178,7 @@ class TestClassifyFailureChainedWrapping:
     ``BaseExceptionGroup`` like fastmcp's client I/O failures today --
     ``_iter_leaf_exceptions`` must walk ``__cause__``/``__context__`` too, or
     a 401 (or any other leaf classification cares about) reachable only via
-    a chain stays invisible to ``_classify_failure``. These tests build the
+    a chain stays invisible to ``classify_failure``. These tests build the
     chained shape directly rather than depending on a real v4 proxy call, so
     they already pass on fastmcp 3.4.7 today; after B.3/B.4 they are the
     regression guard for the real thing."""
@@ -3189,7 +3192,7 @@ class TestClassifyFailureChainedWrapping:
         outer = RuntimeError("proxy upstream error")
         outer.__cause__ = inner
         assert (
-            _classify_failure(outer, injected=True, skip_reason=None) == "unauthorized"
+            classify_failure(outer, injected=True, skip_reason=None) == "unauthorized"
         )
 
     def test_401_reachable_only_via_context_chain_is_detected(self) -> None:
@@ -3205,7 +3208,7 @@ class TestClassifyFailureChainedWrapping:
         outer = RuntimeError("proxy upstream error")
         outer.__context__ = inner
         assert (
-            _classify_failure(outer, injected=True, skip_reason=None) == "unauthorized"
+            classify_failure(outer, injected=True, skip_reason=None) == "unauthorized"
         )
 
     def test_uninjected_401_via_chain_stays_unavailable(self) -> None:
@@ -3220,7 +3223,7 @@ class TestClassifyFailureChainedWrapping:
         outer = RuntimeError("proxy upstream error")
         outer.__cause__ = inner
         assert (
-            _classify_failure(outer, injected=False, skip_reason=None) == "unavailable"
+            classify_failure(outer, injected=False, skip_reason=None) == "unavailable"
         )
 
 

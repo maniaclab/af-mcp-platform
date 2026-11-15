@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from af_mcp_broker.mcp.lint_observations import LintObservationStore
-from af_mcp_broker.mcp.registry import AnnotationMismatch
+from af_mcp_broker.lint_observations import LintObservationStore
+from af_mcp_broker.service_registry import AnnotationMismatch
 from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:

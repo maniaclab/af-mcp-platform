@@ -12,16 +12,12 @@ from __future__ import annotations
 # loaded. The client_factory below deliberately never forwards the caller's
 # inbound Authorization header to a service; see its docstring.
 import asyncio
-import json
 import time
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
-import httpx2
 import structlog
 from fastapi import HTTPException
 from fastmcp import FastMCP
-from fastmcp.client import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.elicitation import AcceptedElicitation
@@ -29,29 +25,31 @@ from fastmcp.server.providers.proxy import (
     ClientFactoryT,
     ProxyProvider,
     ProxyTool,
-    default_proxy_log_handler,
-    default_proxy_progress_handler,
 )
 from mcp.types import (
     ClientCapabilities,
     ElicitationCapability,
-    ToolAnnotations,
 )
 from mcp.types import Tool as McpTool
 from starlette.middleware import Middleware
 
 from af_mcp_broker import metrics
-from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import get_principal_permissions
-from af_mcp_broker.credentials import CredentialKind
-from af_mcp_broker.credentials.errors import NeedsUnlockError
-from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
-from af_mcp_broker.mcp.errors import (
-    BackendInvalidResponseError,
+from af_mcp_broker.backend_client import (
+    bearer_injection,
+    build_client,
+    classify_failure,
+    require_linked_to_list,
+    require_signing_issuer,
+    resolve_list_time_headers,
+)
+from af_mcp_broker.backend_errors import (
     ListDeadlineExceededError,
     NotEntitledForListingError,
     NotLinkedForListingError,
 )
+from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.mcp.middleware.entitlement_mw import EntitlementMiddleware
@@ -59,19 +57,21 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     AsgiAuthMiddleware,
     IdentityMiddleware,
 )
-from af_mcp_broker.mcp.registry import (
+from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
+from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
     LIST_MCP_SERVERS_TOOL_NAME,
     ToolRouting,
     identity_provider_url,
-    namespaced_tool_name,
 )
+from af_mcp_broker.service_status import RELINK_DETAIL
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from fastmcp import Context
+    from fastmcp.client import Client
     from fastmcp.prompts import Prompt
     from fastmcp.resources import Resource, ResourceTemplate
     from fastmcp.tools.base import Tool
@@ -82,411 +82,18 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials import (
         CredentialProvider,
         CredentialRegistry,
-        IssuedCredential,
     )
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.lint_observations import LintObservationStore
     from af_mcp_broker.maintenance import MaintenanceModeStore
-    from af_mcp_broker.mcp.lint_observations import LintObservationStore
-    from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+    from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
+    from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
 
 logger = structlog.get_logger(__name__)
-
-
-# mcp SDK v2's streamable-HTTP client normalizes ANY non-2xx response whose
-# body isn't already JSON-RPC-shaped into a generic MCPError(INTERNAL_ERROR),
-# delivered as a JSON-RPC error reply on the read stream -- never raised as an
-# httpx2-family exception (mcp/client/streamable_http.py's
-# _handle_request_response, the `response.status_code >= 400` branch). The
-# real HTTP status code is otherwise unrecoverable by the time _classify_failure
-# sees the resulting exception, so a rejected stored credential (401) can no
-# longer be told apart from any other backend failure -- see issue #314.
-#
-# A ContextVar set from a response event hook does NOT work around this: the
-# POST that receives the response runs inside a *child* task the SDK spawns
-# with `task_group.start_soon()` (mcp/client/streamable_http.py's
-# streamable_http_client), which gets its own copy of the current context --
-# a ContextVar.set() there is invisible once that task group's `async with`
-# block returns control to the caller. Verified by direct repro before
-# settling on the approach below.
-#
-# Instead, this hook raises httpx2.HTTPStatusError itself, for a 401 only --
-# every other status is left to the SDK's own handling (its JSON-RPC-shaped-
-# body parse, its dedicated 404 mapping, etc.), unchanged. Raising inside a
-# response hook propagates like any exception from httpx2.AsyncClient.send()
-# (httpx2/_client.py's _send_handling_redirects loop awaits each hook
-# in-line, no special-casing); since it originates inside the SDK's spawned
-# task, it surfaces wrapped in an anyio ExceptionGroup exactly like the
-# proxy transport failures _iter_leaf_exceptions already exists to walk
-# through -- so the existing, already-tested 401-leaf check below needs no
-# further change to recognize it.
-async def _raise_for_401(response: httpx2.Response) -> None:
-    if response.status_code == 401:
-        response.raise_for_status()
-
-
-def _report_401(
-    on_unauthorized: Callable[[], Awaitable[None]],
-) -> Callable[[httpx2.Response], Awaitable[None]]:
-    """Response hook that calls *on_unauthorized* when the backend answers 401 (issue #344).
-
-    Installed only on a client carrying an injected per-user credential, so
-    a 401 here means the backend rejected exactly that credential. It runs
-    ahead of ``_raise_for_401`` and never raises itself: a failed report is
-    logged, and the 401 still propagates unchanged.
-    """
-
-    async def _hook(response: httpx2.Response) -> None:
-        if response.status_code != 401:
-            return
-        try:
-            await on_unauthorized()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("aggregator.mark_rejected_failed", error=str(exc))
-
-    return _hook
-
-
-def _unauthorized_raising_httpx_client_factory(
-    headers: dict[str, str] | None = None,
-    timeout: httpx2.Timeout | None = None,
-    auth: httpx2.Auth | None = None,
-    *,
-    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
-    **kwargs: Any,
-) -> httpx2.AsyncClient:
-    """``McpHttpClientFactory`` that adds ``_raise_for_401`` to the client's response hooks.
-
-    With *on_unauthorized*, also adds ``_report_401`` ahead of it.
-
-    Mirrors ``mcp.shared._httpx_utils.create_mcp_http_client``'s defaults
-    (30s connect/write/pool, 300s read, for a backend that holds a response
-    stream open) rather than importing that private module directly.
-    ``**kwargs`` absorbs ``follow_redirects`` (passed by both
-    ``StreamableHttpTransport``'s ``connect_session``, but not part of the
-    documented factory signature -- see its ``httpx_client_factory``
-    docstring recommending ``**kwargs`` for exactly this forward-compatibility
-    reason).
-    """
-    if timeout is None:
-        timeout = httpx2.Timeout(30.0, read=300.0)
-    client_kwargs: dict[str, Any] = {"timeout": timeout, **kwargs}
-    if headers is not None:
-        client_kwargs["headers"] = headers
-    if auth is not None:
-        client_kwargs["auth"] = auth
-    client = httpx2.AsyncClient(**client_kwargs)
-    response_hooks = client.event_hooks.setdefault("response", [])
-    if on_unauthorized is not None:
-        response_hooks.append(_report_401(on_unauthorized))
-    response_hooks.append(_raise_for_401)
-    return client
-
-
-def _is_jsonrpc_request(request: httpx2.Request) -> bool:
-    """Whether *request*'s body is a JSON-RPC request (it carries an ``id``), as opposed to a notification that a server may answer with an empty body."""
-    try:
-        body = json.loads(request.content)
-    except (httpx2.RequestNotRead, ValueError):
-        return False
-    return isinstance(body, dict) and "id" in body
-
-
-def _raise_for_invalid_response(
-    service_name: str,
-) -> Callable[[httpx2.Response], Awaitable[None]]:
-    """Build a response hook raising ``BackendInvalidResponseError`` for a 200 reply to a JSON-RPC request that is neither an SSE stream nor a JSON document.
-
-    Same layer and reasoning as ``_raise_for_401`` above: the mcp SDK turns
-    such a reply into a generic parse-error ``MCPError`` whose text embeds a
-    prefix of the backend's body, and the HTTP status and content type are
-    gone by the time the broker sees it. Checking here keeps them, fails the
-    request as soon as the response arrives, and lets the broker name the
-    service. Only a syntactically valid JSON document is required of a
-    ``application/json`` reply; the SDK still validates its JSON-RPC shape.
-    A reply to a notification (no ``id``) is never inspected.
-    """
-
-    async def hook(response: httpx2.Response) -> None:
-        request = response.request
-        if (
-            request.method != "POST"
-            or response.status_code != 200
-            or not _is_jsonrpc_request(request)
-        ):
-            return
-        content_type = response.headers.get("content-type", "").lower()
-        if content_type.startswith("text/event-stream"):
-            return
-        problem = "unexpected content type"
-        if content_type.startswith("application/json"):
-            await response.aread()
-            try:
-                json.loads(response.content)
-            except ValueError:
-                problem = "body is not valid JSON"
-            else:
-                return
-        media_type = content_type.split(";")[0][:100]
-        logger.warning(
-            "aggregator.backend_invalid_response",
-            service=service_name,
-            status_code=response.status_code,
-            content_type=media_type,
-            problem=problem,
-        )
-        raise BackendInvalidResponseError(
-            f"Service '{service_name}' returned an invalid response "
-            f"(HTTP {response.status_code}, content-type "
-            f"{media_type or 'missing'}): {problem}."
-        )
-
-    return hook
-
-
-def _checked_httpx_client_factory(
-    service_name: str,
-    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
-) -> Callable[..., httpx2.AsyncClient]:
-    """``McpHttpClientFactory`` for *service_name*: ``_unauthorized_raising_httpx_client_factory`` (given *on_unauthorized*) plus the invalid-response check."""
-
-    def factory(
-        headers: dict[str, str] | None = None,
-        timeout: httpx2.Timeout | None = None,
-        auth: httpx2.Auth | None = None,
-        **kwargs: Any,
-    ) -> httpx2.AsyncClient:
-        client = _unauthorized_raising_httpx_client_factory(
-            headers=headers,
-            timeout=timeout,
-            auth=auth,
-            on_unauthorized=on_unauthorized,
-            **kwargs,
-        )
-        client.event_hooks["response"].append(_raise_for_invalid_response(service_name))
-        return client
-
-    return factory
-
-
-def _build_client(
-    spec: ServiceSpec,
-    headers: dict[str, str] | None = None,
-    on_unauthorized: Callable[[], Awaitable[None]] | None = None,
-) -> Client:
-    """Construct the plain (never ProxyClient) Client every branch of _make_client_factory returns.
-
-    Applies the service's configured per-call read timeout (ServiceSpec.
-    timeout_seconds) so a slow/unresponsive service fails that one call
-    cleanly instead of hanging the aggregator, and installs the same
-    progress/log *notification* forwarding handlers fastmcp's ProxyClient
-    installs by default -- ProxyClient itself is still not used (see
-    _make_client_factory's docstring: its unconditional
-    forward_incoming_headers=True for HTTP clients is the one behavior
-    deliberately avoided here), but that has nothing to do with
-    these two handlers, which only relay already-decided-safe notification
-    content from the service to the aggregator's own caller, never inbound
-    credentials.
-
-    *on_unauthorized* comes from ``_bearer_injection`` alongside *headers*:
-    it reports a backend 401 for the injected credential (issue #344).
-
-    The same ``timeout_seconds`` also bounds the initialize handshake
-    (``init_timeout``, otherwise unbounded), which is how long a backend that
-    accepts the connection but never speaks would hold the caller (issue
-    #386).
-    """
-    return Client(
-        StreamableHttpTransport(
-            spec.url,
-            headers=headers,
-            httpx_client_factory=_checked_httpx_client_factory(
-                spec.name, on_unauthorized
-            ),
-        ),
-        timeout=spec.timeout_seconds,
-        init_timeout=spec.timeout_seconds,
-        progress_handler=default_proxy_progress_handler,
-        log_handler=default_proxy_log_handler,
-    )
-
-
-class ListTimeCredential(NamedTuple):
-    """What a list-time connection should carry, and why it carries nothing.
-
-    ``headers``/``skip_reason`` as documented on ``_resolve_list_time_headers``;
-    ``on_unauthorized`` is set only when a per-user bearer credential was
-    injected, and goes to ``_build_client`` with ``headers``.
-    """
-
-    headers: dict[str, str] | None
-    skip_reason: str | None
-    on_unauthorized: Callable[[], Awaitable[None]] | None = None
-
-
-def _bearer_injection(
-    provider: CredentialProvider, principal: Principal, cred: IssuedCredential
-) -> tuple[dict[str, str], Callable[[], Awaitable[None]] | None]:
-    """Headers injecting *cred* for a backend request, plus its 401 report (issue #344).
-
-    The report is bound to this exact access token, so a 401 can only ever
-    reject the token that was actually sent (see ``mark_rejected``). Both
-    are empty when *cred* carries no bearer token.
-    """
-    token = (
-        cred.payload.get("access_token") if cred.kind == CredentialKind.BEARER else None
-    )
-    if not token:
-        return {}, None
-
-    async def _mark_rejected() -> None:
-        await provider.mark_rejected(principal, token)
-
-    return {"Authorization": f"Bearer {token}"}, _mark_rejected
-
-
-async def _resolve_list_time_headers(
-    spec: ServiceSpec,
-    credential_registry: CredentialRegistry,
-    principal: Principal,
-) -> ListTimeCredential:
-    """Best-effort per-user credential mint for a bearer service's tools/list-time connection.
-
-    Returns a ``ListTimeCredential`` (``headers``, ``skip_reason``, and the
-    injected credential's ``on_unauthorized`` report). A caller who has not
-    linked the credential raises ``NotLinkedForListingError`` before anything is
-    minted, so the backend is never contacted and the service contributes no
-    tools to that caller's list, as for x509/krb5/servicex.
-
-    Every other failure is non-fatal: unlike the authorized tools/call path
-    in ``_bearer_factory``, a provider that does not resolve, or a mint that
-    fails for an operational reason, must not prevent the connection attempt
-    outright -- doing so would mean this service's ``ProxyProvider`` never
-    completes a single successful ``_list_tools()`` call for a caller whose
-    mint failed, which (a) would leave its component-list cache permanently
-    unpopulated (fastmcp's ``ProxyProvider`` only writes that cache after a
-    call that didn't raise), forcing every later ``_get_tool()`` cache-miss
-    lookup -- including ones for a *different*, perfectly authorized caller
-    -- to re-trigger a listing, and (b) a listing failure raised from there
-    is swallowed by ``AggregateProvider._get_tool()``'s own warn-and-continue
-    handling into a bare "Unknown tool", losing the friendly authorized-path
-    ``ToolError`` entirely. Connecting without a credential instead
-    reproduces exactly what a "none" service does: a service that itself
-    gates listing on auth (rucio-mcp) still ends up excluded via its own 401
-    -- classified and logged by ``_ObservableProxyProvider`` below.
-
-    ``skip_reason`` (``"unavailable"``) is set whenever ``headers`` is
-    ``None``, letting the caller pre-record *why* no credential was attached
-    (see the per-service request-scoped state in ``_bearer_factory``) for
-    ``_classify_list_failure`` to use if the resulting uncredentialed
-    connection does go on to fail.
-    """
-    try:
-        provider = await credential_registry.resolve(spec.name)
-    except KeyError:
-        return ListTimeCredential(None, "unavailable")
-
-    await _raise_unless_linked_to_list(spec, provider, principal)
-
-    try:
-        cred = await provider.issue(principal, spec.name)
-    except (NeedsUnlockError, HTTPException):
-        return ListTimeCredential(None, "unavailable")
-
-    headers, on_unauthorized = _bearer_injection(provider, principal, cred)
-    return ListTimeCredential(headers, None, on_unauthorized)
-
-
-def _iter_leaf_exceptions(
-    exc: BaseException, *, _seen: set[int] | None = None
-) -> Iterator[BaseException]:
-    """Yield *exc* itself, its ``ExceptionGroup`` leaves, and its ``__cause__``/``__context__`` chain.
-
-    A transport failure inside fastmcp's client (which runs its I/O in anyio
-    task groups) can surface wrapped in a ``BaseExceptionGroup`` rather than
-    as the raw ``httpx`` exception -- classification below must look through
-    that wrapping or an injected-credential 401 would misclassify as
-    "unavailable". Separately, fastmcp v4 wraps a proxy transport failure as
-    a plain chained exception (``raise _proxy_upstream_error(error) from
-    error``), not a group, so the chain must be walked too or the same 401
-    would stay unreachable when it arrives that way instead. ``_seen``
-    guards against a pathological cause/context cycle; callers never pass it.
-    """
-    seen = _seen if _seen is not None else set()
-    if id(exc) in seen:
-        return
-    seen.add(id(exc))
-    if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            yield from _iter_leaf_exceptions(sub, _seen=seen)
-        return
-    yield exc
-    chained = exc.__cause__ or exc.__context__
-    if chained is not None:
-        yield from _iter_leaf_exceptions(chained, _seen=seen)
-
-
-def _classify_failure(
-    exc: Exception, *, injected: bool, skip_reason: str | None
-) -> str:
-    """Classify failure decision for api access.
-
-    Decision core shared by ``_classify_list_failure`` (the /mcp listing
-    path) and ``fetch_service_tool_listing`` (the /v1 per-service tool
-    listing), so the two can never disagree on what a failure means.
-
-    If a credential mint was deliberately skipped (``skip_reason`` set),
-    that's the precise reason regardless of what the resulting
-    uncredentialed connection raised. Otherwise, a raw upstream 401 is only
-    "unauthorized" -- meaning the stored credential itself was rejected,
-    bad/expired, the caller should re-link -- when a credential actually was
-    injected for this attempt; a 401 with nothing injected (e.g. a
-    "none"/"x509" service unexpectedly requiring auth) falls back to
-    "unavailable", an operational/config problem rather than a "go re-link"
-    prompt.
-
-    A request that never got a correlated response within its deadline used
-    to be distinguished as "timeout" (``McpError`` with ``code ==
-    httpx.codes.REQUEST_TIMEOUT``) from "unavailable" (a connection-level
-    refusal/reset before the request was even sent) -- see #280, which also
-    explains why that distinction was never precise pre-mcp-v2: the same
-    code covered both a genuinely slow backend and one whose malformed
-    response orphaned the request. mcp SDK v2 fixed the latter (#292), but
-    also stopped producing ``REQUEST_TIMEOUT`` at all -- fastmcp v4's
-    ``server/providers/proxy.py._proxy_upstream_error`` normalizes
-    every proxy transport failure, timeouts included, to a plain
-    ``INTERNAL_ERROR``. That probe is dead code post-migration and has been
-    removed rather than kept as an unreachable branch; "timeout" is no
-    longer a ``_classify_failure`` outcome, which makes
-    ``api/catalog_tools.py``'s dedicated "timeout" status message dead code
-    too -- flagged for a follow-up decision (retire the status, or detect a
-    real client-side timeout by chain-walking for ``TimeoutError`` instead,
-    which fastmcp still preserves on ``__cause__``) rather than silently
-    left as-is.
-
-    Note: httpx2, not httpx (1.x) -- fastmcp v4 / mcp SDK v2 are httpx2-only,
-    and httpx2.HTTPStatusError is not a subclass of httpx (1.x)'s.
-
-    mcp SDK v2's streamable-HTTP client normally never raises this at all for
-    a 401: a non-2xx response whose body isn't already JSON-RPC-shaped is
-    normalized into a generic ``MCPError(INTERNAL_ERROR)`` delivered on the
-    read stream, discarding the real status code. ``_build_client``'s
-    ``_unauthorized_raising_httpx_client_factory`` forces a 401 specifically
-    back into a raised ``httpx2.HTTPStatusError`` at the httpx layer so this
-    check can still find it -- see issue #314.
-    """
-    if not injected and skip_reason is not None:
-        return skip_reason
-    if injected and any(
-        isinstance(leaf, httpx2.HTTPStatusError) and leaf.response.status_code == 401
-        for leaf in _iter_leaf_exceptions(exc)
-    ):
-        return "unauthorized"
-    return "unavailable"
 
 
 async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str, str]:
@@ -495,7 +102,7 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     Consults the per-service request-scoped state ``_bearer_factory``'s
     list-time branch records (keyed per service since one ``tools/list``
     request fans out to every service concurrently), then applies
-    ``_classify_failure``'s shared decision core. A ``NotLinkedForListingError``
+    ``classify_failure``'s shared decision core. A ``NotLinkedForListingError``
     (the client factory turned the caller away before any request) is
     ``"not_linked"`` outright, or ``"unauthorized"`` -- the stored credential
     was rejected -- when it says ``rejected``.
@@ -509,103 +116,7 @@ async def _classify_list_failure(exc: Exception, service_name: str) -> tuple[str
     ctx = get_context()
     status = await ctx.get_state(f"__list_credential_status__:{service_name}")
     injected, skip_reason = status if status is not None else (False, None)
-    return _classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
-
-
-async def _raise_unless_linked_to_list(
-    spec: ServiceSpec, provider: CredentialProvider, principal: Principal
-) -> None:
-    """Raise ``NotLinkedForListingError`` unless *principal* has linked the credential *provider* issues for *spec*."""
-    if await provider.is_linked(principal):
-        return
-    rejected = await provider.is_rejected(principal)
-    raise NotLinkedForListingError(
-        f"Service '{spec.name}' lists its tools only for callers who have "
-        "linked their credential"
-        + (" (the linked credential was rejected)." if rejected else "."),
-        rejected=rejected,
-    )
-
-
-async def _require_linked_to_list(
-    spec: ServiceSpec, credential_registry: CredentialRegistry, principal: Principal
-) -> None:
-    """Raise ``NotLinkedForListingError`` unless *principal* has linked the credential *spec* (x509/krb5/servicex) redeems.
-
-    A provider that doesn't resolve is a platform misconfiguration reported
-    elsewhere, so it does not block the listing here.
-    """
-    try:
-        provider = await credential_registry.resolve(spec.name)
-    except KeyError:
-        return
-    await _raise_unless_linked_to_list(spec, provider, principal)
-
-
-def _require_signing_issuer(
-    spec: ServiceSpec, broker_token_issuer: BrokerTokenIssuer | None
-) -> BrokerTokenIssuer:
-    """Return the broker's signing issuer for an x509/krb5/servicex *spec*, which authenticates its backend with an AF Broker Identity Token.
-
-    Boot validation guarantees the issuer for every such service: each is
-    covered by an entry whose provider needs the signing key, and a
-    deployment with such an entry and no key refuses to start. A missing
-    issuer here is therefore a wiring bug in the caller, not a deployment
-    state, and is reported as one.
-    """
-    if broker_token_issuer is None:
-        msg = (
-            f"Service '{spec.name}' (auth_type: {spec.auth_type}) needs the "
-            "broker's signing key to mint AF Broker Identity Tokens, but no "
-            "BrokerTokenIssuer was supplied."
-        )
-        raise RuntimeError(msg)
-    return broker_token_issuer
-
-
-async def resolve_list_time_credential(
-    spec: ServiceSpec,
-    credential_registry: CredentialRegistry,
-    principal: Principal,
-    broker_token_issuer: BrokerTokenIssuer | None = None,
-) -> ListTimeCredential:
-    """Best-effort list-time credential headers for *spec*, any auth_type.
-
-    The /v1 per-service tool listing's (api/catalog_tools.py) entry point
-    into the exact same list-time credential logic the aggregator's client
-    factories use, so the portal's tool listing can never disagree with what
-    a tools/list through /mcp would have injected:
-
-    - "none": no per-user credential concept at all -> ``({}, None)``.
-    - "x509"/"krb5"/"servicex": share one code path here -- a locally-signed
-      AF Broker Identity Token, mirroring ``_x509_factory``'s/
-      ``_krb5_factory``'s/``_servicex_factory``'s identical list-time
-      branches; boot validation guarantees the issuer for these services
-      (see ``_require_signing_issuer``). The backend redeems the
-      actual proxy/ticket/access-token itself via ``POST /v1/credentials/
-      x509/redeem``, ``.../krb5/redeem``, or ``.../servicex/redeem``
-      respectively; this function must never call ``provider.issue()`` for
-      any of the three. A caller who has not linked the credential raises
-      ``NotLinkedForListingError`` before anything is minted.
-    - "bearer": ``_resolve_list_time_headers`` (the issue #121 best-effort
-      mint). A caller who has not linked the credential raises
-      ``NotLinkedForListingError`` before anything is minted, as for the three
-      types above; ``skip_reason`` ("unavailable") is set when a resolved,
-      linked caller's mint failed for an operational reason.
-
-    Callers must gate on holding at least one of the service's required
-    permissions first (``_might_be_entitled`` here; ``api/permissions.py``'s
-    ``_holds_any_required_permission`` for ``api/catalog_tools.py``) -- a
-    caller who could never pass it shouldn't trigger a mint attempt at all.
-    """
-    if spec.auth_type == "none":
-        return ListTimeCredential({}, None)
-    if spec.auth_type in ("x509", "krb5", "servicex"):
-        issuer = _require_signing_issuer(spec, broker_token_issuer)
-        await _require_linked_to_list(spec, credential_registry, principal)
-        token, _ = issuer.mint(principal.subject, spec.effective_audience)
-        return ListTimeCredential({"Authorization": f"Bearer {token}"}, None)
-    return await _resolve_list_time_headers(spec, credential_registry, principal)
+    return classify_failure(exc, injected=injected, skip_reason=skip_reason), str(exc)
 
 
 def _might_be_entitled(
@@ -670,81 +181,18 @@ async def _identity_token_list_client(
 
     Minting is a local signature, so there is no network to fail. An
     unentitled caller (``_require_entitled_list_principal``) or an unlinked
-    one (``_require_linked_to_list``) raises before anything is minted or any
+    one (``require_linked_to_list``) raises before anything is minted or any
     request is made.
     """
     principal = await _require_entitled_list_principal(ctx, spec, policy)
-    await _require_linked_to_list(spec, credential_registry, principal)
+    await require_linked_to_list(spec, credential_registry, principal)
     token, _ = issuer.mint(principal.subject, spec.effective_audience)
     await ctx.set_state(
         f"__list_credential_status__:{spec.name}",
         (True, None),
         serializable=False,
     )
-    return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
-
-
-class ToolListingEntry(NamedTuple):
-    """One tool as ``fetch_service_tool_listing`` and the builtin-service listing (``api/catalog_tools.py``) both see it (issue #238 B.7).
-
-    A bare ``(name, description)`` pair used to be all either path kept, so
-    ``/v1/catalog``'s per-service tool listing could never show a read/write
-    badge even once a backend declared one, and a client comparing
-    ``GET /v1/catalog/{service}/tools`` against a real ``tools/list`` saw
-    less than the latter carries. ``annotations`` is forwarded verbatim (or
-    ``None`` if the tool declared none); ``has_output_schema`` is a bare
-    presence flag, not the schema itself -- the payload stays light, schemas
-    belong to the MCP client.
-    """
-
-    name: str
-    description: str
-    annotations: ToolAnnotations | None
-    has_output_schema: bool
-
-
-async def fetch_service_tool_listing(
-    spec: ServiceSpec,
-    credential: ListTimeCredential,
-) -> tuple[str, list[ToolListingEntry]]:
-    """Connect to *spec* once and list its tools.
-
-    *credential* comes from ``resolve_list_time_credential``.
-    Returns ``(status, tools)``: status is "ok" or a ``_classify_failure``
-    reason ("not_linked" | "unauthorized" | "unavailable"), and tools are
-    ``ToolListingEntry``s with ``ServiceSpec.apply_namespace`` already
-    applied to the name -- the names a caller actually sees through /mcp.
-    ``spec.exclude_tools`` (native names, issue #173) is filtered out here
-    too, so this listing can never show a tool a real ``tools/list`` through
-    /mcp hides. Deliberately built on ``_build_client`` (same transport,
-    per-call timeout, and notification handlers as the aggregator's
-    own factories) rather than a second HTTP code path.
-    """
-    client = _build_client(
-        spec,
-        headers=credential.headers,
-        on_unauthorized=credential.on_unauthorized,
-    )
-    try:
-        async with client:
-            tools = await client.list_tools()
-    except Exception as exc:  # noqa: BLE001
-        reason = _classify_failure(
-            exc,
-            injected=bool(credential.headers),
-            skip_reason=credential.skip_reason,
-        )
-        return reason, []
-    return "ok", [
-        ToolListingEntry(
-            name=namespaced_tool_name(spec, tool.name),
-            description=tool.description or "",
-            annotations=tool.annotations,
-            has_output_schema=tool.output_schema is not None,
-        )
-        for tool in tools
-        if tool.name not in spec.exclude_tools
-    ]
+    return build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
 
 def _identity_link_url(settings: Settings, alias: str | None) -> str:
@@ -811,7 +259,7 @@ def _not_linked_error(
 
     *rejected* is the provider's ``is_rejected()``: the caller did link, and a
     backend rejected the stored credential, so the message is the catalog's
-    re-link sentence (``_RELINK_DETAIL``) plus the same link and hint.
+    re-link sentence (``RELINK_DETAIL``) plus the same link and hint.
     """
     url = _identity_link_url(settings, alias)
     if alias is None:
@@ -820,7 +268,7 @@ def _not_linked_error(
         link_hint = f'`{LINK_IDENTITY_TOOL_NAME}` (provider="{alias}")'
     if rejected:
         return ToolError(
-            f"{_RELINK_DETAIL} Visit {url} to re-link it, or call {link_hint} "
+            f"{RELINK_DETAIL} Visit {url} to re-link it, or call {link_hint} "
             "to get this link."
         )
     return ToolError(
@@ -1072,7 +520,7 @@ def _make_client_factory(
     still gets the not-linked error). Any other failure to mint (no provider
     configured, a mint error) does NOT prevent the connection
     attempt, unlike the authorized tools/call path below -- see
-    ``_resolve_list_time_headers``'s docstring for why raising there instead
+    ``resolve_list_time_headers``'s docstring for why raising there instead
     would reintroduce a worse bug (a permanently unpopulated schema cache
     poisoning a *different* caller's later, genuinely authorized tools/call).
     ``_ObservableProxyProvider`` (below) classifies and structured-logs
@@ -1098,12 +546,12 @@ def _make_client_factory(
     if spec.auth_type == "none":
 
         def _none_factory() -> Client:
-            return _build_client(spec)
+            return build_client(spec)
 
         return _none_factory
 
     if spec.auth_type == "x509":
-        issuer = _require_signing_issuer(spec, broker_token_issuer)
+        issuer = require_signing_issuer(spec, broker_token_issuer)
 
         async def _x509_factory() -> Client:
             ctx = get_context()
@@ -1142,12 +590,12 @@ def _make_client_factory(
             # Identity assertion only (sub/aud): the service redeems the proxy
             # with this token; it has no use for POSIX claims.
             token, _ = issuer.mint(principal.subject, spec.effective_audience)
-            return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
+            return build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _x509_factory
 
     if spec.auth_type == "krb5":
-        issuer = _require_signing_issuer(spec, broker_token_issuer)
+        issuer = require_signing_issuer(spec, broker_token_issuer)
 
         async def _krb5_factory() -> Client:
             ctx = get_context()
@@ -1186,12 +634,12 @@ def _make_client_factory(
             # Identity assertion only (sub/aud): the service redeems the
             # ticket with this token; it has no use for POSIX claims.
             token, _ = issuer.mint(principal.subject, spec.effective_audience)
-            return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
+            return build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _krb5_factory
 
     if spec.auth_type == "servicex":
-        issuer = _require_signing_issuer(spec, broker_token_issuer)
+        issuer = require_signing_issuer(spec, broker_token_issuer)
 
         async def _servicex_factory() -> Client:
             ctx = get_context()
@@ -1230,7 +678,7 @@ def _make_client_factory(
             # Identity assertion only (sub/aud): the service redeems the
             # access token with this token; it has no use for POSIX claims.
             token, _ = issuer.mint(principal.subject, spec.effective_audience)
-            return _build_client(spec, headers={"Authorization": f"Bearer {token}"})
+            return build_client(spec, headers={"Authorization": f"Bearer {token}"})
 
         return _servicex_factory
 
@@ -1241,11 +689,11 @@ def _make_client_factory(
             # a tools/list request (or a stale-cache _get_tool() refresh
             # triggered by one). See the docstring above for why a
             # best-effort mint is attempted here rather than skipped
-            # outright, and _resolve_list_time_headers for the non-fatal
+            # outright, and resolve_list_time_headers for the non-fatal
             # failure handling this requires (an unlinked caller raises
             # NotLinkedForListingError instead).
             principal = await _require_entitled_list_principal(ctx, spec, policy)
-            resolved = await _resolve_list_time_headers(
+            resolved = await resolve_list_time_headers(
                 spec, credential_registry, principal
             )
             # Keyed per service (not a single shared key) since one
@@ -1256,7 +704,7 @@ def _make_client_factory(
                 (resolved.headers is not None, resolved.skip_reason),
                 serializable=False,
             )
-            return _build_client(
+            return build_client(
                 spec,
                 headers=resolved.headers or {},
                 on_unauthorized=resolved.on_unauthorized,
@@ -1301,10 +749,8 @@ def _make_client_factory(
             # its detail the same way FastAPI's own handler would at /v1.
             raise ToolError(str(exc.detail)) from exc
 
-        call_headers, on_unauthorized = _bearer_injection(provider, principal, cred)
-        return _build_client(
-            spec, headers=call_headers, on_unauthorized=on_unauthorized
-        )
+        call_headers, on_unauthorized = bearer_injection(provider, principal, cred)
+        return build_client(spec, headers=call_headers, on_unauthorized=on_unauthorized)
 
     return _bearer_factory
 
@@ -1360,7 +806,7 @@ class _ObservableProxyProvider(ProxyProvider):
     pixi.lock) itself documents as a subclassing point -- but it's still
     third-party internals, not a public contract fastmcp guarantees stable.
     If ``_list_tools()``'s signature, its call sites (``_get_tool()``'s
-    stale-cache refresh in particular -- see ``_resolve_list_time_headers``'s
+    stale-cache refresh in particular -- see ``resolve_list_time_headers``'s
     docstring for why that path matters here), or its cache-write-only-on-
     success behavior change on a future fastmcp bump, re-check this class.
 
@@ -1633,7 +1079,7 @@ class _ObservableProxyProvider(ProxyProvider):
                 items = await fetch()
             except Exception as exc:
                 # A 401 for an injected credential has just made its
-                # provider refresh or reject it (issue #344, _report_401), so
+                # provider refresh or reject it (issue #344, report_401), so
                 # the next listing must try again rather than replay this
                 # failure; every other failure is negative-cached. A caller
                 # turned away before any request (NotLinkedForListingError, even
@@ -2007,21 +1453,26 @@ def build_aggregator(
     return mcp
 
 
-def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
-    """Return the Starlette middleware spec that enforces identity at the ASGI layer.
+def build_asgi_middleware(mcp: FastMCP) -> list[Middleware]:
+    """Return the Starlette middleware specs that gate /mcp at the ASGI layer, outermost first.
 
-    Enforces identity for ``mcp``'s http_app (issue #138/#144 step 1) -- pass
-    this into ``FastMCP.http_app(middleware=[...])`` when mounting.
+    Enforces identity (issue #138/#144 step 1) and then maintenance mode for
+    ``mcp``'s http_app -- pass this into ``FastMCP.http_app(middleware=...)``
+    when mounting. The order is load-bearing: the maintenance gate reads the
+    Principal the identity middleware stashes, so identity must wrap it.
 
     Must be built from the same FastMCP instance ``build_aggregator()``
-    constructed: it shares that instance's IdentityMiddleware (found via
-    ``_find_middleware``), which is the single mutable settings handle
-    ``populate_aggregator()`` keeps up to date --
+    constructed: both middlewares share that instance's IdentityMiddleware
+    (found via ``_find_middleware``), which is the single mutable settings
+    handle ``populate_aggregator()`` keeps up to date --
     see ``identity_mw.AsgiAuthMiddleware``'s docstring for why sharing it
     rather than holding a second copy matters.
     """
     identity_mw, _, _ = _find_middleware(mcp)
-    return Middleware(AsgiAuthMiddleware, identity_mw=identity_mw)
+    return [
+        Middleware(AsgiAuthMiddleware, identity_mw=identity_mw),
+        Middleware(AsgiMaintenanceMiddleware, identity_mw=identity_mw),
+    ]
 
 
 def populate_aggregator(

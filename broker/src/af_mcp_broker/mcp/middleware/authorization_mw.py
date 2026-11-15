@@ -12,7 +12,6 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from af_mcp_broker import metrics
 from af_mcp_broker.audit import AuditRecord, write_audit
-from af_mcp_broker.audit.pipeline import submit_metered_audit
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     EntitlementPolicy,
@@ -22,9 +21,13 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
+from af_mcp_broker.backend_errors import (
+    ERROR_CLASS_TOOL_REPORTED,
+    classify_backend_error,
+)
 from af_mcp_broker.logging import current_correlation_id
-from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
-from af_mcp_broker.mcp.registry import RATE_LIMITS_TOOL_NAME
+from af_mcp_broker.metering import submit_metered_audit
+from af_mcp_broker.service_registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
     current_trace_id,
@@ -36,8 +39,8 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import ToolResult
 
-    from af_mcp_broker.identity import Principal
-    from af_mcp_broker.mcp.registry import ServiceRegistry
+    from af_mcp_broker.principal import Principal
+    from af_mcp_broker.service_registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
 
 logger = structlog.get_logger(__name__)
@@ -528,7 +531,7 @@ class AuthorizationMiddleware(Middleware):
             # The result measurement -- an estimate of its context-injection
             # cost, not wire size; see measure_tool_result's docstring for
             # exactly what is serialized and counted -- happens on the metering
-            # pipeline's background worker (audit/pipeline.py), never here:
+            # pipeline's background worker (metering.py), never here:
             # serializing and tokenizing a large result can cost tens of ms,
             # and the tool call must not wait on it (nor on the audit write).
             # The record is handed over with result_bytes/result_tokens_est

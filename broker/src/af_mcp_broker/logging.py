@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 # Audit lines are emitted on this logger so they can be routed to their own
 # destination (AUDIT_LOG_FILE) while sharing the processor chain, and hence
 # the line shape, of every other log line. Not a parent of any other logger
-# name (``af_mcp_broker.audit.pipeline`` etc.), whose records would otherwise
+# name (``af_mcp_broker.metering`` etc.), whose records would otherwise
 # propagate into the audit destination.
 AUDIT_LOGGER_NAME = "af_mcp_broker.audit.logger"
 

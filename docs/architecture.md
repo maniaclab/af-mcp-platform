@@ -180,8 +180,8 @@ implemented today and "(done)" marks the ones that have.
 | Per-tool call rate limits (`rate_limits` in `policy.yaml`) | `authorization/rate_limit.py`, `AuthorizationMiddleware` | Budget multiplied by N | Strong: one counter per rule and subject, atomic increment | Falls back to a per-replica count and logs `tool_rate_limit.shared_state_unavailable`; never fails open, never refuses every call | 1 (done) |
 | PAT mint rate window (10 mints / hour per subject) | `api/tokens.py`, `TokenRegistry` | Mint cap multiplied by N | Strong: one counter per subject, atomic increment. Soft anti-abuse cap, not a security boundary | Falls back to a per-replica count and logs `token_registry.shared_state_unavailable`; never refuses every mint | 2 (done) |
 | Per-(subject, service) tools/list cache and 30 s negative cache | `mcp/aggregator.py`, `mcp/cache_invalidation.py` | Invalidate-on-link/revoke reaches only the replica that handled it | Eventual: the drop is published to every replica (pub/sub), so staleness is the delivery delay, not the TTL | Fails open: the local drop still happens, the broadcast failure is logged as `list_cache_invalidation.shared_state_unavailable`, and other replicas fall back to TTL-only staleness. A replica that resubscribes after an outage drops every cached listing, since it may have missed messages | 3 (done) |
-| Caller list-failure records | `mcp/registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual: cleared with the listing entries by the same invalidation, otherwise refreshed by each replica's own listings | Fail open | 3 (done, via the invalidation above) |
-| Admin lint tables (annotation mismatches, tool-mapping drift; #332) | `mcp/lint_observations.py`, `mcp/middleware/entitlement_mw.py`, `api/admin.py` | Each replica reports only what it has observed | Eventual: one record per service in the store, written whenever a caller lists that service's tools, so any replica answers the same | Falls back to what this replica observed and logs `lint_observations.shared_state_unavailable`; never reports a service observed that no one listed | 4 (done) |
+| Caller list-failure records | `service_registry.py` (`_caller_list_failures`) | Status differs by replica until each re-lists | Eventual: cleared with the listing entries by the same invalidation, otherwise refreshed by each replica's own listings | Fail open | 3 (done, via the invalidation above) |
+| Admin lint tables (annotation mismatches, tool-mapping drift; #332) | `lint_observations.py`, `mcp/middleware/entitlement_mw.py`, `api/admin.py` | Each replica reports only what it has observed | Eventual: one record per service in the store, written whenever a caller lists that service's tools, so any replica answers the same | Falls back to what this replica observed and logs `lint_observations.shared_state_unavailable`; never reports a service observed that no one listed | 4 (done) |
 | MCP OAuth authorization codes | `mcp_auth_codes.py` | Codes are self-contained (Fernet, `BROKER_STATE_KEY`), so any replica opens them; the single-use marker is per replica, so a replay on another replica succeeds | Strong, single use: one `mcp_auth_code:<id>` counter per code | Redemption is refused with `invalid_grant` (fail closed); the code is not consumed, so the client retries or restarts the flow | 1 (done) |
 | Revocation, credentials, principal cache, credmon lease | Vault | Already shared | n/a | n/a | n/a |
 | Usage, maintenance mode | Postgres | Already shared | n/a | n/a | n/a |
@@ -308,6 +308,143 @@ The broker's effective privilege depends on configuration:
   the aggregator injects) and `required_permission` (who may call it).
   `required_permission: __none__` — open to any authenticated user — is
   only appropriate for user-tier read-only services.
+
+---
+
+## Import layers
+
+The broker's modules sit in fixed layers. A module imports only from layers
+below its own, and `if TYPE_CHECKING:` imports count the same as runtime ones.
+`import-linter` enforces this: the contracts live in `[tool.importlinter]` in
+`broker/pyproject.toml`, `pixi run -e dev lint-imports` runs them, and
+`lint-all` (the CI lint job) includes that task. The layer contract is
+exhaustive, so a new top-level module fails the check until it is placed in a
+layer on purpose.
+
+Highest layer first. Each band is a layer and each box in it is a module; a
+module may import only from the layers below its own. Modules in the same band
+are independent: none imports another from its own band, directly or
+transitively (so, for example, `api` and `mcp` never import each other).
+
+```mermaid
+flowchart TB
+    subgraph wiring["Wiring: the FastAPI app, lifespan and entry points"]
+        direction LR
+        m_app["app"]
+        m_token_sweep["token_sweep"]
+        m_main["__main__"]
+        m_app ~~~ m_token_sweep ~~~ m_main
+    end
+    subgraph edges["Edges: /v1 routers and the /mcp aggregator, independent of each other"]
+        direction LR
+        m_api["api"]
+        m_mcp["mcp"]
+        m_api ~~~ m_mcp
+    end
+    subgraph tokenid["Token identity: PAT to Principal"]
+        direction LR
+        m_pat_auth["pat_auth"]
+    end
+    subgraph ident["Identity: Keycloak JWT validation, the FastAPI auth dependency"]
+        direction LR
+        m_identity["identity"]
+    end
+    subgraph features["Features: services the edges share"]
+        direction LR
+        m_credmon["credmon"]
+        m_backend_client["backend_client"]
+        m_service_status["service_status"]
+        m_lint_observations["lint_observations"]
+        m_maintenance["maintenance"]
+        m_credmon ~~~ m_backend_client ~~~ m_service_status ~~~ m_lint_observations ~~~ m_maintenance
+    end
+    subgraph providers["Providers: credential providers and the service registry"]
+        direction LR
+        m_credentials["credentials"]
+        m_service_registry["service_registry"]
+        m_credentials ~~~ m_service_registry
+    end
+    subgraph meteringL["Metering: tool-call audit, usage and metrics pipeline"]
+        direction LR
+        m_metering["metering"]
+    end
+    subgraph otelL["OTel metrics"]
+        direction LR
+        m_otel_metrics["otel_metrics"]
+    end
+    subgraph usageL["Usage store"]
+        direction LR
+        m_usage["usage"]
+    end
+    subgraph auditL["Audit: record, writer, result measurement"]
+        direction LR
+        m_audit["audit"]
+    end
+    subgraph platform["Platform: caches, entitlement policy, tracing"]
+        direction LR
+        m_tracing["tracing"]
+        m_principal_cache["principal_cache"]
+        m_mcp_auth_codes["mcp_auth_codes"]
+        m_authorization["authorization"]
+        m_tracing ~~~ m_principal_cache ~~~ m_mcp_auth_codes ~~~ m_authorization
+    end
+    subgraph stores["Stores: directory client and PAT registry"]
+        direction LR
+        m_principal_directory["principal_directory"]
+        m_token_registry["token_registry"]
+        m_principal_directory ~~~ m_token_registry
+    end
+    subgraph settings["Settings and infrastructure clients"]
+        direction LR
+        m_config["config"]
+        m_otel_resource["otel_resource"]
+        m_vault_kv["vault_kv"]
+        m_shared_state["shared_state"]
+        m_oauth_state["oauth_state"]
+        m_cimd_client["cimd_client"]
+        m_backend_errors["backend_errors"]
+        m_config ~~~ m_otel_resource ~~~ m_vault_kv ~~~ m_shared_state ~~~ m_oauth_state ~~~ m_cimd_client ~~~ m_backend_errors
+    end
+    subgraph leaf["Leaf: no first-party imports"]
+        direction LR
+        m_errors["errors"]
+        m_constants["constants"]
+        m_principal["principal"]
+        m_http["http"]
+        m_logging["logging"]
+        m_metrics["metrics"]
+        m_version["_version"]
+        m_pat["pat"]
+        m_errors ~~~ m_constants ~~~ m_principal ~~~ m_http ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
+    end
+    wiring --> edges --> tokenid --> ident --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
+```
+
+An arrow means "may import from". Imports may skip layers downward; they may
+never point up.
+
+What the layering means in practice:
+
+- `Principal` and `PosixPrincipal` (a `Principal` whose `uid`, `gid` and
+  `unixname` are all present, built once by `PosixPrincipal.from_principal`)
+  live in `principal.py`, so authorization, credentials and maintenance use
+  them without depending on the HTTP layer. Constants such as
+  `BUILTIN_SERVICE_NAME` live in `constants.py`, so `config` depends on no
+  other first-party module.
+- `identity` answers "who is this?" and nothing else. The maintenance gate
+  runs after it, as its own step: the `/v1` dependency is
+  `api/maintenance_gate.py`'s `require_not_in_maintenance`, and on `/mcp` it is
+  `AsgiMaintenanceMiddleware`, installed inside `AsgiAuthMiddleware` by
+  `mcp.aggregator.build_asgi_middleware`. A caller who cannot be authenticated
+  gets a 401 before the gate is consulted.
+- What `api` and `mcp` both need lives below them under public names:
+  `service_status` (per-caller availability of a service), `backend_client`
+  (building the backend client and listing a service's tools),
+  `backend_errors`, `service_registry` and `lint_observations`.
+  `api/app_state.py` holds the accessors for what the lifespan puts on
+  `app.state`, so the route modules share them under public names.
+- By convention a module does not import another module's `_private` name;
+  anything shared is public in the module that owns it.
 
 ---
 
@@ -610,7 +747,7 @@ deliberately accepted side effect: `af_usage` meters itself, so each call
 to it appears in the very usage data it reports.
 
 Success and error records reach the log through the metering pipeline
-(`audit/pipeline.py`): the hot path enqueues `(record, result)` and returns,
+(`metering.py`): the hot path enqueues `(record, result)` and returns,
 and a background worker measures the result (`result_bytes`,
 `result_tokens_est`) and writes the line — a tool call never waits on
 measurement or audit I/O. DENIED and UNMAPPED records stay synchronous
@@ -749,7 +886,7 @@ remain the canonical authorization/credential logic either way.
 ### Catalog status and listing failures
 
 `GET /v1/catalog` (and `af_list_mcp_servers`) report a per-caller `status`
-for each service, derived by `_service_status` (`api/permissions.py`) from
+for each service, derived by `service_status` (`service_status.py`) from
 data the broker already holds: the caller's permissions, whether their
 credential provider `is_linked()`, and the most recent classified
 `tools/list` failure the aggregator observed
@@ -770,7 +907,7 @@ status it can change:
 backend refused the credential. An `oauth21` credential that a backend 401
 marked rejected (`rejected_at`, see
 [Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens))
-also fails `is_linked()`, so `_service_status` asks
+also fails `is_linked()`, so `service_status` asks
 `provider.is_rejected()` to report it as `rejected` rather than `not_linked`.
 Because that provider refreshes or rejects the credential itself
 (`tracks_rejection`), its stored state alone decides: the caller's

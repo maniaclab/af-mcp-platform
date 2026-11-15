@@ -5,7 +5,7 @@ import httpx2
 import pytest
 from fastmcp.exceptions import ToolError
 
-from af_mcp_broker.mcp.errors import (
+from af_mcp_broker.backend_errors import (
     ERROR_CLASS_BACKEND,
     ERROR_CLASS_TRANSIENT,
     classify_backend_error,

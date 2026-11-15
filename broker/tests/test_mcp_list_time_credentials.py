@@ -31,15 +31,15 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_auth_middleware
-from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
+from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
     from fastmcp.utilities.tests import ASGIServer
 
-    from af_mcp_broker.identity import Principal
+    from af_mcp_broker.principal import Principal
 
 # ---------------------------------------------------------------------------
 # Regression coverage for issue #121: tools/list returned nothing for
@@ -510,7 +510,7 @@ async def test_unlinked_listing_does_not_poison_a_linked_callers_authorized_call
     AggregateProvider.get_tool() warn-and-skip handling into a bare
     "Unknown tool" -- silently losing the friendly, actionable ToolError.
     Falling back to an uncredentialed connection on mint failure (see
-    _resolve_list_time_headers's docstring in aggregator.py) fixes this:
+    resolve_list_time_headers's docstring in backend_client.py) fixes this:
     the auth-gated backend's own 401 still excludes it from the unlinked
     caller's list, but doesn't poison the shared cache for anyone else.
     """
@@ -622,7 +622,7 @@ async def test_replica_split_session_continuity(
             mcp,
             path="/mcp",
             stateless_http=stateless,
-            middleware=[build_asgi_auth_middleware(mcp)],
+            middleware=build_asgi_middleware(mcp),
         )
 
     headers = {

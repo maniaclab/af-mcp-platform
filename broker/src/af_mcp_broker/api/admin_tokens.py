@@ -27,11 +27,12 @@ from pydantic import BaseModel, ConfigDict
 from af_mcp_broker.api.tokens import (
     RevokeTokenResponse,
     TokenSummary,
-    _audit,
-    _registry,
-    _to_summary,
+    audit_token_action,
+    get_token_registry,
+    to_summary,
 )
-from af_mcp_broker.identity import Principal, require_admin
+from af_mcp_broker.identity import require_admin
+from af_mcp_broker.principal import Principal
 
 router = APIRouter(prefix="/admin/tokens", tags=["admin"])
 
@@ -48,7 +49,7 @@ class RevokeAllTokensResponse(BaseModel):
 async def _audit_revocation(
     admin: Principal, lookup_id: str, owner_subject: str
 ) -> None:
-    await _audit(
+    await audit_token_action(
         admin,
         "token.revoked",
         lookup_id,
@@ -66,9 +67,9 @@ async def list_principal_tokens(
     _admin: Annotated[Principal, Depends(require_admin)],
     subject: Annotated[str, Query(min_length=1)],
 ) -> list[TokenSummary]:
-    registry = _registry(request)
+    registry = get_token_registry(request)
     rows = await registry.list_for_principal(subject)
-    return [_to_summary(r) for r in rows]
+    return [to_summary(r) for r in rows]
 
 
 @router.delete(
@@ -81,7 +82,7 @@ async def revoke_principal_token(
     request: Request,
     admin: Annotated[Principal, Depends(require_admin)],
 ) -> RevokeTokenResponse:
-    registry = _registry(request)
+    registry = get_token_registry(request)
 
     # The owner is resolved from the lookup index rather than taken from the
     # caller, which is what lets an admin revoke a token they do not own.
@@ -111,7 +112,7 @@ async def revoke_all_principal_tokens(
     admin: Annotated[Principal, Depends(require_admin)],
     subject: Annotated[str, Query(min_length=1)],
 ) -> RevokeAllTokensResponse:
-    registry = _registry(request)
+    registry = get_token_registry(request)
 
     records = await registry.revoke_all(subject)
     for record in records:

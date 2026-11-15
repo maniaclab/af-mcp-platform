@@ -6,8 +6,8 @@ import pytest
 import structlog.testing
 
 from af_mcp_broker import shared_state
-from af_mcp_broker.mcp.lint_observations import LintObservationStore
-from af_mcp_broker.mcp.registry import AnnotationMismatch, ToolMappingDrift
+from af_mcp_broker.lint_observations import LintObservationStore
+from af_mcp_broker.service_registry import AnnotationMismatch, ToolMappingDrift
 from af_mcp_broker.shared_state import InMemorySharedState
 
 pytestmark = pytest.mark.usefixtures("unpinned_loggers")
