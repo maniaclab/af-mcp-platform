@@ -492,8 +492,11 @@ def _list_renamed_backend(
         registry=registry,
         route_prefix="atlas_opensearch",
     )
-    mw = EntitlementMiddleware(registry, client.app.state.broker.entitlement_policy)
-    mw.use_lint_store(client.app.state.broker.lint_observations)
+    mw = EntitlementMiddleware(
+        registry,
+        client.app.state.broker.entitlement_policy,
+        lint_store=client.app.state.broker.lint_observations,
+    )
 
     async def _run() -> None:
         tools = await provider._list_tools()

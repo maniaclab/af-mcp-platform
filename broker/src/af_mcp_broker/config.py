@@ -362,12 +362,14 @@ class Settings(BaseSettings):
 
     # Which MeteringBackend implementation (metering.py) carries
     # success/error audit records from the tool-call hot path to the worker
-    # that measures and writes them. The single-valued Literal is deliberate:
-    # the extension point exists (a future distributed backend, e.g. taskiq,
-    # widens this Literal alongside its implementation), but no other backend
-    # is implemented yet, and a value must never be accepted before its
-    # implementation exists -- fail-closed at Settings construction time.
-    metering_backend: Literal["in_process"] = "in_process"
+    # that measures and writes them. "in_process" is the queue + background
+    # worker; "inline" measures and writes in the tool call itself (unit
+    # tests, local dev). The Literal is deliberately closed: the extension
+    # point exists (a future distributed backend, e.g. taskiq, widens this
+    # Literal alongside its implementation), but a value must never be
+    # accepted before its implementation exists -- fail-closed at Settings
+    # construction time.
+    metering_backend: Literal["in_process", "inline"] = "in_process"
 
     # Which UsageStore implementation (usage/) accumulates per-user tool-call
     # usage -- the per-(day, service, tool, outcome) aggregates GET /v1/usage

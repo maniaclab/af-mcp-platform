@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import (
     AUDIENCE,
     ISSUER,
@@ -126,7 +126,7 @@ async def rate_limit_client(
                 Settings(oidc_issuer=ISSUER, oidc_audience=AUDIENCE),
                 policy,
                 CredentialRegistry(),
-                **aggregator_stores(store),
+                **aggregator_inputs(store),
             )
             async with (
                 run_aggregator_async(

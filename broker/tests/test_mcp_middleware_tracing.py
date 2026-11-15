@@ -18,6 +18,7 @@ from typing import Any
 
 import mcp.types as mt
 import pytest
+from broker_state_helpers import authorization_middleware
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.tools.base import ToolResult
 from opentelemetry.trace import SpanKind, StatusCode
@@ -36,8 +37,6 @@ from test_tracing import (
     local_exporter,  # noqa: F401  -- fixture re-export
 )
 
-from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
-
 
 def _call_tool_context_with_meta(
     tool_name: str, arguments: dict[str, Any], principal: Any, meta: dict[str, Any]
@@ -53,7 +52,7 @@ def _call_tool_context_with_meta(
 async def test_success_call_emits_enriched_span(
     registry, policy, make_principal, captured_audits, local_exporter
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {"scope": "x"}, principal)
 
@@ -84,7 +83,7 @@ async def test_success_call_emits_enriched_span(
 async def test_denied_call_emits_denied_span(
     registry, policy, make_principal, captured_audits, local_exporter
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _call_tool_context("rucio_list_dids", {}, principal)
 
@@ -105,7 +104,7 @@ async def test_denied_call_emits_denied_span(
 async def test_unmapped_call_emits_denied_span(
     registry, policy, make_principal, captured_audits, local_exporter
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("nosuch_tool", {}, principal)
 
@@ -123,7 +122,7 @@ async def test_unmapped_call_emits_denied_span(
 async def test_error_call_emits_error_span_with_exception(
     registry, policy, make_principal, captured_audits, local_exporter
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
     boom = RuntimeError("backend exploded")
@@ -145,7 +144,7 @@ async def test_error_call_emits_error_span_with_exception(
 async def test_inbound_meta_traceparent_becomes_remote_parent(
     registry, policy, make_principal, captured_audits, local_exporter
 ) -> None:
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context_with_meta(
         "rucio_list_dids", {}, principal, {"traceparent": _TRACEPARENT}
@@ -168,7 +167,7 @@ async def test_disabled_tracing_leaves_trace_id_none_on_every_path(
 ) -> None:
     """With no provider installed (default), every outcome path still works
     and its audit record carries trace_id=None."""
-    mw = AuthorizationMiddleware(registry, policy)
+    mw = authorization_middleware(registry, policy)
     entitled = make_principal(groups=["atlas"])
     unentitled = make_principal(groups=[])
 

@@ -228,6 +228,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         # same.
         lint_observations = LintObservationStore(shared_state)
         usage_store = await start_usage_store(settings, stack)
+
+        # OTel aggregate metrics (otel_metrics.py): a no-op unless
+        # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
+        # first record is counted; flushed after the pipeline drains, so the
+        # last records' measurements are exported too.
+        init_otel_metrics(settings)
+        stack.callback(shutdown_otel_metrics)
+        metering = await start_metering_pipeline(settings, usage_store, stack)
         mcp_aggregator = build_mcp_aggregator(
             settings,
             catalog=catalog,
@@ -239,6 +247,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             shared_state=shared_state,
             usage_store=usage_store,
             lint_observations=lint_observations,
+            metering=metering,
         )
         mcp_app = build_mcp_app(
             mcp_aggregator,
@@ -248,13 +257,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             maintenance_mode_store=maintenance_mode_store,
         )
 
-        # OTel aggregate metrics (otel_metrics.py): a no-op unless
-        # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
-        # first record is counted; flushed after the pipeline drains, so the
-        # last records' measurements are exported too.
-        init_otel_metrics(settings)
-        stack.callback(shutdown_otel_metrics)
-        await start_metering_pipeline(settings, stack)
         metrics_port = start_metrics_server(settings, stack)
 
         credmon_sync = await start_credmon_sync(

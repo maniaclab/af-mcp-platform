@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import (
     AUDIENCE,
     ISSUER,
@@ -125,7 +125,7 @@ async def search_client(
             Settings(oidc_issuer=ISSUER, oidc_audience=AUDIENCE),
             EntitlementPolicy(group_permissions={"af-atlas-users": ["read_data"]}),
             CredentialRegistry(),
-            **aggregator_stores(),
+            **aggregator_inputs(),
         )
         async with (
             run_aggregator_async(

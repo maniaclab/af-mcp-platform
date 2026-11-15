@@ -23,7 +23,11 @@ from af_mcp_broker.maintenance import (
     VaultMaintenanceModeStore,
     build_maintenance_store,
 )
-from af_mcp_broker.metering import InProcessMeteringBackend, build_metering_backend
+from af_mcp_broker.metering import (
+    InlineMeteringBackend,
+    InProcessMeteringBackend,
+    build_metering_backend,
+)
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     VaultPrincipalCacheBackend,
@@ -157,5 +161,12 @@ def test_usage_store_covers_every_backend(backend: str) -> None:
 
 @pytest.mark.parametrize("backend", _literal_values("metering_backend"))
 def test_metering_backend_covers_every_backend(backend: str) -> None:
-    built = build_metering_backend(_settings(metering_backend=backend))
-    assert isinstance(built, {"in_process": InProcessMeteringBackend}[backend])
+    built = build_metering_backend(
+        _settings(metering_backend=backend), InMemoryUsageStore()
+    )
+    assert isinstance(
+        built,
+        {"in_process": InProcessMeteringBackend, "inline": InlineMeteringBackend}[
+            backend
+        ],
+    )

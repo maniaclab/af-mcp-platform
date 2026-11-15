@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import httpx2
 import pytest
 import structlog
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.client import Client
@@ -284,13 +284,34 @@ def _patch_context(
     return ctx
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "shared_state",
+        "usage_store",
+        "lint_observations",
+        "metering",
+        "identity_providers",
+        "identity_provider_configs",
+        "target_to_alias",
+    ],
+)
+def test_build_aggregator_requires_every_collaborator(name: str) -> None:
+    """A silent default would reintroduce the misconfiguration footgun of an
+    aggregator that reports nothing: each input is a required keyword."""
+    parameter = inspect.signature(build_aggregator).parameters[name]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
 def test_build_aggregator_returns_fastmcp(settings: Any) -> None:
     mcp = build_aggregator(
         ServiceRegistry(),
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
     assert isinstance(mcp, FastMCP)
 
@@ -308,7 +329,7 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
     identity_index = next(
         i for i, mw in enumerate(mcp.middleware) if isinstance(mw, IdentityMiddleware)
@@ -339,7 +360,7 @@ def test_build_aggregator_composes_model_facing_instructions(settings: Any) -> N
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
     assert mcp.instructions
     # deny-is-policy guidance from the preamble
@@ -365,7 +386,7 @@ def test_build_aggregator_registers_one_provider_per_backend(settings: Any) -> N
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
 
     assert len(mcp.providers) == 2 + _LOCAL_PROVIDER_COUNT
@@ -382,7 +403,7 @@ async def test_local_provider_tools_are_reachable_after_build(settings: Any) -> 
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
 
     tools = await mcp._list_tools()
@@ -1935,7 +1956,7 @@ def _build_namespaced_aggregator(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_inputs(),
     )
     return mcp, mcp.backend_providers
 

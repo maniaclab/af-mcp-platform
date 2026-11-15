@@ -27,7 +27,6 @@ from opentelemetry.sdk._logs.export import (
 )
 from test_usage_postgres import _record
 
-import af_mcp_broker.usage as usage_module
 from af_mcp_broker import otel_metrics, tracing
 from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import (
@@ -35,8 +34,7 @@ from af_mcp_broker.usage import (
     InMemoryUsageStore,
     OtelUsageEventEmitter,
     PostgresUsageStore,
-    aclose_usage_store,
-    init_usage_store,
+    build_usage_store,
     record_usage,
     record_usage_batch,
 )
@@ -161,21 +159,17 @@ def test_enabled_without_an_endpoint_is_a_startup_error(
 
 
 async def test_disabled_leaves_the_store_unwrapped() -> None:
-    store = await init_usage_store(Settings())
-    try:
-        assert isinstance(store, InMemoryUsageStore)
-    finally:
-        await aclose_usage_store()
+    store = build_usage_store(Settings())
+
+    assert isinstance(store, InMemoryUsageStore)
 
 
 async def test_enabled_wraps_the_configured_store() -> None:
-    store = await init_usage_store(
+    store = build_usage_store(
         Settings(usage_events_otlp_enabled=True, otel_exporter_otlp_endpoint=_ENDPOINT)
     )
-    try:
-        assert isinstance(store, EventEmittingUsageStore)
-    finally:
-        await aclose_usage_store()
+
+    assert isinstance(store, EventEmittingUsageStore)
 
 
 # --- what is emitted -------------------------------------------------------
@@ -294,20 +288,17 @@ async def test_reads_delegate_to_the_wrapped_store(
     assert await store.list_subjects(days=1) == ["alice-sub"]
 
 
-async def test_the_record_usage_path_emits_through_the_installed_store(
+async def test_the_record_usage_path_emits_through_the_given_store(
     exporter: InMemoryLogRecordExporter,
 ) -> None:
     emitter = OtelUsageEventEmitter(exporter)
     inner = InMemoryUsageStore()
-    usage_module._store = EventEmittingUsageStore(inner, emitter)
-    try:
-        await record_usage(_full_record(audit_id="one"))
-        await record_usage_batch([_full_record(audit_id="two")])
-        # Denied calls are security events, not usage: filtered before the store.
-        await record_usage(_full_record(audit_id="denied", outcome="denied"))
-        emitter.shutdown()
-    finally:
-        usage_module._store = None
+    store = EventEmittingUsageStore(inner, emitter)
+    await record_usage(store, _full_record(audit_id="one"))
+    await record_usage_batch(store, [_full_record(audit_id="two")])
+    # Denied calls are security events, not usage: filtered before the store.
+    await record_usage(store, _full_record(audit_id="denied", outcome="denied"))
+    emitter.shutdown()
 
     assert sorted(log.attributes["audit_id"] for log in _logs(exporter)) == [
         "one",

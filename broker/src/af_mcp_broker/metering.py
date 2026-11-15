@@ -4,7 +4,7 @@ A tool call must never wait on measurement or audit I/O: serializing and
 tokenizing a large result (``audit/measure.py``) can cost tens of
 milliseconds, and even the to_thread'd audit write is an inline await. The
 authorization middleware therefore hands its success and error audit
-records to this pipeline -- ``submit_metered_audit(record, result)`` -- and
+records to its ``MeteringBackend`` -- ``backend.submit(record, result)`` -- and
 returns; a background worker measures the result (success path) and writes
 the line. DENIED and UNMAPPED records deliberately do NOT come through
 here: they are security-relevant, have nothing to measure, and cost
@@ -13,9 +13,8 @@ nothing, so the middleware still writes them synchronously inline.
 Nothing is ever dropped. A full queue degrades to writing the record
 inline without measurement -- an overloaded broker paying that cost is
 acceptable, a lost audit line is not -- counted by
-``metrics.metering_queue_overflow_total``. And with no pipeline installed
-at all (unit tests, local dev), the module-level helper degrades to
-measuring and writing synchronously, exactly the pre-pipeline behavior.
+``metrics.metering_queue_overflow_total``. The ``inline`` backend (unit
+tests, local dev) measures and writes synchronously in the caller's call.
 
 Metering is best-effort; audit records are authoritative.
 
@@ -29,13 +28,16 @@ Both helpers filter non-usage records and never raise.
 
 The transport between the hot path and the worker is a config-selected
 ``MeteringBackend`` (``METERING_BACKEND`` -> ``settings.metering_backend``);
-only ``in_process`` exists today -- see the ABC's docstring.
+``in_process`` and ``inline`` exist today -- see the ABC's docstring. A
+backend owns the usage store it feeds and the middleware owns the backend:
+nothing is installed process-wide.
 """
 
 from __future__ import annotations
 
 import abc
 import asyncio
+import functools
 import time
 from typing import TYPE_CHECKING, Any, assert_never
 
@@ -44,7 +46,6 @@ import structlog
 from af_mcp_broker import metrics, otel_metrics
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.audit.measure import measure_tool_result
-from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.usage import (
     UsageBatcher,
     counts_as_usage,
@@ -54,6 +55,9 @@ from af_mcp_broker.usage import (
 
 if TYPE_CHECKING:
     from fastmcp.tools.base import ToolResult
+
+    from af_mcp_broker.config import Settings
+    from af_mcp_broker.usage import UsageStore
 
 logger = structlog.get_logger(__name__)
 
@@ -67,7 +71,17 @@ QUEUE_MAXSIZE = 10_000
 # half-processed item.
 _SENTINEL: Any = object()
 
-_pipeline: MeteringBackend | None = None
+
+async def _write_and_account(record: AuditRecord, usage_store: UsageStore) -> None:
+    """Write *record* in the caller's own call, then account it as usage and in the OTel aggregates.
+
+    The audit write raises on failure (the caller is there to hear it).
+    ``record_usage`` never raises and must only ever run AFTER the audit
+    write; the OTel aggregates follow the same rule.
+    """
+    await write_audit(record)
+    await record_usage(usage_store, record)
+    otel_metrics.record_tool_call(record)
 
 
 def _measure_into(
@@ -127,17 +141,24 @@ class MeteringBackend(abc.ABC):
 class InProcessMeteringBackend(MeteringBackend):
     """Bounded queue + background worker measuring and writing audit records."""
 
-    def __init__(self, settings: Settings, maxsize: int = QUEUE_MAXSIZE) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        usage_store: UsageStore,
+        maxsize: int = QUEUE_MAXSIZE,
+    ) -> None:
         # Items are (record, result, enqueued_at, log_context) tuples --
         # enqueued_at is a time.monotonic() timestamp feeding the queue-delay
         # gauge, log_context the submitting request's structlog contextvars
         # (correlation_id, subject), which the worker task does not inherit
         # -- or the drain sentinel.
         self._settings = settings
+        self.usage_store = usage_store
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
         self._worker: asyncio.Task[None] | None = None
+        self._closed = False
         self._usage_batcher = UsageBatcher(
-            record_usage_batch,
+            functools.partial(record_usage_batch, usage_store),
             max_size=settings.usage_batch_max,
             interval_seconds=settings.usage_batch_interval_ms / 1000,
         )
@@ -153,6 +174,7 @@ class InProcessMeteringBackend(MeteringBackend):
         """Drain every already-enqueued record, then stop the worker."""
         if self._worker is None:
             return
+        self._closed = True
         await self._queue.put(_SENTINEL)
         await self._worker
         self._worker = None
@@ -163,8 +185,12 @@ class InProcessMeteringBackend(MeteringBackend):
         On a full queue: do NOT drop -- write the record immediately,
         without measurement (this fallback path may await; an overloaded
         broker paying that cost is acceptable, a lost audit line is not),
-        and count the overflow.
+        and count the overflow. After ``aclose`` nothing would ever drain the
+        queue, so a submission raises rather than lose the record.
         """
+        if self._closed:
+            msg = "the metering backend is closed; the record would never be written"
+            raise RuntimeError(msg)
         try:
             self._queue.put_nowait(
                 (
@@ -181,13 +207,9 @@ class InProcessMeteringBackend(MeteringBackend):
                 # A result was there to measure and the fallback skips
                 # measurement -- the line goes out incomplete, not late.
                 metrics.metering_records_missing_measurements_total.inc()
-            await write_audit(record)
-            # The inline-written record is usage too (PR C) -- record_usage
-            # never raises, filters non-usage records itself, and must only
-            # ever run AFTER the audit write above. The OTel aggregates
-            # follow the same rule.
-            await record_usage(record)
-            otel_metrics.record_tool_call(record)
+            # The inline-written record is usage too (PR C): record_usage
+            # filters non-usage records itself.
+            await _write_and_account(record, self.usage_store)
 
     async def _run(self) -> None:
         while True:
@@ -245,8 +267,37 @@ class InProcessMeteringBackend(MeteringBackend):
             otel_metrics.record_tool_call(record)
 
 
-def build_metering_backend(settings: Settings) -> MeteringBackend:
-    """Build the (not yet started) backend selected by ``settings.metering_backend``.
+class InlineMeteringBackend(MeteringBackend):
+    """Measures and writes each record synchronously in the submitting call.
+
+    For unit tests and local dev, where no worker is wanted: the line is
+    complete the moment ``submit`` returns, and a failing audit write raises
+    to the submitter.
+    """
+
+    def __init__(self, settings: Settings, usage_store: UsageStore) -> None:
+        self._settings = settings
+        self.usage_store = usage_store
+
+    @property
+    def is_running(self) -> bool:
+        return True
+
+    async def start(self) -> None:
+        """Nothing to start: every submission is processed in its own call."""
+
+    async def aclose(self) -> None:
+        """Nothing to drain: every submission was processed in its own call."""
+
+    async def submit(self, record: AuditRecord, result: ToolResult | None) -> None:
+        _measure_into(record, result, self._settings)
+        await _write_and_account(record, self.usage_store)
+
+
+def build_metering_backend(
+    settings: Settings, usage_store: UsageStore
+) -> MeteringBackend:
+    """Build the (not yet started) backend selected by ``settings.metering_backend``, feeding *usage_store*.
 
     Adding a distributed backend later (e.g. "taskiq") is one ``case`` here
     plus widening the config Literal alongside the implementation -- see
@@ -257,47 +308,8 @@ def build_metering_backend(settings: Settings) -> MeteringBackend:
     backend = settings.metering_backend
     match backend:
         case "in_process":
-            return InProcessMeteringBackend(settings=settings)
+            return InProcessMeteringBackend(settings, usage_store)
+        case "inline":
+            return InlineMeteringBackend(settings, usage_store)
         case _:
             assert_never(backend)
-
-
-async def init_metering_pipeline(settings: Settings) -> MeteringBackend:
-    """Create, start, and install the process-wide backend (app.py lifespan).
-
-    The implementation is selected by ``settings.metering_backend``.
-    """
-    global _pipeline
-    _pipeline = build_metering_backend(settings)
-    await _pipeline.start()
-    return _pipeline
-
-
-async def aclose_metering_pipeline() -> None:
-    """Drain and uninstall the process-wide pipeline (app.py lifespan shutdown)."""
-    global _pipeline
-    if _pipeline is None:
-        return
-    await _pipeline.aclose()
-    _pipeline = None
-
-
-async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -> None:
-    """Module-level helper to submit audit record.
-
-    With no running pipeline installed (unit tests,
-    local dev), measure + write
-    synchronously inline: behavior degrades to exactly the pre-pipeline
-    inline path.
-    """
-    if _pipeline is None or not _pipeline.is_running:
-        # No pipeline means no lifespan has installed settings (unit tests,
-        # local dev): the process-wide Settings is all there is.
-        _measure_into(record, result, get_settings())
-        await write_audit(record)
-        # Same post-write usage accounting the worker performs (PR C) --
-        # the fallback path must not be a gap in anyone's usage.
-        await record_usage(record)
-        otel_metrics.record_tool_call(record)
-        return
-    await _pipeline.submit(record, result)

@@ -26,7 +26,6 @@ from af_mcp_broker.backend_errors import (
     classify_backend_error,
 )
 from af_mcp_broker.logging import current_correlation_id
-from af_mcp_broker.metering import submit_metered_audit
 from af_mcp_broker.service_registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
@@ -39,6 +38,7 @@ if TYPE_CHECKING:
     import mcp.types as mt
     from fastmcp.tools.base import ToolResult
 
+    from af_mcp_broker.metering import MeteringBackend
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.service_registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
@@ -137,13 +137,23 @@ class AuthorizationMiddleware(Middleware):
         self,
         registry: ServiceRegistry,
         policy: EntitlementPolicy,
+        *,
+        shared_state: SharedState,
+        metering: MeteringBackend,
     ) -> None:
         self.registry = registry
         self.policy = policy
-        # The store arrives through use_shared_state(). There is deliberately
-        # no default store: counting in a private in-memory one would silently
+        # Backs ``policy.rate_limits``; while the store is unreachable the
+        # budgets are counted per replica instead. There is deliberately no
+        # default store: counting in a private in-memory one would silently
         # make limits per replica.
-        self.shared_state: FallbackSharedState | None = None
+        self.shared_state = FallbackSharedState(
+            shared_state,
+            component="tool_rate_limit",
+            effect="tool rate limits are per-replica until the store recovers",
+        )
+        # Where success and error audit records go to be measured and written.
+        self.metering = metering
 
     def _denial_message(self, permission: str | None, reason: str) -> str:
         """Return the error text for a permission denial: *reason* plus, when they exist, the groups granting *permission*.
@@ -162,29 +172,6 @@ class AuthorizationMiddleware(Middleware):
         if groups:
             return f"{message}. Granted by membership in: {', '.join(groups)}."
         return message
-
-    def use_shared_state(self, shared_state: SharedState) -> None:
-        """Back ``policy.rate_limits`` with *shared_state*.
-
-        While the store is unreachable the budgets are counted per replica
-        instead.
-        """
-        self.shared_state = FallbackSharedState(
-            shared_state,
-            component="tool_rate_limit",
-            effect="tool rate limits are per-replica until the store recovers",
-        )
-
-    def _require_shared_state(self) -> FallbackSharedState:
-        # Refuse rather than count somewhere other than the shared store:
-        # build_aggregator() installs both the rules and the store, so a
-        # missing store is a wiring bug, not a runtime condition.
-        if self.shared_state is None:
-            raise RuntimeError(
-                "policy.rate_limits is set but no shared state store was "
-                "provided to AuthorizationMiddleware"
-            )
-        return self.shared_state
 
     async def on_call_tool(
         self,
@@ -343,7 +330,7 @@ class AuthorizationMiddleware(Middleware):
                 if self.policy.rate_limits:
                     await check_rate_limits(
                         self.policy.rate_limits,
-                        self._require_shared_state(),
+                        self.shared_state,
                         principal.subject,
                         tool_name,
                         action_type,
@@ -452,7 +439,7 @@ class AuthorizationMiddleware(Middleware):
                 # Routed through the metering pipeline (result=None -- an error
                 # produced no result to measure) so the error response is not
                 # held by audit I/O either.
-                await submit_metered_audit(
+                await self.metering.submit(
                     AuditRecord(
                         principal_sub=principal.subject,
                         principal_uid=principal.uid,
@@ -499,7 +486,7 @@ class AuthorizationMiddleware(Middleware):
                 error_text = _tool_result_error_text(result)
                 if span.is_recording():
                     span.set_status(Status(StatusCode.ERROR, error_text))
-                await submit_metered_audit(
+                await self.metering.submit(
                     AuditRecord(
                         principal_sub=principal.subject,
                         principal_uid=principal.uid,
@@ -532,7 +519,7 @@ class AuthorizationMiddleware(Middleware):
             # The record is handed over with result_bytes/result_tokens_est
             # still None for the worker to fill. Success path only: an error
             # produced no result to measure (result=None above).
-            await submit_metered_audit(
+            await self.metering.submit(
                 AuditRecord(
                     principal_sub=principal.subject,
                     principal_uid=principal.uid,

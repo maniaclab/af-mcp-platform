@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 
@@ -114,7 +114,7 @@ async def aggregator_server(
 ) -> AsyncIterator[ASGIServer]:
     principal_cache, _directory = static_principal_cache
     mcp = build_aggregator(
-        registry, settings, policy, CredentialRegistry(), **aggregator_stores()
+        registry, settings, policy, CredentialRegistry(), **aggregator_inputs()
     )
     async with run_aggregator_async(
         mcp, path="/mcp", settings=settings, principal_cache=principal_cache
@@ -241,7 +241,7 @@ async def test_pat_round_trip_tools_list_and_call(
     )
 
     mcp = build_aggregator(
-        registry, settings, policy, CredentialRegistry(), **aggregator_stores()
+        registry, settings, policy, CredentialRegistry(), **aggregator_inputs()
     )
 
     async with (
@@ -288,7 +288,7 @@ async def test_dev_bypass_path_tools_list_and_call_still_work(
         }
     )
     mcp = build_aggregator(
-        registry, dev_settings, policy, CredentialRegistry(), **aggregator_stores()
+        registry, dev_settings, policy, CredentialRegistry(), **aggregator_inputs()
     )
 
     # No Authorization header at all -- the bypass must not even look.

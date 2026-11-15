@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.lint_observations import LintObservationStore
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.aggregator import Aggregator, BackendProviders
+    from af_mcp_broker.metering import MeteringBackend
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
@@ -52,6 +53,7 @@ def build_mcp_aggregator(
     shared_state: SharedState,
     usage_store: UsageStore,
     lint_observations: LintObservationStore,
+    metering: MeteringBackend,
 ) -> Aggregator:
     """Build the aggregator from the loaded registry, policy, credential registry, providers and stores.
 
@@ -68,6 +70,7 @@ def build_mcp_aggregator(
         shared_state=shared_state,
         usage_store=usage_store,
         lint_observations=lint_observations,
+        metering=metering,
         identity_providers=providers.providers,
         identity_provider_configs=providers.configs,
         target_to_alias=targets.target_to_alias,

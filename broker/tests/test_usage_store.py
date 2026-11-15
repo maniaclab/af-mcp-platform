@@ -17,15 +17,10 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from af_mcp_broker import usage
 from af_mcp_broker.audit import AuditRecord
-from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import (
     InMemoryUsageStore,
     UsageStore,
-    aclose_usage_store,
-    get_usage_store,
-    init_usage_store,
     record_usage,
     record_usage_batch,
 )
@@ -33,13 +28,6 @@ from af_mcp_broker.usage import (
 
 def _sample(name: str) -> float:
     return REGISTRY.get_sample_value(name) or 0.0
-
-
-@pytest.fixture(autouse=True)
-async def clean_usage_store():
-    """Never leak an installed module-level store into other tests."""
-    yield
-    await aclose_usage_store()
 
 
 def _record(**overrides: Any) -> AuditRecord:
@@ -180,27 +168,21 @@ async def test_list_subjects_excludes_outside_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Module-level wiring -- mirrors metering.py's init/aclose/helper shape.
+# record_usage/record_usage_batch account into the store they are handed.
 # ---------------------------------------------------------------------------
 
 
-async def test_init_builds_the_backend_selected_by_settings() -> None:
-    store = await init_usage_store(Settings(usage_store_backend="in_memory"))
-    assert isinstance(store, InMemoryUsageStore)
-    assert get_usage_store() is store
-
-    await aclose_usage_store()
-    assert get_usage_store() is None
-
-
-async def test_record_usage_is_a_noop_without_an_installed_store() -> None:
-    # Must not raise -- unit tests and local dev run without init.
-    await record_usage(_record())
+async def test_record_usage_feeds_only_the_store_it_is_given() -> None:
+    store, other = InMemoryUsageStore(), InMemoryUsageStore()
+    await record_usage(store, _record())
+    assert await other.query("sub-abc", days=30) == []
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 1
 
 
-async def test_record_usage_feeds_the_installed_store() -> None:
-    store = await init_usage_store(Settings())
-    await record_usage(_record())
+async def test_record_usage_feeds_the_given_store() -> None:
+    store = InMemoryUsageStore()
+    await record_usage(store, _record())
     (agg,) = await store.query("sub-abc", days=30)
     assert agg.calls == 1
 
@@ -209,21 +191,21 @@ async def test_record_usage_feeds_the_installed_store() -> None:
 async def test_record_usage_skips_non_usage_outcomes(outcome: str) -> None:
     """Denied/unmapped calls are security events, not usage -- they live in
     the audit log only."""
-    store = await init_usage_store(Settings())
-    await record_usage(_record(outcome=outcome))
+    store = InMemoryUsageStore()
+    await record_usage(store, _record(outcome=outcome))
     assert await store.query("sub-abc", days=30) == []
 
 
 async def test_record_usage_skips_records_without_an_mcp_service() -> None:
     """Only tool-call records (mcp_service set) are usage."""
-    store = await init_usage_store(Settings())
-    await record_usage(_record(mcp_service=None))
+    store = InMemoryUsageStore()
+    await record_usage(store, _record(mcp_service=None))
     assert await store.query("sub-abc", days=30) == []
 
 
 async def test_record_usage_counts_error_outcomes() -> None:
-    store = await init_usage_store(Settings())
-    await record_usage(_record(outcome="error"))
+    store = InMemoryUsageStore()
+    await record_usage(store, _record(outcome="error"))
     (agg,) = await store.query("sub-abc", days=30)
     assert agg.outcome == "error"
 
@@ -237,13 +219,8 @@ async def test_record_usage_swallows_store_failures_and_counts_them() -> None:
         async def record(self, record: AuditRecord) -> None:
             raise RuntimeError("usage store down")
 
-    await init_usage_store(Settings())
-    # Swap in the exploding store behind the module-level accessor.
-
-    usage._store = _ExplodingStore()
-
     before = _sample("af_mcp_metering_worker_errors_total")
-    await record_usage(_record())  # must not raise
+    await record_usage(_ExplodingStore(), _record())  # must not raise
     assert _sample("af_mcp_metering_worker_errors_total") == before + 1
 
 
@@ -257,16 +234,12 @@ async def test_in_memory_record_many_accounts_every_record() -> None:
 
 
 async def test_record_usage_batch_writes_through_record_many() -> None:
-    store = await init_usage_store(Settings())
+    store = InMemoryUsageStore()
 
-    await record_usage_batch([_record(), _record(audit_id="other")])
+    await record_usage_batch(store, [_record(), _record(audit_id="other")])
 
     (agg,) = await store.query("sub-abc", days=30)
     assert agg.calls == 2
-
-
-async def test_record_usage_batch_without_a_store_is_a_no_op() -> None:
-    await record_usage_batch([_record()])  # must not raise
 
 
 async def test_record_usage_batch_failure_is_logged_and_counts_every_row(
@@ -281,12 +254,9 @@ async def test_record_usage_batch_failure_is_logged_and_counts_every_row(
         async def record_many(self, records: list[AuditRecord]) -> None:
             raise RuntimeError("usage store down")
 
-    await init_usage_store(Settings())
-    usage._store = _ExplodingStore()
-
     before = _sample("af_mcp_metering_worker_errors_total")
     batch = [_record(audit_id="a"), _record(audit_id="b"), _record(audit_id="c")]
-    await record_usage_batch(batch)  # must not raise
+    await record_usage_batch(_ExplodingStore(), batch)  # must not raise
 
     assert _sample("af_mcp_metering_worker_errors_total") == before + 3
     assert "usage_record_batch_failed" in caplog.text

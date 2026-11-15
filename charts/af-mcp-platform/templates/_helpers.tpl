@@ -485,7 +485,7 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- end }}
 # Metering pipeline backend (metering.py) -- transport for
 # success/error audit records between the tool-call hot path and the
-# worker that measures and writes them. Only "in-process" exists today;
+# worker that measures and writes them. "in-process" and "inline" exist;
 # the broker fails closed at startup on any unknown value. Always set,
 # same visibility rationale as TOKEN_STORE_BACKEND above.
 - name: METERING_BACKEND

@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import (
     AUDIENCE,
     ISSUER,
@@ -125,7 +125,7 @@ async def deadline_aggregator_server(
             settings,
             EntitlementPolicy(),
             CredentialRegistry(),
-            **aggregator_stores(),
+            **aggregator_inputs(),
         )
         async with run_aggregator_async(
             mcp, path="/mcp", settings=settings, principal_cache=principal_cache

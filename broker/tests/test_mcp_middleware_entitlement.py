@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from broker_state_helpers import entitlement_middleware
 from fastmcp.tools.base import Tool
 from mcp.types import ToolAnnotations
 
@@ -115,7 +116,7 @@ def _call_next_factory(tools: list[Tool]):
 async def test_entitled_principal_sees_gated_and_open_tools(
     registry, policy, make_principal
 ):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids"), _tool("docs_search")]
@@ -128,7 +129,7 @@ async def test_entitled_principal_sees_gated_and_open_tools(
 async def test_unentitled_principal_only_sees_open_tools(
     registry, policy, make_principal
 ):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids"), _tool("docs_search")]
@@ -144,7 +145,7 @@ async def test_unentitled_principal_sees_omitted_permission_tools_too(
     """A backend that omits required_permission has no permission gate --
     the credential layer gates it instead (issue #60) -- so entitlement
     filtering must not hide it even from a principal with no groups."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids"), _tool("credentialed_ping")]
@@ -157,7 +158,7 @@ async def test_unentitled_principal_sees_omitted_permission_tools_too(
 async def test_tool_with_unknown_prefix_is_denied(registry, policy, make_principal):
     """Fail-closed: a tool that doesn't map to any registered backend is
     hidden even for a fully-entitled principal."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids"), _tool("mystery_tool")]
@@ -178,7 +179,7 @@ async def test_af_method_visible_to_principal_with_no_permissions(
     this is the normal filtering path, not a name-based bypass: the prefix
     maps to the builtin af-mcp service, whose "__none__" permission admits
     any authenticated principal."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=[])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids"), _tool(tool_name)]
@@ -194,7 +195,7 @@ async def test_af_method_visible_to_principal_with_no_permissions(
 async def test_missing_principal_returns_empty_list(registry, policy):
     """identity_mw (registered first / outermost) should always have set the
     principal by the time this runs; if it somehow didn't, fail closed."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     context = _FakeMiddlewareContext(_FakeFastMCPContext({}))
     tools = [_tool("rucio_list_dids"), _tool("docs_search")]
 
@@ -204,7 +205,7 @@ async def test_missing_principal_returns_empty_list(registry, policy):
 
 
 async def test_missing_fastmcp_context_returns_empty_list(registry, policy):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     context = _FakeMiddlewareContext(None)
     tools = [_tool("rucio_list_dids")]
 
@@ -219,7 +220,7 @@ async def test_dict_form_permission_filters_per_tool_not_per_service(
     """A caller holding read_monitoring but not manage_jobs sees
     condor_query_jobs (explicitly mapped to read_monitoring) but not
     condor_submit_job (unlisted, no __default__ -- disabled for everyone)."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("condor_query_jobs"), _tool("condor_submit_job")]
@@ -235,7 +236,7 @@ async def test_dict_form_permission_hides_unlisted_tool_even_from_admin(
     """Opt-in-only: no group grants a permission for condor_submit_job to
     hold in the first place -- there is no permission that would satisfy it,
     since it isn't declared at all."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("condor_submit_job")]
@@ -254,7 +255,7 @@ async def test_dict_form_permission_hides_unlisted_tool_even_from_admin(
 async def test_read_only_hint_agreeing_with_policy_records_no_mismatch(
     registry, policy, make_principal
 ):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids", read_only_hint=True)]
@@ -268,7 +269,7 @@ async def test_undeclared_annotation_records_no_mismatch(
     registry, policy, make_principal
 ):
     """No annotation at all is never a disagreement -- nothing to check."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids")]
@@ -284,7 +285,7 @@ async def test_read_only_hint_disagreeing_with_policy_records_mismatch(
     """rucio_list_dids resolves to action_type "read" (required_permission
     "read_data"), but declares read_only_hint=False -- a real disagreement,
     worth an operator's attention regardless of which side is "right"."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids", read_only_hint=False)]
@@ -308,7 +309,7 @@ async def test_read_only_hint_disagreeing_with_policy_records_mismatch(
 async def test_repeat_mismatch_is_not_logged_or_metered_twice(
     registry, policy, make_principal
 ):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("rucio_list_dids", read_only_hint=False)]
@@ -329,7 +330,7 @@ async def test_fixed_mismatch_is_cleared_on_a_later_listing(
 ):
     """A corrected declaration (or a policy.yaml fix) must not linger
     forever once a subsequent listing shows the two agreeing again."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
 
@@ -351,7 +352,7 @@ async def test_disabled_tool_records_no_annotation_mismatch(
     __default__, so it is __disabled__ (denied outright); its "read" action
     type is a fallback, not a policy statement to compare the backend's
     read_only_hint=False against. It is reported as mapping drift instead."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _FakeMiddlewareContext(_FakeFastMCPContext({"principal": principal}))
     tools = [_tool("condor_submit_job", read_only_hint=False)]
@@ -377,7 +378,7 @@ async def _list(mw, make_principal, tools):
 
 
 async def test_unmapped_tool_is_recorded_as_drift(registry, policy, make_principal):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     counter = metrics.tool_mapping_drift_total.labels(
         service="condor_service", kind="unmapped"
     )
@@ -396,7 +397,7 @@ async def test_unmapped_tool_is_recorded_as_drift(registry, policy, make_princip
 
 async def test_stale_key_is_recorded_as_drift(registry, policy, make_principal):
     """query_jobs is mapped but the backend now only advertises other_tool."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
 
     await _list(mw, make_principal, [_tool("condor_other_tool")])
 
@@ -407,7 +408,7 @@ async def test_stale_key_is_recorded_as_drift(registry, policy, make_principal):
 
 
 async def test_fully_mapped_service_records_no_drift(registry, policy, make_principal):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
 
     await _list(mw, make_principal, [_tool("condor_query_jobs")])
 
@@ -419,7 +420,7 @@ async def test_service_with_no_advertised_tools_is_not_stale(
 ):
     """An unreachable backend (or a caller with no linked credential)
     advertises nothing; that must not flag every key as stale."""
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
 
     await _list(mw, make_principal, [_tool("rucio_list_dids")])
 
@@ -438,7 +439,7 @@ async def test_excluded_tool_key_is_not_stale(make_principal, policy):
             exclude_tools=frozenset({"hidden"}),
         )
     )
-    mw = EntitlementMiddleware(reg, policy)
+    mw = entitlement_middleware(reg, policy)
 
     await _list(mw, make_principal, [_tool("condor_query_jobs")])
 
@@ -448,7 +449,7 @@ async def test_excluded_tool_key_is_not_stale(make_principal, policy):
 async def test_repeat_drift_is_not_metered_twice_and_clears_when_fixed(
     registry, policy, make_principal
 ):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     counter = metrics.tool_mapping_drift_total.labels(
         service="condor_service", kind="unmapped"
     )
@@ -464,7 +465,7 @@ async def test_repeat_drift_is_not_metered_twice_and_clears_when_fixed(
 
 
 async def test_unmapped_gauge_tracks_current_drift(registry, policy, make_principal):
-    mw = EntitlementMiddleware(registry, policy)
+    mw = entitlement_middleware(registry, policy)
     gauge = metrics.service_tools_unmapped.labels(service="condor_service")
 
     await _list(
@@ -520,7 +521,7 @@ def renamed_backend_registry() -> ServiceRegistry:
 async def test_unroutable_tools_are_recorded_as_drift_with_stale_keys(
     renamed_backend_registry, policy, make_principal
 ):
-    mw = EntitlementMiddleware(renamed_backend_registry, policy)
+    mw = entitlement_middleware(renamed_backend_registry, policy)
     counter = metrics.tool_mapping_drift_total.labels(
         service="atlas_search_service", kind="unroutable"
     )
@@ -562,7 +563,7 @@ async def test_unroutable_tools_are_drift_for_a_scalar_permission_service(
             service="atlas_search_service", advertised=1, unroutable=("aos_search",)
         )
     )
-    mw = EntitlementMiddleware(reg, policy)
+    mw = entitlement_middleware(reg, policy)
 
     await _list(mw, make_principal, [_tool("aos_search")])
 
@@ -578,7 +579,7 @@ async def test_recorded_unroutable_tools_absent_from_this_listing_are_ignored(
     """Like a service advertising nothing, a listing that doesn't carry the
     recorded unroutable tools (e.g. this caller's listing of the service
     failed) says nothing about them -- no drift, and no stale keys."""
-    mw = EntitlementMiddleware(renamed_backend_registry, policy)
+    mw = entitlement_middleware(renamed_backend_registry, policy)
 
     await _list(mw, make_principal, [_tool("rucio_list_dids")])
 
@@ -602,8 +603,7 @@ def lint_store() -> LintObservationStore:
 async def test_listing_records_an_observation_per_listed_service(
     registry, policy, make_principal, lint_store
 ):
-    mw = EntitlementMiddleware(registry, policy)
-    mw.use_lint_store(lint_store)
+    mw = entitlement_middleware(registry, policy, lint_store)
 
     await _list(
         mw,
@@ -629,8 +629,7 @@ async def test_listing_records_an_observation_per_listed_service(
 async def test_a_clean_listing_is_recorded_as_observed_and_clean(
     registry, policy, make_principal, lint_store
 ):
-    mw = EntitlementMiddleware(registry, policy)
-    mw.use_lint_store(lint_store)
+    mw = entitlement_middleware(registry, policy, lint_store)
 
     await _list(mw, make_principal, [_tool("condor_query_jobs")])
 
@@ -644,8 +643,7 @@ async def test_services_absent_from_the_listing_are_not_recorded_as_observed(
     registry, policy, make_principal, lint_store
 ):
     """An unreachable backend lists nothing; that is not an observation."""
-    mw = EntitlementMiddleware(registry, policy)
-    mw.use_lint_store(lint_store)
+    mw = entitlement_middleware(registry, policy, lint_store)
 
     await _list(mw, make_principal, [_tool("condor_query_jobs")])
 
@@ -656,8 +654,7 @@ async def test_services_absent_from_the_listing_are_not_recorded_as_observed(
 async def test_a_fixed_mismatch_is_recorded_as_gone(
     registry, policy, make_principal, lint_store
 ):
-    mw = EntitlementMiddleware(registry, policy)
-    mw.use_lint_store(lint_store)
+    mw = entitlement_middleware(registry, policy, lint_store)
     await _list(mw, make_principal, [_tool("rucio_list_dids", read_only_hint=False)])
 
     await _list(mw, make_principal, [_tool("rucio_list_dids", read_only_hint=True)])
@@ -665,3 +662,8 @@ async def test_a_fixed_mismatch_is_recorded_as_gone(
     observation = await lint_store.get("rucio")
     assert observation is not None
     assert observation.annotation_mismatches == ()
+
+
+def test_the_constructor_requires_a_lint_store(registry, policy) -> None:
+    with pytest.raises(TypeError):
+        EntitlementMiddleware(registry, policy)  # type: ignore[call-arg]

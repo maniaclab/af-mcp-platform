@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import aggregator_stores
+from broker_state_helpers import aggregator_inputs
 from conftest import (
     make_claims,
     run_aggregator_async,
@@ -258,7 +258,7 @@ async def aggregator_server(
     )  # mints fine; connection still fails
 
     mcp = build_aggregator(
-        registry, settings, policy, credential_registry, **aggregator_stores()
+        registry, settings, policy, credential_registry, **aggregator_inputs()
     )
     async with run_aggregator_async(
         mcp, path="/mcp", settings=settings, principal_cache=principal_cache
@@ -616,7 +616,7 @@ async def test_replica_split_session_continuity(
 
     def _replica() -> Any:
         mcp = build_aggregator(
-            registry, settings, policy, credential_registry, **aggregator_stores()
+            registry, settings, policy, credential_registry, **aggregator_inputs()
         )
         return asgi_server(
             mcp,
@@ -786,7 +786,7 @@ async def mint_and_inject_env(
             policy,
             credential_registry,
             broker_token_issuer=issuer,
-            **aggregator_stores(),
+            **aggregator_inputs(),
         )
         async with run_aggregator_async(
             mcp, path="/mcp", settings=settings, principal_cache=principal_cache
