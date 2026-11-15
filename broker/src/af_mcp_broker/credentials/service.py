@@ -165,6 +165,10 @@ class ServiceProvider(CredentialProvider):
         token_file = os.environ.get("AF_SERVICE_TOKEN_FILE")
         if token_file:
             token = (await anyio.Path(token_file).read_text()).strip()
+            if not token:
+                # An empty mount (e.g. a Secret not yet populated) must fail
+                # loudly, not issue "Bearer " credentials to every backend.
+                raise RuntimeError(f"AF_SERVICE_TOKEN_FILE {token_file} is empty.")
             self._log.debug("service.token.from_file", path=token_file)
             return token, time.time() + 3600
 
