@@ -2,9 +2,9 @@ from __future__ import annotations
 
 # GET /v1/catalog/{service}/tools -- the portal's per-service tool listing
 # (the fetch-on-expand companion to GET /v1/catalog). Lives in its own module
-# rather than api/permissions.py because it imports mcp/aggregator.py's
-# list-time helpers, and permissions.py importing the aggregator would be a
-# straight import cycle (aggregator -> mcp/diagnostics -> permissions).
+# rather than api/permissions.py because it is the one route that opens a
+# connection to a backend service, through backend_client.py's list-time
+# helpers.
 import asyncio
 import time
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -27,14 +27,14 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_permissions,
 )
-from af_mcp_broker.backend_errors import NotLinkedForListingError
-from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.mcp.aggregator import (
+from af_mcp_broker.backend_client import (
     ToolListingEntry,
     fetch_service_tool_listing,
     resolve_list_time_credential,
 )
+from af_mcp_broker.backend_errors import NotLinkedForListingError
+from af_mcp_broker.config import get_settings
+from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.service_status import holds_any_required_permission
 
@@ -46,7 +46,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["permissions"])
 
-# The status vocabulary matches aggregator.py's _classify_failure one-to-one
+# The status vocabulary matches backend_client.py's classify_failure one-to-one
 # (plus "ok" and the locally-derived "permission_required"), so a portal
 # status and an `aggregator.service_list_failed` log line for the same
 # service always speak the same language. Sentences are short, human, and

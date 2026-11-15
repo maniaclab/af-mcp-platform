@@ -108,7 +108,7 @@ def namespaced_tool_name(spec: ServiceSpec, native_name: str) -> str:
 
     Mirrors fastmcp's own ``Namespace`` transform (``f"{prefix}_{name}"``,
     applied only when ``apply_namespace`` is true) -- the exact rule
-    aggregator.py's ``fetch_service_tool_listing`` independently replicates
+    backend_client.py's ``fetch_service_tool_listing`` independently replicates
     for the ``/v1/catalog`` listing path, since neither that path nor
     services.yaml parsing has a live FastMCP mount to ask. This is the one
     place that rule is written down for permission-key resolution
@@ -427,7 +427,7 @@ class ToolRouting:
         return self.advertised - len(self.unroutable)
 
 
-# tools/list failure reasons (aggregator.py's _classify_failure) that describe
+# tools/list failure reasons (backend_client.py's classify_failure) that describe
 # the backend itself and hold for every caller; any other reason describes one
 # caller's credential ("unauthorized": the backend rejected it; "not_linked":
 # the caller has none).

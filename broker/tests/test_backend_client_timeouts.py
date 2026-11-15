@@ -1,4 +1,4 @@
-"""The backend client ``_build_client`` returns is bounded by ``ServiceSpec.timeout_seconds`` on connect and initialize, not only on later requests (issue #386).
+"""The backend client ``build_client`` returns is bounded by ``ServiceSpec.timeout_seconds`` on connect and initialize, not only on later requests (issue #386).
 
 The suite-wide ``_bound_client_timeouts`` fixture defaults ``init_timeout`` and
 ``timeout`` on every ``fastmcp.Client``; it is disabled here so only the
@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from conftest import run_inprocess_asgi_app
 
-from af_mcp_broker.mcp.aggregator import _build_client
+from af_mcp_broker.backend_client import build_client
 from af_mcp_broker.service_registry import ServiceSpec
 
 _SERVICE_TIMEOUT_SECONDS = 1.0
@@ -74,7 +74,7 @@ def _spec(url: str) -> ServiceSpec:
 
 async def _seconds_to_fail_connecting(app: Any) -> float:
     async with run_inprocess_asgi_app(app) as base_url:
-        client = _build_client(_spec(f"{base_url}/mcp"))
+        client = build_client(_spec(f"{base_url}/mcp"))
         started = time.monotonic()
         try:
             async with asyncio.timeout(_MAX_CONNECT_SECONDS):

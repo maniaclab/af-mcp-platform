@@ -18,15 +18,13 @@ from conftest import (
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
+from af_mcp_broker import backend_client
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.backend_client import ListTimeCredential, fetch_service_tool_listing
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp.aggregator import (
-    ListTimeCredential,
-    build_aggregator,
-    fetch_service_tool_listing,
-)
+from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
@@ -146,7 +144,7 @@ def bad(request: pytest.FixtureRequest) -> _BadResponse:
 
 @pytest.fixture
 def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    """Every event the aggregator logs, as ``(event, fields)``.
+    """Every event the aggregator and its backend client log, as ``(event, fields)``.
 
     The logger is patched rather than captured with structlog's
     ``capture_logs``: a logger already bound earlier in the session ignores
@@ -157,8 +155,9 @@ def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
     def _record(event: str, **kwargs: Any) -> None:
         recorded.append((event, kwargs))
 
-    for level in ("debug", "info", "warning", "error", "exception"):
-        monkeypatch.setattr(aggregator_module.logger, level, _record)
+    for module in (aggregator_module, backend_client):
+        for level in ("debug", "info", "warning", "error", "exception"):
+            monkeypatch.setattr(module.logger, level, _record)
     return recorded
 
 

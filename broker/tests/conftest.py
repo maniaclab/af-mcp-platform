@@ -39,7 +39,7 @@ from pydantic import SecretStr
 from x509_fakes import FakeX509Store
 
 from af_mcp_broker import app as broker_app_module
-from af_mcp_broker import identity, lint_observations
+from af_mcp_broker import backend_client, identity, lint_observations
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
@@ -549,7 +549,7 @@ class _BackendRouter(httpx2.AsyncBaseTransport):
 @pytest.fixture(autouse=True)
 def _route_backends_in_process(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Route the aggregator's outbound backend traffic through _BackendRouter."""
-    orig = aggregator_module._checked_httpx_client_factory
+    orig = backend_client._checked_httpx_client_factory
 
     def routed(*args: Any, **kwargs: Any) -> Callable[..., httpx2.AsyncClient]:
         inner = orig(*args, **kwargs)
@@ -560,7 +560,7 @@ def _route_backends_in_process(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 
         return factory
 
-    monkeypatch.setattr(aggregator_module, "_checked_httpx_client_factory", routed)
+    monkeypatch.setattr(backend_client, "_checked_httpx_client_factory", routed)
     yield
     _IN_PROCESS_BACKENDS.clear()
 

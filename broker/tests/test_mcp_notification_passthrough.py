@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 # and a plain Client without those handlers attached would silently swallow
 # them (logging locally instead). This file proves that consequence is
 # handled: the aggregator installs the same forwarding handlers
-# (_build_client in aggregator.py) without reinstating header forwarding.
+# (build_client in backend_client.py) without reinstating header forwarding.
 # ---------------------------------------------------------------------------
 
 

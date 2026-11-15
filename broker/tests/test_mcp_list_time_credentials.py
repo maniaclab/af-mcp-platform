@@ -510,7 +510,7 @@ async def test_unlinked_listing_does_not_poison_a_linked_callers_authorized_call
     AggregateProvider.get_tool() warn-and-skip handling into a bare
     "Unknown tool" -- silently losing the friendly, actionable ToolError.
     Falling back to an uncredentialed connection on mint failure (see
-    _resolve_list_time_headers's docstring in aggregator.py) fixes this:
+    resolve_list_time_headers's docstring in backend_client.py) fixes this:
     the auth-gated backend's own 401 still excludes it from the unlinked
     caller's list, but doesn't poison the shared cache for anyone else.
     """
