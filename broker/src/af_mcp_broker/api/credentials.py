@@ -34,6 +34,7 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.principal import PosixPrincipal, Principal
 
 if TYPE_CHECKING:
@@ -1110,6 +1111,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
     _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
@@ -1203,6 +1205,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
     _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
@@ -1361,6 +1364,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
     _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")

@@ -205,9 +205,9 @@ class AsgiAuthMiddleware:
         # returned -- for a streaming (SSE) /mcp response that's when the
         # stream ends, not when headers go out, since headers are just one
         # of the messages this wrapper passes through on the way there.
-        start_time = log_request_received(
-            logger, method=scope.get("method", ""), path=scope.get("path", "")
-        )
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        start_time = log_request_received(logger, method=method, path=path)
         status_code: int | None = None
         exc_type: str | None = None
 
@@ -226,6 +226,8 @@ class AsgiAuthMiddleware:
             log_request_finished(
                 logger,
                 start_time=start_time,
+                method=method,
+                path=path,
                 status_code=status_code,
                 exc_type=exc_type,
             )

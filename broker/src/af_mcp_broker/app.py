@@ -343,6 +343,19 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
 # ---------------------------------------------------------------------------
 
 
+# Where the /mcp aggregator is mounted. identity_mw.AsgiAuthMiddleware owns
+# request logging below this prefix: it is pure ASGI, so the ``subject`` it
+# binds is visible to its own ``finished`` line, whereas this
+# BaseHTTPMiddleware runs the app in a child task and never sees contextvars
+# bound inside it. Logging /mcp here too would emit a second
+# received/finished pair under a second correlation_id.
+_MCP_MOUNT_PATH = "/mcp"
+
+
+def _is_mcp_path(path: str) -> bool:
+    return path == _MCP_MOUNT_PATH or path.startswith(_MCP_MOUNT_PATH + "/")
+
+
 async def _mcp_mount(scope: Scope, receive: Receive, send: Send) -> None:
     """Serve ``/mcp`` with the ASGI app the lifespan built, read from the broker state at request time.
 
@@ -371,9 +384,9 @@ app = FastAPI(
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Mount the MCP aggregator at /mcp. Requests to /mcp/** are handled entirely
-# by the aggregator sub-application; they do not pass through the broker's
-# FastAPI middleware chain after the mount point.
-app.mount("/mcp", _mcp_mount)
+# by the aggregator sub-application; the FastAPI router and its dependencies
+# never see them.
+app.mount(_MCP_MOUNT_PATH, _mcp_mount)
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
@@ -396,6 +409,24 @@ instrument_fastapi(app, get_settings())
 _REQUEST_LOGGING_EXCLUDED_PATHS = frozenset({"/v1/healthz", "/v1/readyz"})
 
 
+def _path_template(request: Request) -> str:
+    """Return the request path with each matched path parameter shown as ``{name}``.
+
+    Keeps ids ("/v1/admin/tokens/{lookup_id}") out of the finished line's
+    path so it groups by endpoint. The router fills ``path_params`` on the
+    shared scope while ``call_next`` runs; a path no route matched has none
+    and is returned as is. Built from the public ``path_params`` rather than
+    the matched route, whose ``path`` omits the router prefix.
+    """
+    names = {
+        str(value): name for name, value in request.scope.get("path_params", {}).items()
+    }
+    return "/".join(
+        "{" + names[segment] + "}" if segment in names else segment
+        for segment in request.url.path.split("/")
+    )
+
+
 @app.middleware("http")
 async def _bind_request_logging_context(request: Request, call_next):  # type: ignore[no-untyped-def]
     """Binds a fresh correlation_id to structlog's contextvars for every /v1 request (issue #281) and logs its receipt/completion (issue #322).
@@ -404,10 +435,10 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     identity resolves (see identity.py's ``get_principal``/its own
     dev-bypass branch), so both fields appear on every log line for the
     rest of the request -- including ``_http_exception_handler``'s --
-    without every call site threading them through by hand. Runs outside
-    the /mcp mount entirely (see the mount comment above), which is why
-    identity_mw.AsgiAuthMiddleware binds its own correlation_id the same
-    way for that surface.
+    without every call site threading them through by hand. Requests under
+    the /mcp mount are left to identity_mw.AsgiAuthMiddleware, which binds
+    their correlation_id and logs their received/finished pair (see
+    ``_MCP_MOUNT_PATH``).
 
     ``http.request.received``/``http.request.finished`` are the only trace
     of a request that stalls or dies before anything downstream logs -- see
@@ -417,7 +448,9 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     logged exactly once per request.
     """
     bind_new_correlation_id()
-    if request.url.path in _REQUEST_LOGGING_EXCLUDED_PATHS:
+    if request.url.path in _REQUEST_LOGGING_EXCLUDED_PATHS or _is_mcp_path(
+        request.url.path
+    ):
         return await call_next(request)
 
     start_time = log_request_received(
@@ -435,7 +468,12 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
         return response
     finally:
         log_request_finished(
-            logger, start_time=start_time, status_code=status_code, exc_type=exc_type
+            logger,
+            start_time=start_time,
+            method=request.method,
+            path=_path_template(request),
+            status_code=status_code,
+            exc_type=exc_type,
         )
 
 
