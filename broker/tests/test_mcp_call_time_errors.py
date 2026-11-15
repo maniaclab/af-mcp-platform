@@ -47,7 +47,7 @@ async def test_dead_backend_call_surfaces_as_clean_tool_error_not_a_traceback(
 ) -> None:
     """A backend that is DOWN (connection refused) when a known tool is
     actually called must raise a ToolError identifying the tool/backend --
-    never leak a raw httpx/anyio exception or a Python traceback to the
+    never leak a raw httpx2/anyio exception or a Python traceback to the
     caller. The tool is registered directly (bypassing a live tools/list)
     because ProxyProvider's tools/list is exactly what "warn"-tolerates a
     dead backend by never listing its tools in the first place; this

@@ -5,7 +5,7 @@ durable) and a token half (last-redeemed access token + expiry, written on
 every redeem) -- one KV-v2 record at ``{prefix}/{subject}/servicex`` over
 the shared ``VaultKV`` transport, mirroring ``credentials/x509_vault.py``'s
 ``VaultX509Store``/``krb5_vault.py``'s ``Krb5VaultStore`` layout and CAS
-conventions. A fake Vault HTTP API is built with ``httpx.MockTransport``
+conventions. A fake Vault HTTP API is built with ``httpx2.MockTransport``
 (same harness shape as ``test_x509_vault.py``/``test_krb5_vault.py``).
 """
 
@@ -16,7 +16,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 from pydantic import SecretStr
 
@@ -57,11 +57,11 @@ class _FakeVault:
                 return path[len(prefix) :]
         return None
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
 
         if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "auth": {
@@ -75,7 +75,7 @@ class _FakeVault:
 
         key = self._kv_key_from_path(path)
         if key is None:
-            return httpx.Response(
+            return httpx2.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
 
@@ -84,8 +84,8 @@ class _FakeVault:
         if request.method == "GET":
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -101,7 +101,7 @@ class _FakeVault:
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
             if cas != current_version:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={
                         "errors": [
@@ -112,15 +112,15 @@ class _FakeVault:
                 )
             new_version = current_version + 1
             self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
 
         if request.method == "DELETE" and is_metadata:
             self.entries.pop(key, None)
-            return httpx.Response(204, request=request)
+            return httpx2.Response(204, request=request)
 
-        return httpx.Response(
+        return httpx2.Response(
             404, json={"errors": ["unhandled"]}, request=request
         )  # pragma: no cover
 
@@ -145,7 +145,9 @@ def store(fake_vault: _FakeVault, sa_token_path: Path) -> VaultServiceXStore:
         auth_role=AUTH_ROLE,
         kv_mount=KV_MOUNT,
         sa_token_path=str(sa_token_path),
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake_vault.handle)),
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(fake_vault.handle)
+        ),
     )
     return VaultServiceXStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 

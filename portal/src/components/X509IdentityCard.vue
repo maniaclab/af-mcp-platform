@@ -23,6 +23,7 @@
  * success or failure. It is never stored anywhere beyond the controlled
  * ref() within this component's lifecycle.
  */
+import { errorMessage } from '../lib/apiError';
 import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { ShieldCheck } from '@lucide/vue';
 import { nextTick, ref } from 'vue';
@@ -153,7 +154,7 @@ async function handleRevoke() {
     proxyStatus.value = { cached: false, voms_attributes: [] };
     emit('revoked');
   } catch (err) {
-    proxyError.value = err instanceof Error ? err.message : 'Revoke failed.';
+    proxyError.value = errorMessage(err, 'Revoke failed.');
   } finally {
     busy.value = false;
   }

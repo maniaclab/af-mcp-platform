@@ -31,7 +31,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker import metrics
 from af_mcp_broker.api.permissions import _get_registry
+from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.identity import Principal, require_admin
+from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.maintenance import (
     MaintenanceModeStore,
     MaintenanceState,
@@ -207,6 +209,28 @@ async def set_maintenance_status(
                     "time. Re-check GET /v1/admin/maintenance and retry."
                 ),
             ) from exc
+        # Written only after the store accepted the change: a toggle that
+        # lost the compare-and-set race changed nothing and is not audited.
+        action = "maintenance_enable" if body.enabled else "maintenance_disable"
+        await write_audit(
+            AuditRecord(
+                principal_sub=principal.subject,
+                principal_uid=principal.uid,
+                permission=None,
+                target="mcp-gateway",
+                action=action,
+                action_type="state_change",
+                args_summary=f"enabled={body.enabled} reason={body.reason!r}",
+                timestamp=time.time(),
+                request_id=current_correlation_id(),
+            )
+        )
+        logger.info(
+            "maintenance_mode_changed",
+            subject=principal.subject,
+            enabled=body.enabled,
+            reason=body.reason,
+        )
     unixname, email = await _resolve_enabled_by(request, state.enabled_by)
     return MaintenanceStatusResponse(
         enabled=state.enabled,

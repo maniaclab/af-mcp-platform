@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 
 from af_mcp_broker import token_sweep
@@ -45,11 +45,11 @@ class _FakeVault:
         self.login_lease_duration = login_lease_duration
         self.kv_status = kv_status
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
 
         if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "auth": {
@@ -70,20 +70,20 @@ class _FakeVault:
             key = path[len(meta_prefix) :]
             is_metadata = True
         else:
-            return httpx.Response(
+            return httpx2.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
 
         if self.kv_status is not None:
-            return httpx.Response(
+            return httpx2.Response(
                 self.kv_status, json={"errors": ["internal error"]}, request=request
             )
 
         if request.method == "GET" and not is_metadata:
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -99,7 +99,7 @@ class _FakeVault:
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
             if cas != current_version:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={
                         "errors": [
@@ -110,7 +110,7 @@ class _FakeVault:
                 )
             new_version = current_version + 1
             self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
 
@@ -123,14 +123,14 @@ class _FakeVault:
                 }
             )
             if not keys:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(200, json={"data": {"keys": keys}}, request=request)
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(200, json={"data": {"keys": keys}}, request=request)
 
         if request.method == "DELETE" and is_metadata:
             self.entries.pop(key, None)
-            return httpx.Response(204, request=request)
+            return httpx2.Response(204, request=request)
 
-        return httpx.Response(
+        return httpx2.Response(
             404, json={"errors": ["unhandled"]}, request=request
         )  # pragma: no cover
 
@@ -148,8 +148,8 @@ def _patch_vault_kv(monkeypatch: pytest.MonkeyPatch, fake: _FakeVault) -> None:
     real_vault_kv = VaultKV
 
     def _factory(**kwargs: Any) -> VaultKV:
-        kwargs["http_client"] = httpx.AsyncClient(
-            transport=httpx.MockTransport(fake.handle)
+        kwargs["http_client"] = httpx2.AsyncClient(
+            transport=httpx2.MockTransport(fake.handle)
         )
         return real_vault_kv(**kwargs)
 

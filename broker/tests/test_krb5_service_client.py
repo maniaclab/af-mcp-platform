@@ -26,7 +26,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 import pytest
 import structlog
 from pydantic import SecretStr
@@ -71,8 +71,8 @@ def issuer() -> BrokerTokenIssuer:
 @pytest.fixture
 def make_client(
     issuer: BrokerTokenIssuer,
-) -> Callable[..., tuple[Krb5TokenServiceClient, list[httpx.Request]]]:
-    """Build a client whose HTTP layer is a ``httpx.MockTransport``.
+) -> Callable[..., tuple[Krb5TokenServiceClient, list[httpx2.Request]]]:
+    """Build a client whose HTTP layer is a ``httpx2.MockTransport``.
 
     Returns ``(client, requests)`` where *requests* records every request
     the client sent. *responder* maps a request to a response (default: 200
@@ -81,21 +81,21 @@ def make_client(
     """
 
     def _make(
-        responder: httpx.Response | Exception | None = None,
+        responder: httpx2.Response | Exception | None = None,
         service_url: str = _SERVICE_URL,
         **kwargs: object,
-    ) -> tuple[Krb5TokenServiceClient, list[httpx.Request]]:
-        requests: list[httpx.Request] = []
+    ) -> tuple[Krb5TokenServiceClient, list[httpx2.Request]]:
+        requests: list[httpx2.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             requests.append(request)
             if isinstance(responder, Exception):
                 raise responder
             if responder is None:
-                return httpx.Response(200, json=_MINT_RESPONSE)
+                return httpx2.Response(200, json=_MINT_RESPONSE)
             return responder
 
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
         client = Krb5TokenServiceClient(
             issuer=issuer,
             service_url=service_url,
@@ -126,7 +126,7 @@ class TestMintResponse:
 
     async def test_mint_renew_until_null_stays_none(self, make_client) -> None:
         response = dict(_MINT_RESPONSE, renew_until=None)
-        client, _ = make_client(httpx.Response(200, json=response))
+        client, _ = make_client(httpx2.Response(200, json=response))
         ticket = await _mint(client)
         assert ticket.renew_until is None
 
@@ -139,25 +139,27 @@ class TestMintResponse:
         ``nickname``)."""
         response = dict(_MINT_RESPONSE)
         del response["renew_until"]
-        client, _ = make_client(httpx.Response(200, json=response))
+        client, _ = make_client(httpx2.Response(200, json=response))
         with pytest.raises(KeyError):
             await _mint(client)
 
 
 class TestMintFailures:
     async def test_mint_400_raises_bad_credential_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad password"}))
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad password"}))
         with pytest.raises(Krb5TokenBadCredentialError):
             await _mint(client)
 
     async def test_mint_403_raises_account_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(403, json={"detail": "account revoked"}))
+        client, _ = make_client(
+            httpx2.Response(403, json={"detail": "account revoked"})
+        )
         with pytest.raises(Krb5TokenAccountError):
             await _mint(client)
 
     async def test_mint_422_raises_invalid_request_error(self, make_client) -> None:
         client, _ = make_client(
-            httpx.Response(422, json={"detail": "invalid lifetime"})
+            httpx2.Response(422, json={"detail": "invalid lifetime"})
         )
         with pytest.raises(Krb5TokenInvalidRequestError):
             await _mint(client)
@@ -165,7 +167,7 @@ class TestMintFailures:
     async def test_mint_429_raises_rate_limited_error_with_retry_after(
         self, make_client
     ) -> None:
-        client, _ = make_client(httpx.Response(429, headers={"Retry-After": "30"}))
+        client, _ = make_client(httpx2.Response(429, headers={"Retry-After": "30"}))
         with pytest.raises(Krb5TokenRateLimitedError) as exc_info:
             await _mint(client)
         assert exc_info.value.retry_after == "30"
@@ -173,7 +175,7 @@ class TestMintFailures:
     async def test_mint_429_without_retry_after_header_is_none(
         self, make_client
     ) -> None:
-        client, _ = make_client(httpx.Response(429))
+        client, _ = make_client(httpx2.Response(429))
         with pytest.raises(Krb5TokenRateLimitedError) as exc_info:
             await _mint(client)
         assert exc_info.value.retry_after is None
@@ -184,17 +186,17 @@ class TestMintFailures:
         must NOT read as a bad CERN password (unlike condor-token's
         doctrine, krb5 has genuine client-actionable 400/403 cases, so 401
         must stay clearly distinct)."""
-        client, _ = make_client(httpx.Response(401))
+        client, _ = make_client(httpx2.Response(401))
         with pytest.raises(Krb5TokenMintError):
             await _mint(client)
 
     async def test_mint_502_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(502))
+        client, _ = make_client(httpx2.Response(502))
         with pytest.raises(Krb5TokenMintError):
             await _mint(client)
 
     async def test_connection_error_is_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.ConnectError("connection refused"))
+        client, _ = make_client(httpx2.ConnectError("connection refused"))
         with pytest.raises(Krb5TokenMintError):
             await _mint(client)
 
@@ -202,7 +204,7 @@ class TestMintFailures:
         self, make_client
     ) -> None:
         client, _ = make_client(
-            httpx.Response(502, text="hunter2 leaked into an error page")
+            httpx2.Response(502, text="hunter2 leaked into an error page")
         )
         with pytest.raises(Krb5TokenMintError) as e:
             await _mint(client)
@@ -309,7 +311,7 @@ class TestMintKeytabMode:
         """A 400 means the credential no longer works -- same exception as
         a bad password, this layer doesn't distinguish "bad password" from
         "bad keytab"."""
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad keytab"}))
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad keytab"}))
         with pytest.raises(Krb5TokenBadCredentialError):
             await client.mint(
                 subject="user1", username="alice", keytab_b64=SecretStr("ZmFrZQ==")
@@ -374,7 +376,7 @@ class TestRenew:
         ``Krb5TokenInvalidRequestError``, which callers may treat as
         surfacing a 422 to the end user."""
         client, _ = make_client(
-            httpx.Response(422, json={"detail": "malformed ccache"})
+            httpx2.Response(422, json={"detail": "malformed ccache"})
         )
         with pytest.raises(Krb5TokenInvalidCcacheError):
             await client.renew(subject="user1", ccache_b64="garbage")
@@ -386,18 +388,18 @@ class TestRenew:
         catches it and falls through to keytab/password, never surfaces it
         as an error."""
         client, _ = make_client(
-            httpx.Response(400, json={"detail": "past renewable window"})
+            httpx2.Response(400, json={"detail": "past renewable window"})
         )
         with pytest.raises(Krb5TokenRenewalWindowClosedError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
 
     async def test_renew_401_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(401))
+        client, _ = make_client(httpx2.Response(401))
         with pytest.raises(Krb5TokenMintError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
 
     async def test_renew_502_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(502))
+        client, _ = make_client(httpx2.Response(502))
         with pytest.raises(Krb5TokenMintError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
 
@@ -408,13 +410,13 @@ class TestRenew:
         branch, so an unexpected 429 must fall through to the generic
         failure branch rather than being silently ignored (or misread as
         ``Krb5TokenRateLimitedError``)."""
-        client, _ = make_client(httpx.Response(429))
+        client, _ = make_client(httpx2.Response(429))
         with pytest.raises(Krb5TokenMintError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
 
     async def test_renew_connection_error_is_generic_mint_error(
         self, make_client
     ) -> None:
-        client, _ = make_client(httpx.ConnectError("connection refused"))
+        client, _ = make_client(httpx2.ConnectError("connection refused"))
         with pytest.raises(Krb5TokenMintError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")

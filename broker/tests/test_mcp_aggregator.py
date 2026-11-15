@@ -583,7 +583,7 @@ def _status_transport(status_code: int) -> httpx2.MockTransport:
 
 
 async def _send_through(client: Client, status_code: int) -> None:
-    """Send one request through *client*'s own httpx client factory, against a
+    """Send one request through *client*'s own httpx2 client factory, against a
     backend that answers *status_code* -- the path every MCP request takes."""
     http_client = client.transport.httpx_client_factory(
         transport=_status_transport(status_code)
@@ -593,7 +593,7 @@ async def _send_through(client: Client, status_code: int) -> None:
 
 
 class TestUnauthorizedHook:
-    """The httpx response hook that reports a backend's 401 for an injected
+    """The httpx2 response hook that reports a backend's 401 for an injected
     credential (issue #344), ahead of _raise_for_401."""
 
     async def test_401_reports_and_still_raises(self) -> None:
@@ -3115,7 +3115,7 @@ async def test_client_factory_x509_elicitation_accepted_now_linked_proceeds(
 class TestClassifyFailureUnavailable:
     """issue #280 / B.3: a request that never got a correlated response used
     to be distinguished as "timeout" from a connection-level "unavailable"
-    via ``McpError.error.code == httpx.codes.REQUEST_TIMEOUT``. fastmcp v4 /
+    via ``McpError.error.code == httpx2.codes.REQUEST_TIMEOUT``. fastmcp v4 /
     mcp SDK v2 no longer produce that code at all -- every proxy transport
     failure, timeouts included, normalizes to a plain ``INTERNAL_ERROR``
     (``_proxy_upstream_error``) -- so that probe is gone and every case

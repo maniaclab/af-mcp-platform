@@ -17,7 +17,7 @@ import json
 import time
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 import jwt
 import pytest
 import structlog
@@ -53,8 +53,8 @@ def issuer() -> BrokerTokenIssuer:
 @pytest.fixture
 def make_client(
     issuer: BrokerTokenIssuer,
-) -> Callable[..., tuple[ServiceXTokenServiceClient, list[httpx.Request]]]:
-    """Build a client whose HTTP layer is a ``httpx.MockTransport``.
+) -> Callable[..., tuple[ServiceXTokenServiceClient, list[httpx2.Request]]]:
+    """Build a client whose HTTP layer is a ``httpx2.MockTransport``.
 
     Returns ``(client, requests)`` where *requests* records every request
     the client sent. *responder* maps a request to a response (default: 200
@@ -63,21 +63,21 @@ def make_client(
     """
 
     def _make(
-        responder: httpx.Response | Exception | None = None,
+        responder: httpx2.Response | Exception | None = None,
         service_url: str = _SERVICE_URL,
         **kwargs: object,
-    ) -> tuple[ServiceXTokenServiceClient, list[httpx.Request]]:
-        requests: list[httpx.Request] = []
+    ) -> tuple[ServiceXTokenServiceClient, list[httpx2.Request]]:
+        requests: list[httpx2.Request] = []
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx2.Request) -> httpx2.Response:
             requests.append(request)
             if isinstance(responder, Exception):
                 raise responder
             if responder is None:
-                return httpx.Response(200, json=_REDEEM_RESPONSE)
+                return httpx2.Response(200, json=_REDEEM_RESPONSE)
             return responder
 
-        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
         client = ServiceXTokenServiceClient(
             issuer=issuer,
             service_url=service_url,
@@ -129,7 +129,7 @@ class TestRedeemResponse:
 
 class TestRedeemFailures:
     async def test_redeem_400_raises_bad_refresh_token_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad token"}))
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad token"}))
         with pytest.raises(ServiceXBadRefreshTokenError):
             await _redeem(client)
 
@@ -140,22 +140,22 @@ class TestRedeemFailures:
         assert "new token" in message
 
     async def test_redeem_401_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(401, json={"detail": "nope"}))
+        client, _ = make_client(httpx2.Response(401, json={"detail": "nope"}))
         with pytest.raises(ServiceXServiceMintError):
             await _redeem(client)
 
     async def test_redeem_429_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(429, json={"detail": "rate limited"}))
+        client, _ = make_client(httpx2.Response(429, json={"detail": "rate limited"}))
         with pytest.raises(ServiceXServiceMintError):
             await _redeem(client)
 
     async def test_redeem_502_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.Response(502, json={"detail": "bad gateway"}))
+        client, _ = make_client(httpx2.Response(502, json={"detail": "bad gateway"}))
         with pytest.raises(ServiceXServiceMintError):
             await _redeem(client)
 
     async def test_redeem_unreachable_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx.ConnectError("connection refused"))
+        client, _ = make_client(httpx2.ConnectError("connection refused"))
         with pytest.raises(ServiceXServiceMintError):
             await _redeem(client)
 
@@ -163,7 +163,7 @@ class TestRedeemFailures:
         self, make_client
     ) -> None:
         client, _ = make_client(
-            httpx.Response(500, json={"detail": "some internal secret path"})
+            httpx2.Response(500, json={"detail": "some internal secret path"})
         )
         with pytest.raises(ServiceXServiceMintError) as exc_info:
             await _redeem(client)
@@ -193,7 +193,7 @@ class TestRequestCorrelation:
     ) -> None:
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(correlation_id="corr-342")
-        client, _ = make_client(httpx.Response(400, json={"detail": "bad token"}))
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad token"}))
         with (
             structlog.testing.capture_logs(
                 processors=[structlog.contextvars.merge_contextvars]

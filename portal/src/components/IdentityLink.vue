@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '../lib/apiError';
 import { LINK_ACTION_LABEL, RELINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Link2 } from '@lucide/vue';
 import { ref } from 'vue';
@@ -59,7 +60,7 @@ async function handleUnlink() {
     await unlinkIdentity(props.id);
     emit('unlinked');
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Unlink failed. Try again.';
+    error.value = errorMessage(err, 'Unlink failed. Try again.');
   } finally {
     busy.value = false;
   }
@@ -91,7 +92,7 @@ async function handleLink() {
       window.location.href = authorizeUrl;
     }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Link failed. Try again.';
+    error.value = errorMessage(err, 'Link failed. Try again.');
     busy.value = false;
   }
 }

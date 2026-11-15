@@ -3,10 +3,9 @@
  * status list and usage stats.
  *
  * The usage figures come from GET /v1/usage's window totals (calls,
- * estimated tokens, estimated cost priced at the reference model).
- * Everything the usage stats show is an ESTIMATE (tokenized tool-result text
- * priced at one model's input rate, not provider-reported spend), so the
- * component must label it as such, and it must degrade gracefully both when
+ * estimated tokens).
+ * The token stat is an ESTIMATE (tokenized tool-result text, not
+ * provider-reported usage), so the component must label it as such, and it must degrade gracefully both when
  * the window is empty and when a fetch fails outright.
  */
 import { flushPromises, mount } from '@vue/test-utils';
@@ -48,14 +47,12 @@ const SUMMARY: DashboardSummary = {
 const USAGE: UsageResponse = {
   subject: 'user-123',
   window_days: 30,
-  cost_model: 'claude-sonnet-4-20250514',
   totals: {
     calls: 42,
     errors: 3,
     duration_ms: 1234.5,
     result_bytes: 98765,
     result_tokens_est: 15000,
-    estimated_cost_usd: 0.045,
   },
   by_service: [
     {
@@ -64,7 +61,6 @@ const USAGE: UsageResponse = {
       errors: 3,
       result_bytes: 98765,
       result_tokens_est: 15000,
-      estimated_cost_usd: 0.045,
     },
   ],
   by_day: [{ date: '2026-08-25', calls: 42, result_tokens_est: 15000 }],
@@ -73,14 +69,12 @@ const USAGE: UsageResponse = {
 const EMPTY: UsageResponse = {
   subject: 'user-123',
   window_days: 30,
-  cost_model: 'claude-sonnet-4-20250514',
   totals: {
     calls: 0,
     errors: 0,
     duration_ms: 0,
     result_bytes: 0,
     result_tokens_est: 0,
-    estimated_cost_usd: 0,
   },
   by_service: [],
   by_day: [],
@@ -99,14 +93,15 @@ async function mountSummary() {
 }
 
 describe('OverviewSummary usage', () => {
-  it('shows window calls, estimated tokens, and estimated cost with the model name', async () => {
+  it('shows window calls and estimated tokens, with no price or dollar figure', async () => {
     const wrapper = await mountSummary();
 
     const text = wrapper.text();
     expect(text).toContain('42');
     expect(text).toContain('15,000');
-    expect(text).toContain('$0.045');
-    expect(text).toContain('claude-sonnet-4-20250514');
+    expect(text).not.toContain('$');
+    expect(text.toLowerCase()).not.toContain('cost');
+    expect(text.toLowerCase()).not.toContain('priced');
     // Everything shown is an estimate and must say so.
     expect(text.toLowerCase()).toContain('estimated');
   });
@@ -116,8 +111,8 @@ describe('OverviewSummary usage', () => {
     const wrapper = await mountSummary();
 
     expect(wrapper.text()).toContain('No tool calls');
-    // The zeroed cost line would be noise under an explicit empty state.
-    expect(wrapper.text()).not.toContain('$0');
+    // Zeroed stats would be noise under an explicit empty state.
+    expect(wrapper.text()).not.toContain('Tokens (estimated)');
   });
 
   it('degrades to a status-unavailable row when the usage fetch fails', async () => {

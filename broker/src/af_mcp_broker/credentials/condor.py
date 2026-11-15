@@ -25,7 +25,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
 
-import httpx
+import httpx2
 import structlog
 from fastapi import HTTPException, status
 
@@ -204,7 +204,7 @@ class CondorTokenProvider(CredentialProvider):
                 },
                 timeout=10.0,
             )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "condor_token.exchange.unreachable",
                 subject=principal.subject,

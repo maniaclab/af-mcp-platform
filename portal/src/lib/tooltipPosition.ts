@@ -31,7 +31,7 @@ export interface TooltipPosition {
   left: number;
 }
 
-/** Gap between trigger and bubble, matching the retired InfoTooltip.vue's 0.375rem margin (at a 16px root font size). */
+/** Gap between trigger and bubble, 0.375rem (at a 16px root font size). */
 const GAP_PX = 6;
 /** Minimum distance kept from the viewport edge. */
 const VIEWPORT_MARGIN_PX = 8;
@@ -40,7 +40,7 @@ const VIEWPORT_MARGIN_PX = 8;
  * Places the bubble centered under (or over) the trigger, clamped so it
  * never runs past the viewport's horizontal edges, and flips to the
  * opposite side if there's no room on the requested one -- both distinct
- * from the old InfoTooltip.vue, which never adjusted for viewport bounds at
+ * from a CSS-only tooltip, which cannot adjust for viewport bounds at
  * all (see EntitlementsPage.vue/TokensPage.vue's own siting comments for
  * the manual per-row `placement` workarounds that necessitated).
  */

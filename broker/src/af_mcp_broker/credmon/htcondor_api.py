@@ -13,7 +13,7 @@ import base64
 import json
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 import structlog
 
 from af_mcp_broker.credmon.storer import CredentialStoreClient, CredentialStoreError
@@ -40,7 +40,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
         *,
         api_url: str,
         token_file: Path,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._base_url = api_url.rstrip("/")
         self._token_file = token_file
@@ -49,7 +49,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
             component="HTCondorApiCredentialStore"
         )
 
-    def _http(self) -> httpx.AsyncClient:
+    def _http(self) -> httpx2.AsyncClient:
         return self._http_client if self._http_client is not None else get_http_client()
 
     async def store_service_credential(
@@ -80,7 +80,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
                 },
                 timeout=30.0,
             )
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             self._log.warning(
                 "htcondor_api.store.unreachable",
                 service=service,
@@ -89,7 +89,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
             )
             raise CredentialStoreError("htcondor-api could not be reached.") from exc
 
-        if resp.status_code not in (httpx.codes.OK, httpx.codes.CREATED):
+        if resp.status_code not in (httpx2.codes.OK, httpx2.codes.CREATED):
             # htcondor-api's error body carries credd's reason (e.g. the
             # caller is not a CRED_SUPER_USER); it never echoes the stored
             # credential, so a truncated copy is safe and actionable.

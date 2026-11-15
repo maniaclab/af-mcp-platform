@@ -55,7 +55,7 @@ import time
 from typing import TYPE_CHECKING, Annotated
 from urllib.parse import urlencode
 
-import httpx
+import httpx2
 import jwt
 import structlog
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
@@ -466,7 +466,7 @@ async def keycloak_login_callback(
         resp.raise_for_status()
         token_response = resp.json()
         id_token = token_response["id_token"]
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx2.HTTPError, KeyError) as exc:
         log.warning("mcp_oauth.keycloak_token_exchange_failed", error=str(exc))
         response = _oauth_error_redirect(
             payload.mcp_redirect_uri, "server_error", payload.mcp_state
