@@ -150,7 +150,7 @@ class ToolCallMiddleware(Middleware):
         try:
             with tracer.start_as_current_span(f"tools/call {name}", context=parent):
                 result = await call_next(context)
-            outcome = "ok"
+            outcome = "success"
         finally:
             log.info(
                 "tool.call",

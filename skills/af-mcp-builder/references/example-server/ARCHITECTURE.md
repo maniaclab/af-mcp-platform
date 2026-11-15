@@ -12,7 +12,7 @@ service's native client library and rename the `shelf` prefix.
 |------|------|
 | `shelf_mcp/server.py` | Tool registration, `/healthz`, the ASGI app, `main()` |
 | `shelf_mcp/auth.py` | `JwksCache` and `BrokerTokenVerifier` |
-| `shelf_mcp/observability.py` | Request id, JSON logs, access log, optional spans |
+| `shelf_mcp/observability.py` | Request id, JSON logs (`outcome` is `success` or `error`), access log, optional spans |
 | `shelf_mcp/data.py` | The fake data client (stands in for the native client library) |
 | `test_shelf_auth.py`, `test_shelf_tools.py` | Unit tests for auth, integration tests for the tools |
 
