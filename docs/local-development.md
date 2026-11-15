@@ -36,6 +36,11 @@ Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
 > names), so `pixi run broker` works out of the box. To use your own, export
 > `POLICY_FILE=/path/to/policy.yaml` first; it needs at least one group that
 > maps to a non-empty permission list.
+>
+> It likewise refuses to boot when `SERVICES_FILE` is missing, unreadable,
+> invalid or defines no services. The `broker` feature sets `SERVICES_FILE` to
+> the dev registry at `broker/src/af_mcp_broker/mcp/services.yaml`; export
+> `SERVICES_FILE=/path/to/services.yaml` to use your own.
 
 > Plain `pixi run broker` refuses to start unless a Keycloak admin service
 > account is configured: every credential type (JWT included, not just

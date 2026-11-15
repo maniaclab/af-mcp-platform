@@ -756,6 +756,8 @@ aggregator:
   # Each registered service's trust tier (Elwood v5 / Shannon) is declared
   # alongside its deployment manifests in the GitOps repo;
   # required_permission: __none__ is only for user-tier read-only services.
+  # Must list at least one service: the broker refuses to boot (the pod never
+  # becomes ready) when the rendered services.yaml defines none.
   services: []
 
 # ---------------------------------------------------------------------------

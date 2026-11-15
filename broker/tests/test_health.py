@@ -1,19 +1,17 @@
-"""Readiness semantics: an empty backends list is a valid degraded state
-(issue #29) — /v1/readyz must gate only on JWKS reachability, surfacing
-backends config as informational fields instead of failing the probe.
+"""Readiness semantics: /v1/readyz gates only on JWKS reachability; the
+services count is an informational field. An empty or missing services file
+never reaches readiness because it refuses to boot.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from af_mcp_broker import app as app_module
+import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    import pytest
 
 
 async def _ok_jwks(settings: Any) -> list[dict[str, Any]]:
@@ -24,35 +22,6 @@ async def _ok_jwks(settings: Any) -> list[dict[str, Any]]:
 async def _unreachable_jwks(settings: Any) -> list[dict[str, Any]]:
     del settings
     raise RuntimeError("jwks endpoint unreachable")
-
-
-def _write_empty_backends(tmp_path: Path) -> str:
-    path = tmp_path / "services.yaml"
-    path.write_text("services: []\n")
-    return str(path)
-
-
-def _use_empty_backends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point SERVICES_FILE at an empty backends list, and drop conftest's
-    default x509 identity_providers entry (targets ["ami"]) along with it —
-    an x509 entry naming a nonexistent backend would trip the broker's
-    coverage check the other way (an entry targeting a non-x509 backend)."""
-    monkeypatch.setenv("SERVICES_FILE", _write_empty_backends(tmp_path))
-    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
-
-
-def test_readyz_ok_with_empty_backends(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    app_client_factory: Callable[..., Any],
-) -> None:
-    _use_empty_backends(monkeypatch, tmp_path)
-    monkeypatch.setattr("af_mcp_broker.api.health.get_jwks", _ok_jwks)
-
-    with app_client_factory() as (client, _):
-        resp: Any = client.get("/v1/readyz")
-
-    assert resp.status_code == 200, resp.text
 
 
 def test_readyz_503_when_jwks_unreachable(
@@ -86,47 +55,28 @@ def test_readyz_body_reports_services_count(
     assert body["services_count"] > 0
 
 
-def test_readyz_body_reports_services_count_zero(
+def test_readyz_body_has_no_services_loaded_field(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
-    _use_empty_backends(monkeypatch, tmp_path)
     monkeypatch.setattr("af_mcp_broker.api.health.get_jwks", _ok_jwks)
 
     with app_client_factory() as (client, _):
         resp: Any = client.get("/v1/readyz")
 
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["services_count"] == 0
-    assert body["services_loaded"] is True
+    assert "services_loaded" not in resp.json()
 
 
-def test_startup_warns_on_no_backends(
+def test_startup_refuses_an_empty_services_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
-    """Emptying the backends file must not gate readiness, but must still be
-    a loud, visible signal — a WARNING structlog line at startup.
+    services_file = tmp_path / "services.yaml"
+    services_file.write_text("services: []\n")
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
 
-    configure_logging() rewrites the root logger's handlers during the app
-    lifespan, which would otherwise swallow pytest's caplog handler, so this
-    asserts directly against the app module's logger call instead.
-    """
-    _use_empty_backends(monkeypatch, tmp_path)
-
-    events: list[str] = []
-    original_warning = app_module.logger.warning
-
-    def _capture(event: str, **kwargs: Any) -> Any:
-        events.append(event)
-        return original_warning(event, **kwargs)
-
-    monkeypatch.setattr(app_module.logger, "warning", _capture)
-
-    with app_client_factory():
-        pass
-
-    assert "no_services_configured" in events
+    with pytest.raises(RuntimeError, match="SERVICES_FILE"):  # noqa: SIM117
+        with app_client_factory():
+            pass
