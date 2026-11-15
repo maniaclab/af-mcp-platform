@@ -69,7 +69,7 @@ logger = structlog.get_logger(__name__)
 # broker's per-tool-call server span, enriched with identity/outcome
 # attributes on every path (success/denied/unmapped/error) and stamped into
 # each AuditRecord as the trace_id join key -- see the comment above the
-# span below for why fastmcp 3.4.4's own tools/call span can't serve that
+# span below for why fastmcp 4.0.4's own tools/call span can't serve that
 # role. Propagation invariant: inbound trace context (the SEP-414 ``_meta``
 # traceparent) is parsed as a REMOTE PARENT and never forwarded verbatim;
 # outbound context toward backend MCP servers is broker-generated -- the
@@ -207,7 +207,7 @@ class AuthorizationMiddleware(Middleware):
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
 
         # The broker's per-tool-call server span (OTel MCP semconv name
-        # "tools/call <name>"). fastmcp 3.4.4 opens a span of the same name
+        # "tools/call <name>"). fastmcp 4.0.4 opens a span of the same name
         # itself, but only inside call_next (FastMCP.call_tool's core logic,
         # downstream of every middleware), so that one (a) never exists for
         # the denied/unmapped paths below, which raise before call_next, and

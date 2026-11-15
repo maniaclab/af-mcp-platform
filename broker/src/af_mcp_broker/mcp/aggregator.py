@@ -296,7 +296,7 @@ def _client_supports_elicitation(ctx: Context) -> bool:
     error on anyway. Note this only confirms the client declared *some*
     elicitation mode: the MCP spec's ``ElicitationCapability`` further
     distinguishes "form" vs "url" mode, and ``check_client_capability``
-    (as pinned, fastmcp 3.4.4) does not drill into that distinction -- a
+    (as pinned, mcp 2.2.0) does not drill into that distinction -- a
     client that declared only URL-mode support (issue #194, not implemented
     here) still passes this check. ``_require_linked``'s own ``except``
     around the ``elicit()`` call is what actually catches that case, so this
@@ -339,7 +339,7 @@ async def _require_linked(
     at all. Otherwise, tries one form-mode ``ctx.elicit()`` round trip
     asking the caller to link then retry, before falling back to stage 1's
     plain ``ToolError``. There is no URL-mode elicitation in the pinned
-    fastmcp version (3.4.4) -- no way to have the client auto-open the
+    fastmcp version (4.0.4) -- no way to have the client auto-open the
     portal link for the caller -- so this is deliberately form-mode only;
     true URL-mode elicitation is tracked separately (issue #194).
 
@@ -372,14 +372,7 @@ async def _require_linked(
             if rejected
             else f"You need to link {display_name} before I can do this. Visit "
             f"{url} to link it, then let me know when you're done.",
-            [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],  # type: ignore[arg-type]
-            # mypy 2.3.0 misresolves fastmcp 3.4.4's Context.elicit overloads
-            # for a plain list[str] (it picks the response_type=None-only
-            # overload regardless of the argument's actual type -- reproduced
-            # with a minimal repro outside this codebase, so this is a
-            # library/mypy interaction, not a real type error); the select
-            # (list[str]) overload's runtime behavior is exercised directly
-            # by this module's tests.
+            [_ELICIT_RETRY_OPTION, _ELICIT_CANCEL_OPTION],
         )
     except Exception:  # noqa: BLE001 -- fall back to stage 1, see docstring
         raise not_linked from None
@@ -772,7 +765,7 @@ class _ObservableProxyProvider(ProxyProvider):
     """ProxyProvider that structured-logs a classified reason when its ``tools/list`` fails, then re-raises so ``AggregateProvider``'s existing ``provider_error_strategy="warn"`` still drops this service's contribution and keeps every other service's listing unaffected -- exactly today's degrade-gracefully behavior, just with an ``aggregator.service_list_failed`` structlog event on record instead of only fastmcp's own unparseable stdlib WARNING (see issue #121).
 
     Overrides only the private ``_list_tools()`` extension hook that
-    ``fastmcp.server.providers.proxy.ProxyProvider`` (pinned at 3.4.4, see
+    ``fastmcp.server.providers.proxy.ProxyProvider`` (pinned at 4.0.4, see
     pixi.lock) itself documents as a subclassing point -- but it's still
     third-party internals, not a public contract fastmcp guarantees stable.
     If ``_list_tools()``'s signature, its call sites (``_get_tool()``'s

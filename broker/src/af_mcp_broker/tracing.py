@@ -83,7 +83,7 @@ def init_tracing(settings: Settings) -> None:
 
     Call this before the FastMCP aggregator/app objects are constructed
     (app.py does, at module scope). Verified against the pinned fastmcp
-    3.4.4: it acquires its tracer lazily per span (``get_tracer()`` inside
+    4.0.4: it acquires its tracer lazily per span (``get_tracer()`` inside
     each ``server_span``/``client_span``), never at import or construction,
     so this early placement is conservative rather than load-bearing -- but
     it keeps us safe against a future fastmcp caching the tracer earlier.

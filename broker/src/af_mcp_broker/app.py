@@ -158,7 +158,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
     async with AsyncExitStack() as stack:
         settings = Settings()
         configure_logging(settings.log_level, settings.audit_log_file)
-        # Tracing initializes before any FastMCP object exists: fastmcp 3.4.4
+        # Tracing initializes before any FastMCP object exists: fastmcp 4.0.4
         # acquires its tracer lazily per span, so this early placement is
         # conservative rather than load-bearing (see init_tracing's docstring)
         # -- but it guarantees nothing downstream can ever capture a pre-init
