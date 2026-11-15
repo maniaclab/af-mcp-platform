@@ -56,6 +56,9 @@ postgresql = ">=18.4,<19"
 redis-server = ">=8.0"
 # Enforces the broker's import layers (see [tool.importlinter] in broker/pyproject.toml).
 import-linter = ">=2.0"
+# Renders the chart in broker/tests/test_config_chart_env.py, so the pinned
+# chart env fixtures cannot drift from the chart.
+kubernetes-helm = ">=4.2,<5"
 
 # The broker refuses to boot without a non-empty entitlement policy and a
 # non-empty service registry, so local runs point POLICY_FILE and
