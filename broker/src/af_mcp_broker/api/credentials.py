@@ -34,6 +34,7 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.principal import PosixPrincipal, Principal
 from af_mcp_broker.retry_after import retry_after_seconds
 
@@ -276,6 +277,19 @@ def _krb5_expires_at(cred: _IssuedCredential) -> float:
 
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+
+
+def _bind_parent_request_id(claims: dict[str, Any]) -> None:
+    """Log the rest of a redeem request under its minting tool call's id.
+
+    A broker identity token's ``rid`` is the ``correlation_id`` of the client
+    request the broker minted it for. Bound as ``parent_request_id``, it lands
+    on every line of the redeem, the credential-release audit line included,
+    while ``request_id`` keeps the token's ``jti``. A token minted outside a
+    client request has no ``rid``.
+    """
+    if rid := claims.get("rid"):
+        structlog.contextvars.bind_contextvars(parent_request_id=rid)
 
 
 def notify_identity_linked(request: Request, subject: str, alias: str | None) -> None:
@@ -1092,6 +1106,8 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
+    _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 
@@ -1184,6 +1200,8 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
+    _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 
@@ -1341,6 +1359,8 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         )
 
     subject: str = claims["sub"]
+    bind_subject(subject)
+    _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
     request_id = claims.get("jti", "")
 

@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 import uuid
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, TextIO
 
 import structlog
@@ -18,6 +19,17 @@ if TYPE_CHECKING:
 # name (``af_mcp_broker.metering`` etc.), whose records would otherwise
 # propagate into the audit destination.
 AUDIT_LOGGER_NAME = "af_mcp_broker.audit.logger"
+
+_MAX_CLIENT_REQUEST_ID_LENGTH = 128
+
+# One mutable dict per request, shared by reference with every task the
+# request spawns. /v1's BaseHTTPMiddleware runs the route in a child task
+# whose contextvar writes (``bind_subject``) never reach the middleware's own
+# context; mutating this dict does, so the middleware's ``finished`` line can
+# still name the caller.
+_request_identity: ContextVar[dict[str, str] | None] = ContextVar(
+    "request_identity", default=None
+)
 
 
 class PassphraseRedactProcessor:
@@ -76,6 +88,36 @@ class AuditFileHandler(_RaiseOnErrorMixin, logging.FileHandler):
     """Audit handler appending to a file."""
 
 
+def _shared_processors() -> list[Any]:
+    """Return the processors every log line goes through, whether it comes from structlog or from a stdlib logger."""
+    return [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        PassphraseRedactProcessor(),
+    ]
+
+
+def build_json_formatter() -> structlog.stdlib.ProcessorFormatter:
+    """Return the formatter that renders a log record as one JSON line.
+
+    Shared by ``configure_logging`` and by ``uvicorn_log_config.json`` (as its
+    formatter factory), so uvicorn's lifecycle lines have the shape of the
+    broker's own lines from the first one on.
+    """
+    return structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.ExceptionRenderer(),
+            structlog.processors.JSONRenderer(),
+        ],
+        foreign_pre_chain=_shared_processors(),
+    )
+
+
 def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> None:
     """Wire structlog to emit JSON lines to stdout.
 
@@ -85,15 +127,7 @@ def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> Non
 
     Call once at application startup before any log statements.
     """
-    shared_processors: list[Any] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        PassphraseRedactProcessor(),
-    ]
+    shared_processors = _shared_processors()
 
     structlog.configure(
         processors=[
@@ -106,14 +140,7 @@ def configure_logging(log_level: str = "INFO", audit_log_file: str = "-") -> Non
         cache_logger_on_first_use=True,
     )
 
-    formatter = structlog.stdlib.ProcessorFormatter(
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.ExceptionRenderer(),
-            structlog.processors.JSONRenderer(),
-        ],
-        foreign_pre_chain=shared_processors,
-    )
+    formatter = build_json_formatter()
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
@@ -163,6 +190,7 @@ def bind_new_correlation_id() -> None:
     """
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(correlation_id=uuid.uuid4().hex)
+    _request_identity.set({})
 
 
 def current_correlation_id() -> str:
@@ -201,6 +229,23 @@ def bind_subject(subject: str) -> None:
     resolution, on either surface, carries who made the call.
     """
     structlog.contextvars.bind_contextvars(subject=subject)
+    request_identity = _request_identity.get()
+    if request_identity is not None:
+        request_identity["subject"] = subject
+
+
+def bind_client_request_id(client_request_id: str) -> None:
+    """Bind the caller-supplied ``X-Request-ID`` as ``client_request_id`` for the rest of the current request.
+
+    Recorded beside the broker's own ``correlation_id`` so a client can find
+    its call by the id it chose; it is never forwarded or used as the
+    ``correlation_id``, because an unauthenticated caller must not choose the
+    id that joins the broker's, the audit log's and the backends' lines.
+    Truncated, since the header is attacker-controlled.
+    """
+    structlog.contextvars.bind_contextvars(
+        client_request_id=client_request_id[:_MAX_CLIENT_REQUEST_ID_LENGTH]
+    )
 
 
 def log_request_received(bound_logger: BoundLogger, *, method: str, path: str) -> float:
@@ -223,6 +268,8 @@ def log_request_finished(
     bound_logger: BoundLogger,
     *,
     start_time: float,
+    method: str,
+    path: str,
     status_code: int | None,
     exc_type: str | None = None,
 ) -> None:
@@ -231,15 +278,24 @@ def log_request_finished(
     Call once, in a ``finally`` block, paired with the ``log_request_received``
     call that returned *start_time*. ``duration_ms`` is wall time since that
     call, measured with the monotonic clock (not wall-clock time, which can
-    jump). ``subject`` is deliberately not a parameter here: it's bound into
-    structlog's contextvars by ``bind_subject`` once identity resolves, and
+    jump). ``subject`` is deliberately not a parameter here: ``bind_subject``
+    binds it into structlog's contextvars once identity resolves, and
     ``configure_logging``'s ``merge_contextvars`` processor merges it into
-    this line automatically whenever it's present by the time this is
-    called -- threading it through by hand would just duplicate that.
+    this line automatically. A caller whose handler ran in a child task
+    (/v1's BaseHTTPMiddleware) never sees that binding, so the subject
+    ``bind_subject`` recorded in ``_request_identity`` is read back here.
+
+    ``method`` and ``path`` repeat what ``received`` logged so a ``finished``
+    line is attributable on its own; *path* is the route template where the
+    router matched one, and never carries a query string.
     """
     duration_ms = (time.monotonic() - start_time) * 1000
+    subject = (_request_identity.get() or {}).get("subject")
     bound_logger.info(
         "http.request.finished",
+        **({"subject": subject} if subject else {}),
+        method=method,
+        path=path,
         status_code=status_code,
         duration_ms=round(duration_ms, 2),
         exc_type=exc_type,

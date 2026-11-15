@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": {
+      "()": "af_mcp_broker.logging.build_json_formatter"
+    }
+  },
+  "handlers": {
+    "default": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "uvicorn": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.error": {
+      "level": "INFO"
+    },
+    "uvicorn.access": {
+      "handlers": ["default"],
+      "level": "WARNING",
+      "propagate": false
+    }
+  }
+}

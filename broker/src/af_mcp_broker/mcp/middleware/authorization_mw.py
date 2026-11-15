@@ -416,12 +416,13 @@ class AuthorizationMiddleware(Middleware):
                 duration = time.perf_counter() - started
                 # An error downstream of authorization (credential resolution,
                 # the service call itself) is still an attempted invocation --
-                # authorization allowed it, so it's not a denial, and gets no
-                # separate error counter (the audit log is the source of truth
-                # for exact per-outcome fidelity; see metrics.py's docstring).
+                # authorization allowed it, so it's not a denial.
                 _record_invocation(service.name, tool_name, action_type)
                 metrics.tool_duration_seconds.labels(
-                    service=service.name, tool=tool_name, action_type=action_type
+                    service=service.name,
+                    tool=tool_name,
+                    action_type=action_type,
+                    outcome="error",
                 ).observe(duration)
                 if span.is_recording():
                     span.set_attribute("af.outcome", "error")
@@ -432,6 +433,9 @@ class AuthorizationMiddleware(Middleware):
                 # error. Classification never alters the failure -- the
                 # exception still propagates unchanged below.
                 error_class = classify_backend_error(exc)
+                metrics.tool_invocation_errors_total.labels(
+                    service=service.name, error_class=error_class
+                ).inc()
                 # Routed through the metering pipeline (result=None -- an error
                 # produced no result to measure) so the error response is not
                 # held by audit I/O either.
@@ -461,7 +465,10 @@ class AuthorizationMiddleware(Middleware):
             duration = time.perf_counter() - started
             _record_invocation(service.name, tool_name, action_type)
             metrics.tool_duration_seconds.labels(
-                service=service.name, tool=tool_name, action_type=action_type
+                service=service.name,
+                tool=tool_name,
+                action_type=action_type,
+                outcome="error" if result.is_error else "success",
             ).observe(duration)
             # A tool signaling failure via the MCP isError result convention
             # never raises -- call_next returned normally above -- so this is
@@ -478,6 +485,9 @@ class AuthorizationMiddleware(Middleware):
             # measuring" reasoning even though a result object technically
             # exists here.
             if result.is_error:
+                metrics.tool_invocation_errors_total.labels(
+                    service=service.name, error_class=ERROR_CLASS_TOOL_REPORTED
+                ).inc()
                 span.set_attribute("af.outcome", "error")
                 error_text = _tool_result_error_text(result)
                 if span.is_recording():

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
+import structlog
 from broker_state_helpers import aggregator_inputs
 from conftest import (
     make_claims,
@@ -39,6 +40,7 @@ from af_mcp_broker.credentials.oauth21 import (
     StoredOAuthCredential,
 )
 from af_mcp_broker.mcp.aggregator import build_aggregator
+from af_mcp_broker.mcp.middleware import identity_mw
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.service_status import service_status
 
@@ -69,6 +71,11 @@ def _toy_backend() -> FastMCP:
         received, so tests can assert it is the *minted* credential, never
         the caller's inbound bearer token."""
         return get_http_headers(include={"authorization"}).get("authorization")
+
+    @mcp.tool
+    def seen_request_id() -> str | None:
+        """Returns the raw X-Request-ID header this backend actually received."""
+        return get_http_headers(include={"x-request-id"}).get("x-request-id")
 
     return mcp
 
@@ -326,6 +333,42 @@ async def test_auth_type_none_skips_credential_resolution(
     # backend) proves credential resolution was skipped entirely.
     assert result.data is None
     assert provider.issue_calls == []
+
+
+async def test_backend_receives_the_brokers_correlation_id_not_the_clients(
+    monkeypatch, aggregator_app, sig_key, prime_jwks
+) -> None:
+    """The backend's X-Request-ID is the broker's own correlation_id, so its
+    log lines join the broker's request lines; an id the client sent is
+    recorded as ``client_request_id`` and never forwarded."""
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    events: list[dict[str, Any]] = []
+    original_info = identity_mw.logger.info
+
+    def _capture(event: str, **kwargs: Any) -> Any:
+        events.append(
+            {"event": event, **structlog.contextvars.get_contextvars(), **kwargs}
+        )
+        return original_info(event, **kwargs)
+
+    monkeypatch.setattr(identity_mw.logger, "info", _capture)
+
+    async for server in aggregator_app(_FakeProvider()):
+        client = server.client(
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Request-ID": "client-chosen-id",
+            }
+        )
+        async with client:
+            result = await client.call_tool("open_seen_request_id", {})
+
+    received = [e for e in events if e["event"] == "http.request.received"]
+    call_ids = {e["correlation_id"] for e in received if e["client_request_id"]}
+    assert result.data in call_ids
+    assert result.data != "client-chosen-id"
+    assert {e["client_request_id"] for e in received} == {"client-chosen-id"}
 
 
 # ---------------------------------------------------------------------------

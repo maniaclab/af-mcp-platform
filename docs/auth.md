@@ -629,6 +629,7 @@ a TTL at or below that floor makes every call a fresh mint).
 | `aud`      | yes      | The service's `effective_audience` — its `ServiceSpec.audience` if set, else its `name` (issue #257) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
 | `exp` / `iat` | yes   | Mint time and mint time + TTL |
 | `jti`      | yes      | Unique per token (uuid4) |
+| `rid`      | optional | The `correlation_id` of the client request the token was minted for (tool calls and tool listings). A request identifier, not an authorization claim: the redeem call a backend later makes with this token is logged with it as `parent_request_id`. Verifiers may ignore it |
 | `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for services that set `requires_posix` |
 
 **Deliberately absent: permissions, groups, or any authorization claim.**
