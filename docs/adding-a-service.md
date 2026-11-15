@@ -657,7 +657,9 @@ in `tools/list` over `/mcp` (see Verification below).
 Steps 1–5 wire a service in with no code. The tools the backend itself
 advertises are a separate matter: the aggregator forwards them verbatim, so the
 quality of each tool's description, schema, annotations and error text is set
-at the source. Those conventions, and the rest of what a backend must do to fit
+at the source. The portal's Services page renders service and tool descriptions
+as Markdown, sanitized: raw HTML is shown as text, images are replaced by their alt text, and only
+`http(s)` and `mailto:` links are kept. Those conventions, and the rest of what a backend must do to fit
 the platform (transport, authentication, size limits), are the
 [MCP Design Guide](mcp-design.md), a MUST/SHOULD checklist with a way to verify
 each item. Two of its items are service-entry fields you set alongside the
