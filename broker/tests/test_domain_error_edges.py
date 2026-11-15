@@ -20,6 +20,7 @@ import pytest
 from broker_state_helpers import asgi_auth_middleware
 from conftest import make_claims
 from fastmcp.exceptions import ToolError
+from rate_limited_helpers import assert_rate_limited_shape
 from test_broker_issued import _make_rsa_key, _private_pem
 from test_condor_token import SERVICE_URL, _FakeCondorClient
 from test_mcp_aggregator import _OPEN_POLICY, _FakeProvider, _patch_context, _spec
@@ -55,6 +56,7 @@ from af_mcp_broker.credentials.oauth21 import InMemoryTokenStore
 from af_mcp_broker.identity import get_principal, keycloak_dependency
 from af_mcp_broker.maintenance import MaintenanceState
 from af_mcp_broker.mcp.aggregator import _make_client_factory
+from af_mcp_broker.retry_after import DEFAULT_RETRY_AFTER_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -298,20 +300,6 @@ _CREDENTIAL_FAILURES: list[
         {},
     ),
     (
-        "condor-rate-limited",
-        _condor_exchange_producer(httpx2.Response(429, headers={"Retry-After": "17"})),
-        429,
-        "The HTCondor credential service rate-limited this request. Retry later.",
-        {"Retry-After": "17"},
-    ),
-    (
-        "condor-rate-limited-without-retry-after",
-        _condor_exchange_producer(httpx2.Response(429)),
-        429,
-        "The HTCondor credential service rate-limited this request. Retry later.",
-        {},
-    ),
-    (
         "condor-upstream-failed",
         _condor_exchange_producer(httpx2.Response(500)),
         502,
@@ -383,6 +371,60 @@ async def test_v1_edge_sends_the_credential_failure_status_detail_and_headers(
         assert resp.headers[name] == value
     if "Retry-After" not in headers:
         assert "Retry-After" not in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# A credential service's 429: one shape on /v1, the wait in the message on /mcp.
+# ---------------------------------------------------------------------------
+
+_CONDOR_RATE_LIMITED_DETAIL = (
+    "The HTCondor credential service rate-limited this request. Retry later."
+)
+_RATE_LIMITED_RESPONSES = [
+    pytest.param(httpx2.Response(429, headers={"Retry-After": "17"}), 17, id="header"),
+    pytest.param(
+        httpx2.Response(429), DEFAULT_RETRY_AFTER_SECONDS, id="no-retry-after"
+    ),
+    pytest.param(
+        httpx2.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}),
+        DEFAULT_RETRY_AFTER_SECONDS,
+        id="http-date",
+    ),
+]
+
+
+@pytest.mark.parametrize(("response", "retry_after"), _RATE_LIMITED_RESPONSES)
+async def test_v1_edge_gives_a_credential_429_the_one_rate_limited_shape(
+    response, retry_after, make_principal, app_client_factory
+) -> None:
+    exc = await _condor_exchange_producer(response)(make_principal)
+    with app_client_factory() as (client, _state):
+        client.app.state.broker.credential_registry.register(
+            _TARGET,
+            _FakeProvider(http_error=exc),  # type: ignore[arg-type]
+        )
+        resp = client.post("/v1/credential", json={"target": _TARGET})
+
+    body = assert_rate_limited_shape(resp, retry_after=retry_after)
+    assert body["detail"] == _CONDOR_RATE_LIMITED_DETAIL
+
+
+@pytest.mark.parametrize(("response", "retry_after"), _RATE_LIMITED_RESPONSES)
+async def test_mcp_edge_puts_the_credential_429_wait_in_the_tool_error(
+    response, retry_after, make_principal, settings, monkeypatch
+) -> None:
+    exc = await _condor_exchange_producer(response)(make_principal)
+    _patch_context(monkeypatch, make_principal())
+    spec = _spec(auth_type="bearer")
+    registry = CredentialRegistry()
+    registry.register(spec.name, _FakeProvider(http_error=exc))  # type: ignore[arg-type]
+
+    with pytest.raises(ToolError) as excinfo:
+        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
+
+    assert str(excinfo.value).startswith(
+        f"{_CONDOR_RATE_LIMITED_DETAIL} Retry-After: {retry_after} seconds; retry_at: "
+    )
 
 
 # ---------------------------------------------------------------------------

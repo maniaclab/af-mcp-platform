@@ -7,14 +7,14 @@ import inspect
 import pkgutil
 
 import af_mcp_broker
-from af_mcp_broker.api.errors import CorrelatedHTTPException
+from af_mcp_broker.api.errors import CorrelatedHTTPException, RateLimitedHTTPException
 from af_mcp_broker.app import _CREDENTIAL_ERROR_STATUS, _IDENTITY_ERROR_RESPONSES
 from af_mcp_broker.credentials.errors import CredentialError
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.identity import IdentityError
 
 # A transport type, not a domain error: it only carries an HTTP response.
-_EXEMPT = (CorrelatedHTTPException,)
+_EXEMPT = (CorrelatedHTTPException, RateLimitedHTTPException)
 
 
 def _broker_modules():

@@ -625,6 +625,14 @@ it as `X-Request-ID`, so a token service that logs that header shares the id
 with the broker's line. 5xx bodies carry `correlation_id`, as does the
 ServiceX link rejection (400); other 4xx bodies do not.
 
+## `/v1` error responses in the log
+
+Each error response from `/v1` logs one `http_exception` line with
+`status_code`, `detail` and `path`. A 5xx logs at `error`, so an alert on
+error-level lines sees a `/v1` outage; a 4xx (authentication, validation,
+rate limit, conflict) logs at `info`, because it is the caller's request being
+refused as designed, not a broker failure.
+
 ## See also
 
 - [Architecture § Audit](architecture.md#4-audit) — the metering

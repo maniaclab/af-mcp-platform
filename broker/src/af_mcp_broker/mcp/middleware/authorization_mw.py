@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import time
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
@@ -26,6 +25,7 @@ from af_mcp_broker.backend_errors import (
     classify_backend_error,
 )
 from af_mcp_broker.logging import current_correlation_id
+from af_mcp_broker.retry_after import retry_after_sentence
 from af_mcp_broker.service_registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
 from af_mcp_broker.tracing import (
@@ -108,13 +108,9 @@ def _tool_result_error_text(result: ToolResult) -> str:
 
 
 def _rate_limit_message(exc: ToolRateLimitError) -> str:
-    """Return the tool-error text for a rate-limited call, with the retry fields the ``/v1`` unlock limit returns (``Retry-After`` seconds and the ``retry_at`` timestamp)."""
-    retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(
-        seconds=exc.retry_after_seconds
-    )
+    """Return the tool-error text for a rate-limited call, with the same ``Retry-After`` seconds and ``retry_at`` timestamp every ``/v1`` 429 returns."""
     return (
-        f"{exc}. Retry-After: {exc.retry_after_seconds} seconds; "
-        f"retry_at: {retry_at.strftime('%Y-%m-%dT%H:%M:%SZ')}. "
+        f"{exc}. {retry_after_sentence(exc.retry_after_seconds)} "
         f"Call {RATE_LIMITS_TOOL_NAME} to see all your limits and usage."
     )
 

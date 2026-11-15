@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,7 +16,7 @@ from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
-from af_mcp_broker.api.errors import CorrelatedHTTPException
+from af_mcp_broker.api.errors import CorrelatedHTTPException, RateLimitedHTTPException
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.broker_state import broker_state_of
@@ -53,6 +52,7 @@ from af_mcp_broker.logging import (
 from af_mcp_broker.maintenance import MaintenanceModeError
 from af_mcp_broker.mcp.aggregator import BackendProviders
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
+from af_mcp_broker.retry_after import retry_after_seconds, retry_at_timestamp
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
 from af_mcp_broker.wiring.aggregator import (
     build_job_credential_guide,
@@ -485,8 +485,12 @@ except ImportError:
 @app.exception_handler(HTTPException)
 async def _http_exception_handler(request: Request, exc: HTTPException) -> Response:
     # Delegate to FastAPI's built-in handler so WWW-Authenticate headers etc.
-    # are preserved, then let structlog capture the event.
-    logger.info(
+    # are preserved, then let structlog capture the event. A 5xx is the
+    # broker's (or a backend's) failure and logs at error so alerting on
+    # error-level lines sees /v1 outages; a 4xx is the caller's mistake or an
+    # expected refusal (auth, validation, rate limit) and stays at info.
+    log = logger.error if exc.status_code >= 500 else logger.info
+    log(
         "http_exception",
         status_code=exc.status_code,
         detail=exc.detail,
@@ -505,6 +509,16 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # already structured/already carries its own correlation_id where one
     # makes sense -- overwriting it here would be a regression, not a fix.
     # A 4xx opts in by raising CorrelatedHTTPException (issue #342).
+    if isinstance(exc, RateLimitedHTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": exc.detail,
+                "retry_after_seconds": exc.retry_after_seconds,
+                "retry_at": retry_at_timestamp(exc.retry_after_seconds),
+            },
+            headers=exc.headers,
+        )
     if (
         exc.status_code >= 500 or isinstance(exc, CorrelatedHTTPException)
     ) and isinstance(exc.detail, str):
@@ -559,17 +573,17 @@ async def _identity_error_handler(request: Request, exc: IdentityError) -> Respo
 
 @app.exception_handler(CredentialError)
 async def _credential_error_handler(request: Request, exc: CredentialError) -> Response:
-    headers = (
-        {"Retry-After": exc.retry_after}
-        if isinstance(exc, CredentialRateLimitedError) and exc.retry_after is not None
-        else None
-    )
+    if isinstance(exc, CredentialRateLimitedError):
+        return await _http_exception_handler(
+            request,
+            RateLimitedHTTPException(
+                exc.detail, retry_after_seconds=retry_after_seconds(exc.retry_after)
+            ),
+        )
     return await _http_exception_handler(
         request,
         HTTPException(
-            status_code=_CREDENTIAL_ERROR_STATUS[type(exc)],
-            detail=exc.detail,
-            headers=headers,
+            status_code=_CREDENTIAL_ERROR_STATUS[type(exc)], detail=exc.detail
         ),
     )
 
@@ -608,7 +622,7 @@ async def _validation_error_handler(
 @app.exception_handler(UnlockRateLimitError)
 async def _rate_limit_error_handler(
     request: Request, exc: UnlockRateLimitError
-) -> JSONResponse:
+) -> Response:
     # UnlockRateLimitError is raised by CredentialCache.record_failed_unlock()/
     # check_unlock_rate_limit() on the x509 credential-issuance path (bad
     # passphrase / minting-backend failures against a colocated user's
@@ -616,20 +630,10 @@ async def _rate_limit_error_handler(
     # Map it to 429 with Retry-After so well-behaved clients — and the portal
     # — back off instead of hammering the endpoint.
     retry_after = exc.retry_after_seconds
-    retry_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=retry_after)
-    logger.info(
-        "rate_limit_exceeded",
-        path=request.url.path,
-        retry_after_seconds=retry_after,
-    )
-    return JSONResponse(
-        status_code=429,
-        content={
-            "detail": (
-                f"Too many failed unlock attempts. Try again in {retry_after} seconds."
-            ),
-            "retry_after_seconds": retry_after,
-            "retry_at": retry_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        },
-        headers={"Retry-After": str(retry_after)},
+    return await _http_exception_handler(
+        request,
+        RateLimitedHTTPException(
+            f"Too many failed unlock attempts. Try again in {retry_after} seconds.",
+            retry_after_seconds=retry_after,
+        ),
     )
