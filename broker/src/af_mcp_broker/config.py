@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 import re
 from functools import lru_cache
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, assert_never
 
 import structlog
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     SecretStr,
@@ -298,6 +299,86 @@ IdentityProviderConfig = Annotated[
     | ServiceXTokenProviderConfig,
     Field(discriminator="type"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Typed sub-configs. ``Settings`` keeps the flat, env-var-shaped fields (the
+# operator interface); each model below groups the settings of one feature
+# and can only be built when they are all present, so code that receives one
+# needs no runtime narrowing. ``Settings`` exposes them as properties that
+# are built from the flat fields at read time.
+# ---------------------------------------------------------------------------
+
+# A non-empty secret DSN: an unset or blank DSN is not a usable connection.
+PostgresDsn = Annotated[SecretStr, Field(min_length=1)]
+
+
+class VaultConfig(BaseModel):
+    """Connection settings of the Vault/OpenBao transport, shared by every Vault-backed store."""
+
+    model_config = ConfigDict(frozen=True)
+
+    addr: str = Field(min_length=1)
+    auth_mount: str
+    auth_role: str = Field(min_length=1)
+    kv_mount: str
+    sa_token_path: str
+
+
+class CredmonApiConfig(BaseModel):
+    """Where the credmon storer stores top tokens: the htcondor-api service, its token file and the user domain."""
+
+    model_config = ConfigDict(frozen=True)
+
+    url: AnyHttpUrl
+    token_file: str = Field(min_length=1)
+    user_domain: str = Field(min_length=1)
+
+
+class InMemoryUsageStoreConfig(BaseModel):
+    """Usage records are kept in process memory."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class PostgresUsageStoreConfig(BaseModel):
+    """Usage records are kept in Postgres."""
+
+    model_config = ConfigDict(frozen=True)
+
+    dsn: PostgresDsn
+
+
+UsageStoreConfig = InMemoryUsageStoreConfig | PostgresUsageStoreConfig
+
+
+class InMemoryMaintenanceStoreConfig(BaseModel):
+    """The maintenance-mode flag is kept in process memory."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class VaultMaintenanceStoreConfig(BaseModel):
+    """The maintenance-mode flag is kept in Vault."""
+
+    model_config = ConfigDict(frozen=True)
+
+    vault: VaultConfig
+
+
+class PostgresMaintenanceStoreConfig(BaseModel):
+    """The maintenance-mode flag is kept in Postgres."""
+
+    model_config = ConfigDict(frozen=True)
+
+    dsn: PostgresDsn
+
+
+MaintenanceStoreConfig = (
+    InMemoryMaintenanceStoreConfig
+    | VaultMaintenanceStoreConfig
+    | PostgresMaintenanceStoreConfig
+)
 
 
 # pydantic-settings matches env vars to field names case-insensitively, so the
@@ -945,6 +1026,67 @@ class Settings(BaseSettings):
     def oidc_jwks_uri(self) -> str:
         """JWKS endpoint at the standard OIDC discovery path."""
         return f"{self.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/certs"
+
+    @property
+    def vault(self) -> VaultConfig | None:
+        """The Vault connection settings, or None when no configured subsystem uses Vault (``uses_vault``)."""
+        if not self.uses_vault:
+            return None
+        return VaultConfig(
+            addr=self.vault_addr,
+            auth_mount=self.vault_auth_mount,
+            auth_role=self.vault_auth_role,
+            kv_mount=self.vault_kv_mount,
+            sa_token_path=self.vault_sa_token_path,
+        )
+
+    @property
+    def credmon_api(self) -> CredmonApiConfig | None:
+        """The htcondor-api settings when ``credmon_enabled``, else None."""
+        if not self.credmon_enabled:
+            return None
+        # Parsed rather than constructed: ``_validate_credmon_config`` has
+        # already refused the unset values, and validating them again here
+        # is what proves them present to the type checker.
+        return CredmonApiConfig.model_validate(
+            {
+                "url": self.credmon_htcondor_api_url,
+                "token_file": self.credmon_htcondor_api_token_file,
+                "user_domain": self.credmon_user_domain,
+            }
+        )
+
+    @property
+    def usage_store(self) -> UsageStoreConfig:
+        """The usage store selected by ``usage_store_backend``, carrying the settings it needs."""
+        backend = self.usage_store_backend
+        match backend:
+            case "in_memory":
+                return InMemoryUsageStoreConfig()
+            case "postgres":
+                # Parsed so ``_validate_usage_store_config``'s guarantee is
+                # re-proved by the model rather than assumed.
+                return PostgresUsageStoreConfig.model_validate(
+                    {"dsn": self.usage_postgres_dsn}
+                )
+            case _:
+                assert_never(backend)
+
+    @property
+    def maintenance_store(self) -> MaintenanceStoreConfig:
+        """The maintenance-mode store selected by ``maintenance_mode_backend``, carrying the settings it needs."""
+        backend = self.maintenance_mode_backend
+        match backend:
+            case "in_memory":
+                return InMemoryMaintenanceStoreConfig()
+            case "vault":
+                return VaultMaintenanceStoreConfig.model_validate({"vault": self.vault})
+            case "postgres":
+                return PostgresMaintenanceStoreConfig.model_validate(
+                    {"dsn": self.maintenance_mode_effective_postgres_dsn}
+                )
+            case _:
+                assert_never(backend)
 
     @model_validator(mode="after")
     def _validate_credmon_config(self) -> Settings:

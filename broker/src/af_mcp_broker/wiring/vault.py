@@ -30,14 +30,15 @@ async def build_vault_kv(
     *settings* without the connection settings whenever ``uses_vault``
     holds.
     """
-    if not settings.uses_vault:
+    vault = settings.vault
+    if vault is None:
         return None
     vault_kv = VaultKV(
-        addr=settings.vault_addr,
-        auth_mount=settings.vault_auth_mount,
-        auth_role=settings.vault_auth_role,
-        kv_mount=settings.vault_kv_mount,
-        sa_token_path=settings.vault_sa_token_path,
+        addr=vault.addr,
+        auth_mount=vault.auth_mount,
+        auth_role=vault.auth_role,
+        kv_mount=vault.kv_mount,
+        sa_token_path=vault.sa_token_path,
         http_client=http_client,
     )
     # Trial authentication only -- proves the K8s auth flow works (SA JWT
@@ -50,5 +51,5 @@ async def build_vault_kv(
     except Exception as exc:
         logger.exception("vault_auth.failed")
         raise RuntimeError(f"Vault K8s auth failed at startup: {exc}") from exc
-    logger.info("vault_auth.ok", vault_addr=settings.vault_addr)
+    logger.info("vault_auth.ok", vault_addr=vault.addr)
     return vault_kv

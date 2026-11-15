@@ -21,17 +21,26 @@ from af_mcp_broker.credmon.factory import build_credmon_sync
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from af_mcp_broker.config import CredmonApiConfig
 
-def _settings(tmp_path: Path, **overrides: Any) -> Settings:
+
+def _settings_and_api(
+    tmp_path: Path, **overrides: Any
+) -> tuple[Settings, CredmonApiConfig]:
     token_file = tmp_path / "token"
     token_file.write_text("storer-idtoken\n")
-    return Settings(
-        credmon_enabled=True,
-        credmon_htcondor_api_url="https://htcondor-api.example",
-        credmon_htcondor_api_token_file=str(token_file),
-        credmon_user_domain="af.example.org",
-        **overrides,
+    settings = Settings(
+        **{
+            "credmon_enabled": True,
+            "credmon_htcondor_api_url": "https://htcondor-api.example",
+            "credmon_htcondor_api_token_file": str(token_file),
+            "credmon_user_domain": "af.example.org",
+            **overrides,
+        }
     )
+    api = settings.credmon_api
+    assert api is not None
+    return settings, api
 
 
 @pytest.fixture
@@ -47,7 +56,7 @@ async def test_refuses_without_signing_key(
     cache, _ = static_principal_cache
     with pytest.raises(RuntimeError, match="BROKER_SIGNING_KEY_FILE"):
         await build_credmon_sync(
-            _settings(tmp_path),
+            *_settings_and_api(tmp_path),
             issuer=None,
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
@@ -64,7 +73,7 @@ async def test_refuses_without_vault(
     cache, _ = static_principal_cache
     with pytest.raises(RuntimeError, match="requires Vault"):
         await build_credmon_sync(
-            _settings(tmp_path),
+            *_settings_and_api(tmp_path),
             issuer=issuer,
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
@@ -78,7 +87,7 @@ async def test_refuses_without_vault(
 async def test_refuses_without_principal_directory(tmp_path: Path, issuer) -> None:
     with pytest.raises(RuntimeError, match="principal directory"):
         await build_credmon_sync(
-            _settings(tmp_path),
+            *_settings_and_api(tmp_path),
             issuer=issuer,
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
@@ -93,11 +102,11 @@ async def test_refuses_unreadable_token_file(
     tmp_path: Path, issuer, static_principal_cache
 ) -> None:
     cache, _ = static_principal_cache
-    settings = _settings(tmp_path)
-    settings.credmon_htcondor_api_token_file = str(tmp_path / "missing")
     with pytest.raises(RuntimeError, match="CREDMON_HTCONDOR_API_TOKEN_FILE"):
         await build_credmon_sync(
-            settings,
+            *_settings_and_api(
+                tmp_path, credmon_htcondor_api_token_file=str(tmp_path / "missing")
+            ),
             issuer=issuer,
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
@@ -113,7 +122,7 @@ async def test_kinds_without_targets_are_skipped(
 ) -> None:
     cache, _ = static_principal_cache
     sync = await build_credmon_sync(
-        _settings(tmp_path),
+        *_settings_and_api(tmp_path),
         issuer=issuer,
         credential_registry=CredentialRegistry(),
         targets_by_kind={"x509": [], "krb5": [], "servicex": []},
