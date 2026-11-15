@@ -1062,7 +1062,10 @@ the simplest correct thing. The extraction path if it becomes necessary:
    the minted credential injected as `Authorization: Bearer <token>` — the
    caller's own inbound bearer is never forwarded.
 6. The backend's response streams back through the aggregator to the LLM
-   client.
+   client. The aggregator relays the result as the backend sent it and does
+   not validate structured content against the tool's output schema (the
+   end client does that for itself), so a call costs the backend one
+   `tools/call` rather than a `tools/call` followed by a `tools/list`.
 7. `AuthorizationMiddleware` writes a structured audit log line
    (`outcome: "success"`/`"denied"`/`"rate_limited"`/`"error"`) and updates Prometheus
    counters exactly once per call, regardless of outcome.

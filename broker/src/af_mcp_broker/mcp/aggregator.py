@@ -415,10 +415,10 @@ def _make_client_factory(
 ) -> ClientFactoryT:
     """Build a ProxyProvider client_factory for one service.
 
-    Security property: constructing a plain ``Client`` around an explicit
-    transport object never sets ``forward_incoming_headers`` -- it stays
-    unset (``Client._transport_options is None``), so ``TransportOptions``'s
-    own default of False applies. fastmcp's ``ProxyClient`` convenience
+    Security property: constructing a ``BackendClient`` (a plain ``Client``
+    that only swaps in a result-relaying session class) around an explicit
+    transport object never sets ``forward_incoming_headers`` -- its
+    ``TransportOptions`` leave it at the default of False. fastmcp's ``ProxyClient`` convenience
     wrapper unconditionally sets that flag to True for HTTP transports
     (intended for proxies that should forward the caller's credentials), so
     it is deliberately not used here: the broker's own AF-internal bearer

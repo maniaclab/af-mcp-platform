@@ -15,6 +15,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.backend_client import BackendClient
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
@@ -176,16 +177,20 @@ async def test_output_schema_violation_is_relayed_not_policed(
     aggregator, sig_key, prime_jwks
 ) -> None:
     """Output-schema policing belongs to the end consumer, as in fastmcp's own
-    proxy: the aggregator relays the backend's structured content as sent."""
+    proxy: the aggregator relays the backend's structured content as sent. The
+    caller here is itself a ``BackendClient`` because a stock fastmcp client
+    runs that validation itself and would raise on the relayed result."""
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
 
     async for server in aggregator():
-        client = server.client(headers={"Authorization": f"Bearer {token}"})
+        client = BackendClient(
+            server.transport(headers={"Authorization": f"Bearer {token}"})
+        )
         async with client:
             try:
                 result = await client.call_tool("fwd_violates_schema", {})
-            except ToolError as exc:
+            except (RuntimeError, ToolError) as exc:
                 pytest.fail(f"aggregator policed the backend output schema: {exc}")
 
     assert result.structured_content == {"n": "not-an-integer"}
