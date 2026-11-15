@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from starlette.exceptions import HTTPException
+from starlette.exceptions import (
+    HTTPException,  # noqa: TID251 -- the api edge raises it; the test asserts its status
+)
 
 from af_mcp_broker.api.oauth21 import (
     _CallbackFailure,
