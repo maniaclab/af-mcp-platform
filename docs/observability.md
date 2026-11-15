@@ -640,8 +640,10 @@ lifecycle lines (`Started server process`, `Waiting for application startup.`,
 counterparts), which are `event` lines on logger `uvicorn.error` at `info`.
 uvicorn configures its loggers before the broker's code is imported, so the
 image starts it with `--log-config
-broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`);
-`pixi run -e dev broker` does not pass it and keeps uvicorn's plain-text lines.
+broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`), and
+`python -m af_mcp_broker` (the `af-mcp-broker` script) loads the same file.
+`pixi run -e dev broker` does not pass it and keeps uvicorn's plain-text lines
+(see [Local development](local-development.md#uvicorn-lifecycle-lines)).
 `uvicorn.access` stays at `warning`: the `http.request.received` /
 `http.request.finished` lines carry the method, path, status and duration of
 every request, with the correlation id.
