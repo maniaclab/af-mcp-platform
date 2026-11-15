@@ -58,6 +58,7 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     IdentityMiddleware,
 )
 from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
+from af_mcp_broker.mcp.middleware.output_schema_mw import OutputSchemaMiddleware
 from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -1381,6 +1382,7 @@ def build_aggregator(
             registry, policy, shared_state=shared_state, metering=metering
         )
     )
+    mcp.add_middleware(OutputSchemaMiddleware())
     _register_services(
         mcp,
         registry,

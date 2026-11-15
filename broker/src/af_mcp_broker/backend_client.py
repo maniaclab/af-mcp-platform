@@ -229,9 +229,9 @@ class RelayingClientSession(ClientSession):
     ``ClientSession.call_tool`` learns the output schema by listing the
     backend's tools -- a full extra ``tools/list`` round trip on every call --
     and raises if the structured content disagrees with it. The aggregator
-    only relays results: the end client runs that check for itself, and
-    enforcing it mid-path would turn a backend's schema bug into an aggregator
-    error. This is the same session fastmcp's own proxy uses for its backend
+    skips that listing and validates against the schema it already holds
+    instead (``OutputSchemaMiddleware`` in mcp/middleware/output_schema_mw.py).
+    This is the same session fastmcp's own proxy uses for its backend
     connections (``fastmcp.server.providers.proxy._ForwardingClientSession``,
     private in fastmcp 4.0.4), re-declared here against the public
     ``ClientSession.validate_tool_result`` hook.

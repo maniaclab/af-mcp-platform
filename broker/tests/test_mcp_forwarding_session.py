@@ -15,20 +15,23 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 
 from af_mcp_broker.authorization import EntitlementPolicy
-from af_mcp_broker.backend_client import BackendClient
+from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
+from af_mcp_broker.metering import InlineMeteringBackend
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.usage.store import InMemoryUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from af_mcp_broker.audit.logger import AuditRecord
+
 # ---------------------------------------------------------------------------
-# A proxied tools/call must cost the backend exactly the request the caller
-# asked for. A plain fastmcp Client validates a call result against the
-# tool's advertised output schema, which it learns by listing the backend's
-# tools -- one extra full tools/list per call. The aggregator only relays
-# results (the end client validates for itself), so it must not do that.
+# A proxied tools/call costs the backend the request the caller asked for
+# plus, only when the listing is not cached, one tools/list. The result is
+# still validated against the tool's output schema, taken from the
+# aggregator's cached listing rather than a fresh backend tools/list.
 # ---------------------------------------------------------------------------
 
 _COUNT_SCHEMA = {
@@ -100,8 +103,22 @@ async def recorded_backend() -> AsyncIterator[tuple[str, _MethodRecorder]]:
         yield f"{base_url}/mcp", recorder
 
 
+class _RecordingMetering(InlineMeteringBackend):
+    def __init__(self) -> None:
+        super().__init__(Settings(), InMemoryUsageStore())
+        self.submitted: list[AuditRecord] = []
+
+    async def submit(self, record: AuditRecord, result: ToolResult | None) -> None:
+        self.submitted.append(record)
+
+
 @pytest.fixture
-def aggregator(settings, recorded_backend, static_principal_cache):
+def metering() -> _RecordingMetering:
+    return _RecordingMetering()
+
+
+@pytest.fixture
+def aggregator(settings, recorded_backend, static_principal_cache, metering):
     url, _recorder = recorded_backend
     principal_cache, _directory = static_principal_cache
     registry = ServiceRegistry()
@@ -122,7 +139,7 @@ def aggregator(settings, recorded_backend, static_principal_cache):
             settings,
             EntitlementPolicy(),
             CredentialRegistry(),
-            **aggregator_inputs(),
+            **aggregator_inputs(metering=metering),
         )
         async with run_aggregator_async(
             mcp, path="/mcp", settings=settings, principal_cache=principal_cache
@@ -173,25 +190,51 @@ async def test_backend_error_result_is_relayed_unchanged(
     assert "backend exploded" in result.content[0].text
 
 
-async def test_output_schema_violation_is_relayed_not_policed(
-    aggregator, sig_key, prime_jwks
+async def test_output_schema_violation_is_an_error_at_the_broker(
+    aggregator, recorded_backend, metering, sig_key, prime_jwks
 ) -> None:
-    """Output-schema policing belongs to the end consumer, as in fastmcp's own
-    proxy: the aggregator relays the backend's structured content as sent. The
-    caller here is itself a ``BackendClient`` because a stock fastmcp client
-    runs that validation itself and would raise on the relayed result."""
+    """The broker still polices a backend's structured content against its own
+    output schema, and the audit record says error."""
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
+    _url, recorder = recorded_backend
 
     async for server in aggregator():
-        client = BackendClient(
-            server.transport(headers={"Authorization": f"Bearer {token}"})
-        )
+        client = server.client(headers={"Authorization": f"Bearer {token}"})
         async with client:
-            try:
-                result = await client.call_tool("fwd_violates_schema", {})
-            except (RuntimeError, ToolError) as exc:
-                pytest.fail(f"aggregator policed the backend output schema: {exc}")
+            await client.list_tools()
+            recorder.methods.clear()
+            with pytest.raises(
+                ToolError,
+                match=r"Error calling tool 'fwd_violates_schema': Invalid structured content returned by tool violates_schema",
+            ):
+                await client.call_tool("fwd_violates_schema", {})
 
-    assert result.structured_content == {"n": "not-an-integer"}
-    assert result.is_error is False
+    assert "tools/list" not in recorder.methods
+    record = next(r for r in metering.submitted if r.action == "fwd_violates_schema")
+    assert record.outcome == "error"
+    assert "Invalid structured content returned by tool violates_schema" in str(
+        record.error
+    )
+
+
+async def test_cold_listing_cache_costs_one_listing_then_two_requests(
+    aggregator, recorded_backend, sig_key, prime_jwks
+) -> None:
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    _url, recorder = recorded_backend
+
+    async for server in aggregator():
+        client = server.client(headers={"Authorization": f"Bearer {token}"})
+        async with client:
+            await client.call_tool("fwd_echo", {"message": "one"})
+            first = list(recorder.methods)
+            recorder.methods.clear()
+            await client.call_tool("fwd_echo", {"message": "two"})
+            second = list(recorder.methods)
+
+    assert first.count("tools/list") == 1
+    assert first.count("tools/call") == 1
+    assert "tools/list" not in second
+    assert second.count("tools/call") == 1
