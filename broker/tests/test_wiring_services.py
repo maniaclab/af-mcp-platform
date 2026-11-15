@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from conftest import SHIPPED_POLICY
 
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
@@ -79,20 +80,60 @@ class TestBuildServiceCatalog:
         assert catalog.services == []
         assert catalog.services_loaded is True
 
-    def test_missing_files_degrade_to_an_empty_policy_and_registry(
+    def test_a_missing_services_file_degrades_to_an_empty_registry(
         self, tmp_path: Path
     ) -> None:
-        settings = Settings(
-            oidc_issuer="https://kc.invalid/realms/x",
-            policy_file=str(tmp_path / "absent-policy.yaml"),
-            services_file=str(tmp_path / "absent-services.yaml"),
-        )
+        settings = _settings(tmp_path, None)
 
         catalog = build_service_catalog(settings)
 
         assert catalog.services == []
         assert catalog.services_loaded is False
-        assert catalog.entitlement_policy.group_permissions == {}
+
+    def test_the_shipped_dev_policy_is_accepted(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, "")
+        settings.policy_file = str(SHIPPED_POLICY)
+
+        catalog = build_service_catalog(settings)
+
+        assert catalog.entitlement_policy.group_permissions["atlas"]
+
+    def test_refuses_a_missing_policy_file(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, "")
+        (tmp_path / "policy.yaml").unlink()
+
+        with pytest.raises(RuntimeError, match="POLICY_FILE") as excinfo:
+            build_service_catalog(settings)
+
+        assert str(tmp_path / "policy.yaml") in str(excinfo.value)
+
+    def test_refuses_an_unreadable_policy_file(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, "")
+        policy_path = tmp_path / "policy.yaml"
+        policy_path.unlink()
+        policy_path.mkdir()
+
+        with pytest.raises(RuntimeError, match="POLICY_FILE"):
+            build_service_catalog(settings)
+
+    @pytest.mark.parametrize(
+        "policy_text",
+        [
+            "",
+            "group_permissions: {}\n",
+            "target_action_types: {}\n",
+            "group_permissions:\n  atlas: []\n  __authenticated__: []\n",
+        ],
+        ids=["empty-file", "empty-mapping", "no-mapping-key", "groups-grant-nothing"],
+    )
+    def test_refuses_a_policy_that_grants_nothing(
+        self, tmp_path: Path, policy_text: str
+    ) -> None:
+        settings = _settings(tmp_path, "")
+        (tmp_path / "policy.yaml").write_text(policy_text)
+
+        with pytest.raises(RuntimeError, match="grants no permissions"):
+            build_service_catalog(settings)
 
     def test_refuses_a_permission_that_is_not_declared(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path, _service("rucio", "bearer", "no_such_perm"))

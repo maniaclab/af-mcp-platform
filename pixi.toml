@@ -57,6 +57,11 @@ redis-server = ">=8.0"
 # Enforces the broker's import layers (see [tool.importlinter] in broker/pyproject.toml).
 import-linter = ">=2.0"
 
+# The broker refuses to boot without a non-empty entitlement policy, so local
+# runs point POLICY_FILE at the dev-only policy shipped in the package.
+[feature.broker.activation.env]
+POLICY_FILE = "${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/authorization/policy.yaml"
+
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
 
