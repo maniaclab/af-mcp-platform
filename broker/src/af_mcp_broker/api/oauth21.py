@@ -8,8 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from af_mcp_broker.api.credentials import notify_identity_linked
-from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.broker_state import get_broker_state, get_state_settings
+from af_mcp_broker.config import (
+    Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
+)
 from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.credentials.oauth21 import (
     OAuth21Provider,
@@ -155,7 +157,7 @@ async def authorize(
     alias: str,
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
     return_path: Annotated[str | None, Query(alias="return")] = None,
 ) -> Response:
     """Send the browser to *alias*'s backend authorization server.
@@ -236,7 +238,7 @@ async def callback(
     alias: str,
     state: str,
     request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
     code: str | None = None,
     error: str | None = None,
     error_description: str | None = None,

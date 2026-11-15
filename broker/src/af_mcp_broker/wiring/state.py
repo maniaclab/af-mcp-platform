@@ -10,6 +10,7 @@ from af_mcp_broker.broker_state import BrokerState
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
     from fastmcp import FastMCP
+    from starlette.types import ASGIApp
 
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials import (
@@ -54,6 +55,7 @@ def build_broker_state(
     link_stores: VaultLinkStores,
     credmon_sync: CredmonSyncService | None,
     mcp_aggregator: FastMCP,
+    mcp_app: ASGIApp,
     dev_bypass_principal: Principal | None,
     metrics_port: int | None,
 ) -> BrokerState:
@@ -91,6 +93,7 @@ def build_broker_state(
         credmon_sync=credmon_sync,
         tool_listing_cache=ToolListingCache(),
         mcp_aggregator=mcp_aggregator,
+        mcp_app=mcp_app,
         dev_bypass_principal=dev_bypass_principal,
         metrics_port=metrics_port,
     )

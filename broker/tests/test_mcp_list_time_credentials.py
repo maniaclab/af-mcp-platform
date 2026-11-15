@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import asgi_state_getter
+from broker_state_helpers import aggregator_stores
 from conftest import (
     make_claims,
     run_aggregator_async,
@@ -31,6 +31,7 @@ from af_mcp_broker.credentials import (
     IssuedCredential,
 )
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
+from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
@@ -257,9 +258,11 @@ async def aggregator_server(
     )  # mints fine; connection still fails
 
     mcp = build_aggregator(
-        registry, settings, policy, credential_registry, principal_cache=principal_cache
+        registry, settings, policy, credential_registry, **aggregator_stores()
     )
-    async with run_aggregator_async(mcp, path="/mcp") as server:
+    async with run_aggregator_async(
+        mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+    ) as server:
         yield server
 
 
@@ -613,17 +616,15 @@ async def test_replica_split_session_continuity(
 
     def _replica() -> Any:
         mcp = build_aggregator(
-            registry,
-            settings,
-            policy,
-            credential_registry,
-            principal_cache=principal_cache,
+            registry, settings, policy, credential_registry, **aggregator_stores()
         )
         return asgi_server(
             mcp,
             path="/mcp",
             stateless_http=stateless,
-            middleware=build_asgi_middleware(mcp, asgi_state_getter(mcp)),
+            middleware=build_asgi_middleware(
+                settings, None, principal_cache, InMemoryMaintenanceModeStore()
+            ),
         )
 
     headers = {
@@ -784,10 +785,12 @@ async def mint_and_inject_env(
             settings,
             policy,
             credential_registry,
-            principal_cache=principal_cache,
             broker_token_issuer=issuer,
+            **aggregator_stores(),
         )
-        async with run_aggregator_async(mcp, path="/mcp") as server:
+        async with run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server:
             env.server = server
             yield env
 

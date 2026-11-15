@@ -50,6 +50,8 @@ from af_mcp_broker.service_registry import (
     ServiceRegistry,
     ServiceSpec,
 )
+from af_mcp_broker.shared_state import InMemorySharedState
+from af_mcp_broker.usage.store import InMemoryUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -1043,12 +1045,21 @@ def _aggregator_with_diagnostic_tools(
     registry: ServiceRegistry, policy: EntitlementPolicy, settings: Any
 ) -> FastMCP:
     """A FastMCP instance carrying the real af_* methods, wired the same way
-    build_aggregator()/populate_aggregator() wire them (mcp/diagnostics.py's
+    build_aggregator() wires them (mcp/diagnostics.py's
     register_diagnostic_tools), so the listing below exercises the genuine
     tool names and descriptions rather than doubles."""
     mcp = FastMCP(name="test-aggregator")
     register_diagnostic_tools(
-        mcp, registry, policy, CredentialRegistry(), {}, {}, {}, settings
+        mcp,
+        registry,
+        policy,
+        CredentialRegistry(),
+        {},
+        {},
+        {},
+        settings,
+        InMemorySharedState(),
+        InMemoryUsageStore(),
     )
     return mcp
 

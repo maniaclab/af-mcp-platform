@@ -36,7 +36,7 @@ class RateLimitsResponse(BaseModel):
 
 
 async def build_rate_limits_response(
-    policy: EntitlementPolicy, shared_state: SharedState | None, subject: str
+    policy: EntitlementPolicy, shared_state: SharedState, subject: str
 ) -> RateLimitsResponse:
     usage = await read_rate_limit_usage(policy.rate_limits, shared_state, subject)
     return RateLimitsResponse(

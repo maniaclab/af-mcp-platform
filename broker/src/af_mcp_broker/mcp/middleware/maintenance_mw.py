@@ -6,11 +6,10 @@ from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
 from af_mcp_broker.mcp.middleware.identity_mw import send_error
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from starlette.types import Receive, Scope, Send
 
-    from af_mcp_broker.broker_state import BrokerState
+    from af_mcp_broker.config import Settings
+    from af_mcp_broker.maintenance import MaintenanceModeStore
 
 
 class AsgiMaintenanceMiddleware:
@@ -27,14 +26,17 @@ class AsgiMaintenanceMiddleware:
     full reasoning and the resulting limitation -- that function is also
     where the fail-open logging/counting shared with /v1 lives).
 
-    Reads settings and the maintenance store from the broker state at request
-    time, through *get_state*: this middleware is constructed at import time,
-    before the lifespan has built either.
     """
 
-    def __init__(self, app: Any, get_state: Callable[[], BrokerState]) -> None:
+    def __init__(
+        self,
+        app: Any,
+        settings: Settings,
+        maintenance_mode_store: MaintenanceModeStore,
+    ) -> None:
         self.app = app
-        self._get_state = get_state
+        self._settings = settings
+        self._maintenance_mode_store = maintenance_mode_store
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -51,9 +53,8 @@ class AsgiMaintenanceMiddleware:
                 "AsgiMaintenanceMiddleware requires AsgiAuthMiddleware to run first"
             )
 
-        state = self._get_state()
         maintenance_exc = await check_not_maintenance_or_fail_open(
-            principal, state.settings, state.maintenance_mode_store
+            principal, self._settings, self._maintenance_mode_store
         )
         if maintenance_exc is not None:
             await send_error(

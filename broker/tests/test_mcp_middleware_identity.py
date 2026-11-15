@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
-from broker_state_helpers import make_broker_state
+from broker_state_helpers import asgi_auth_middleware
 from conftest import RaisingTokenRegistryBackend, make_claims
 from fastmcp.exceptions import AuthorizationError
 from prometheus_client import REGISTRY
@@ -37,7 +36,11 @@ from af_mcp_broker.principal_directory import (
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
     TokenRecord,
+    TokenRegistryBackend,
 )
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
 
 # ---------------------------------------------------------------------------
 # AsgiAuthMiddleware -- the ASGI-layer identity check that runs in front of
@@ -114,9 +117,7 @@ async def test_valid_bearer_stashes_principal_and_calls_inner_app(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
-    )
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -129,7 +130,7 @@ async def test_valid_bearer_stashes_principal_and_calls_inner_app(
 
 async def test_missing_header_rejected_with_genuine_401(settings):
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     messages = await _run(middleware, _http_scope())
 
@@ -142,7 +143,7 @@ async def test_missing_header_rejected_with_genuine_401(settings):
 
 async def test_non_bearer_scheme_rejected_with_genuine_401(settings):
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     messages = await _run(middleware, _http_scope({"authorization": "Basic deadbeef"}))
 
@@ -159,7 +160,7 @@ async def test_invalid_signature_rejected_with_vague_message_leaking_nothing(
     prime_jwks([enc_key.jwk])
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -190,7 +191,7 @@ async def test_expired_token_rejected_with_actionable_portal_message(
     now = int(time.time())
     token = sig_key.sign(make_claims(iat=now - 600, exp=now - 300))
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -212,9 +213,7 @@ async def test_wrong_audience_token_gets_the_vague_401(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(aud="some-other-service"))
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
-    )
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -232,9 +231,7 @@ async def test_unavailable_directory_gets_a_503_not_a_401(
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
-    )
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -255,7 +252,7 @@ async def test_dev_bypass_active_builds_principal_without_checking_headers(setti
         }
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(dev_settings))
+    middleware = asgi_auth_middleware(inner, dev_settings)
 
     # No Authorization header at all -- the bypass must not even look.
     messages = await _run(middleware, _http_scope())
@@ -281,7 +278,7 @@ async def test_dev_bypass_refuses_non_local_issuer(settings):
         }
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(dev_settings))
+    middleware = asgi_auth_middleware(inner, dev_settings)
 
     with pytest.raises(RuntimeError):
         await _run(middleware, _http_scope())
@@ -301,9 +298,7 @@ async def test_valid_bearer_binds_correlation_id_and_subject_to_structlog_contex
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner, IdentityMiddleware(settings, principal_cache=principal_cache)
-    )
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
     structlog.contextvars.clear_contextvars()
 
     await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -317,7 +312,7 @@ async def test_correlation_id_bound_even_when_auth_fails(settings):
     """A rejected caller still gets a correlation_id -- just no subject,
     since none was ever established."""
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
     structlog.contextvars.clear_contextvars()
 
     messages = await _run(middleware, _http_scope())
@@ -338,7 +333,7 @@ async def test_dev_bypass_binds_subject_to_structlog_context(settings):
         }
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(dev_settings))
+    middleware = asgi_auth_middleware(inner, dev_settings)
     structlog.contextvars.clear_contextvars()
 
     await _run(middleware, _http_scope())
@@ -351,11 +346,8 @@ async def test_valid_pat_binds_subject_to_structlog_context(settings):
         groups=["atlas"]
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
     )
     structlog.contextvars.clear_contextvars()
 
@@ -366,7 +358,7 @@ async def test_valid_pat_binds_subject_to_structlog_context(settings):
 
 async def test_non_http_scope_passes_through_untouched(settings):
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     async def receive() -> dict[str, Any]:
         return {}
@@ -393,13 +385,11 @@ async def test_valid_jwt_allowed_through_mcp_path_with_a_registry_that_raises(
     token = sig_key.sign(make_claims(jti="any-jti"))
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
+    middleware = asgi_auth_middleware(
         inner,
-        IdentityMiddleware(
-            settings,
-            pat_backend=RaisingTokenRegistryBackend(),
-            principal_cache=principal_cache,
-        ),
+        settings,
+        pat_backend=RaisingTokenRegistryBackend(),
+        principal_cache=principal_cache,
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -467,11 +457,8 @@ async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
     )
 
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
     )
 
     messages = await _run(
@@ -495,11 +482,8 @@ async def test_pat_of_user_disabled_after_cache_warmed_gets_vague_401(
         groups=["atlas"]
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
     )
     scope = {"authorization": f"Bearer {plaintext}"}
     assert _status(await _run(middleware, _http_scope(scope))) == 200
@@ -525,7 +509,7 @@ async def test_pat_shaped_bearer_rejected_when_pat_support_not_configured(
     unset) -- a mcp_pat_... bearer must be rejected the same vague way as any
     other invalid credential, not crash."""
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(inner, IdentityMiddleware(settings))
+    middleware = asgi_auth_middleware(inner, settings)
 
     messages = await _run(
         middleware, _http_scope({"authorization": "Bearer mcp_pat_abc123_secretvalue"})
@@ -552,11 +536,8 @@ async def test_malformed_pat_rejected_with_vague_401(settings):
         heartbeat_interval_seconds=3600.0,
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
     )
 
     messages = await _run(
@@ -583,11 +564,8 @@ async def test_unknown_pat_lookup_id_rejected(settings):
         heartbeat_interval_seconds=3600.0,
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
     )
 
     messages = await _run(
@@ -626,11 +604,8 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
         heartbeat_interval_seconds=3600.0,
     )
     inner = _InnerApp()
-    middleware = AsgiAuthMiddleware(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
     )
 
     messages = await _run(
@@ -654,15 +629,18 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
 
 
 def _gated(
-    inner: Any, identity_mw: IdentityMiddleware, store: MaintenanceModeStore
+    inner: Any,
+    store: MaintenanceModeStore,
+    settings: Settings,
+    pat_backend: TokenRegistryBackend | None = None,
+    principal_cache: PrincipalCache | None = None,
 ) -> AsgiAuthMiddleware:
     """Compose the /mcp ASGI stack the way ``build_asgi_middleware`` does: identity outermost, maintenance inside it."""
-    base = make_broker_state(maintenance_mode_store=store)
-    return AsgiAuthMiddleware(
-        AsgiMaintenanceMiddleware(
-            inner, lambda: replace(base, settings=identity_mw.settings)
-        ),
-        identity_mw,
+    return asgi_auth_middleware(
+        AsgiMaintenanceMiddleware(inner, settings, store),
+        settings,
+        pat_backend,
+        principal_cache,
     )
 
 
@@ -705,11 +683,7 @@ async def test_mcp_blocks_non_admin_jwt_during_maintenance(
     )
 
     inner = _InnerApp()
-    middleware = _gated(
-        inner,
-        IdentityMiddleware(settings, principal_cache=principal_cache),
-        store,
-    )
+    middleware = _gated(inner, store, settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -730,11 +704,7 @@ async def test_mcp_blocks_non_admin_pat_during_maintenance(settings):
 
     inner = _InnerApp()
     middleware = _gated(
-        inner,
-        IdentityMiddleware(
-            settings, pat_backend=backend, principal_cache=principal_cache
-        ),
-        store,
+        inner, store, settings, pat_backend=backend, principal_cache=principal_cache
     )
 
     messages = await _run(
@@ -761,11 +731,7 @@ async def test_mcp_allows_admin_during_maintenance(
     )
 
     inner = _InnerApp()
-    middleware = _gated(
-        inner,
-        IdentityMiddleware(admin_settings, principal_cache=principal_cache),
-        store,
-    )
+    middleware = _gated(inner, store, admin_settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -785,11 +751,7 @@ async def test_mcp_not_blocked_when_maintenance_disabled(
     store = InMemoryMaintenanceModeStore()  # disabled by default
 
     inner = _InnerApp()
-    middleware = _gated(
-        inner,
-        IdentityMiddleware(settings, principal_cache=principal_cache),
-        store,
-    )
+    middleware = _gated(inner, store, settings, principal_cache=principal_cache)
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
 
@@ -810,9 +772,7 @@ async def test_mcp_non_admin_not_blocked_when_store_unavailable(
 
     inner = _InnerApp()
     middleware = _gated(
-        inner,
-        IdentityMiddleware(settings, principal_cache=principal_cache),
-        _BrokenMaintenanceModeStore(),
+        inner, _BrokenMaintenanceModeStore(), settings, principal_cache=principal_cache
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -833,9 +793,7 @@ async def test_mcp_store_unavailable_is_logged_and_shares_v1s_counter(
 
     inner = _InnerApp()
     middleware = _gated(
-        inner,
-        IdentityMiddleware(settings, principal_cache=principal_cache),
-        _BrokenMaintenanceModeStore(),
+        inner, _BrokenMaintenanceModeStore(), settings, principal_cache=principal_cache
     )
 
     before = _store_unavailable_count()
@@ -851,7 +809,9 @@ async def test_maintenance_middleware_fails_closed_without_a_stashed_principal(
     """Installed outside AsgiAuthMiddleware there is no principal to judge;
     that is a wiring error, never a reason to wave the request through."""
     inner = _InnerApp()
-    middleware = AsgiMaintenanceMiddleware(inner, IdentityMiddleware(settings))
+    middleware = AsgiMaintenanceMiddleware(
+        inner, settings, InMemoryMaintenanceModeStore()
+    )
 
     with pytest.raises(RuntimeError, match="AsgiAuthMiddleware to run first"):
         await _run(middleware, _http_scope())
@@ -861,7 +821,9 @@ async def test_maintenance_middleware_fails_closed_without_a_stashed_principal(
 
 async def test_maintenance_middleware_passes_non_http_scopes_through(settings):
     inner = _InnerApp()
-    middleware = AsgiMaintenanceMiddleware(inner, IdentityMiddleware(settings))
+    middleware = AsgiMaintenanceMiddleware(
+        inner, settings, InMemoryMaintenanceModeStore()
+    )
 
     await _run(middleware, {"type": "lifespan"})
 
@@ -915,7 +877,7 @@ async def test_on_request_republishes_stashed_principal_as_context_state(
     principal = make_principal(unixname="auser", uid=50123)
     _set_stashed_principal(monkeypatch, principal)
 
-    mw = IdentityMiddleware(settings)
+    mw = IdentityMiddleware()
     fake_ctx = _FakeFastMCPContext()
     context = _FakeMiddlewareContext(fake_ctx)
 
@@ -932,7 +894,7 @@ async def test_on_request_fails_closed_when_nothing_was_stashed(settings, monkey
     fake_request = SimpleNamespace(state=SimpleNamespace())
     monkeypatch.setattr(identity_mw, "get_http_request", lambda: fake_request)
 
-    mw = IdentityMiddleware(settings)
+    mw = IdentityMiddleware()
     context = _FakeMiddlewareContext(_FakeFastMCPContext())
 
     with pytest.raises(AuthorizationError):
@@ -940,7 +902,7 @@ async def test_on_request_fails_closed_when_nothing_was_stashed(settings, monkey
 
 
 async def test_missing_fastmcp_context_fails_closed(settings, monkeypatch):
-    mw = IdentityMiddleware(settings)
+    mw = IdentityMiddleware()
     context = _FakeMiddlewareContext(None)
 
     with pytest.raises(AuthorizationError):

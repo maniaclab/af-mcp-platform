@@ -16,6 +16,7 @@ from af_mcp_broker import metering as pipeline
 from af_mcp_broker import shared_state
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.errors import ToolRateLimitError
+from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp.middleware import authorization_mw
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.metering import (
@@ -631,7 +632,7 @@ async def test_success_records_result_bytes_and_tokens(
 
     measured: list[Any] = []
 
-    def _fake_measure(result: Any) -> tuple[int | None, int | None]:
+    def _fake_measure(result: Any, _settings: Any) -> tuple[int | None, int | None]:
         measured.append(result)
         return (5, 2)
 
@@ -783,24 +784,6 @@ async def test_dict_form_permission_without_default_disables_unlisted_tool(
     assert captured_audits[0].outcome == "denied"
     assert captured_audits[0].permission == "__disabled__"
     assert call_next.called is False
-
-
-async def test_registry_and_policy_are_mutable_attributes(
-    registry, policy, make_principal, captured_audits
-) -> None:
-    """populate_aggregator() refreshes these in place on every lifespan
-    entry rather than constructing a new middleware instance."""
-    mw = AuthorizationMiddleware(ServiceRegistry(), EntitlementPolicy())
-    mw.registry = registry
-    mw.policy = policy
-
-    principal = make_principal(groups=["atlas"])
-    context = _call_tool_context("rucio_list_dids", {}, principal)
-    call_next = _CallNextRecorder(result=ToolResult(content=[]))
-
-    await mw.on_call_tool(context, call_next)
-
-    assert captured_audits[0].outcome == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -963,7 +946,7 @@ async def test_success_audit_flows_through_metering_pipeline(
     over and returns without writing; after the pipeline drains, the line
     carries the same fields the old inline path produced -- including the
     measurement the worker performed."""
-    await init_metering_pipeline()
+    await init_metering_pipeline(Settings())
     try:
         mw = AuthorizationMiddleware(registry, policy)
         principal = make_principal(groups=["atlas"])
@@ -1008,7 +991,7 @@ async def test_denied_audit_written_inline_not_via_pipeline(
     """A denial is security-relevant and has nothing to measure: its audit
     line must be on disk before the AuthorizationError even propagates --
     no drain required."""
-    await init_metering_pipeline()
+    await init_metering_pipeline(Settings())
     try:
         mw = AuthorizationMiddleware(registry, policy)
         principal = make_principal(groups=[])

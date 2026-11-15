@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import aggregator_stores
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 
@@ -113,13 +114,11 @@ async def aggregator_server(
 ) -> AsyncIterator[ASGIServer]:
     principal_cache, _directory = static_principal_cache
     mcp = build_aggregator(
-        registry,
-        settings,
-        policy,
-        CredentialRegistry(),
-        principal_cache=principal_cache,
+        registry, settings, policy, CredentialRegistry(), **aggregator_stores()
     )
-    async with run_aggregator_async(mcp, path="/mcp") as server:
+    async with run_aggregator_async(
+        mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+    ) as server:
         yield server
 
 
@@ -242,16 +241,17 @@ async def test_pat_round_trip_tools_list_and_call(
     )
 
     mcp = build_aggregator(
-        registry,
-        settings,
-        policy,
-        CredentialRegistry(),
-        pat_backend=pat_backend,
-        principal_cache=principal_cache,
+        registry, settings, policy, CredentialRegistry(), **aggregator_stores()
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp,
+            path="/mcp",
+            settings=settings,
+            pat_backend=pat_backend,
+            principal_cache=principal_cache,
+        ) as server,
         _bearer_client(server, plaintext) as client,
     ):
         names = {t.name for t in await client.list_tools()}
@@ -287,11 +287,13 @@ async def test_dev_bypass_path_tools_list_and_call_still_work(
             "oidc_issuer": "http://localhost:8081/realms/x",
         }
     )
-    mcp = build_aggregator(registry, dev_settings, policy, CredentialRegistry())
+    mcp = build_aggregator(
+        registry, dev_settings, policy, CredentialRegistry(), **aggregator_stores()
+    )
 
     # No Authorization header at all -- the bypass must not even look.
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(mcp, path="/mcp", settings=dev_settings) as server,
         server.client() as client,
     ):
         names = {t.name for t in await client.list_tools()}

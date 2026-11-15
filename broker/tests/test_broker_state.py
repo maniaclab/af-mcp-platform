@@ -49,6 +49,7 @@ _FIELDS = {
     "credmon_sync",
     "tool_listing_cache",
     "mcp_aggregator",
+    "mcp_app",
     "dev_bypass_principal",
     "metrics_port",
 }

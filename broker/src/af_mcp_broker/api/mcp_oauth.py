@@ -61,13 +61,15 @@ import structlog
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from af_mcp_broker.broker_state import get_broker_state
+from af_mcp_broker.broker_state import get_broker_state, get_state_settings
 from af_mcp_broker.cimd_client import (
     CimdError,
     redirect_uri_matches,
     resolve_cimd_client,
 )
-from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.config import (
+    Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
+)
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.identity import decode_broker_bearer, get_jwks
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
@@ -321,7 +323,7 @@ async def _mint_bootstrap_pat(
 )
 async def authorize(
     request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
     response_type: Annotated[str, Query()] = "code",
     client_id: Annotated[str | None, Query()] = None,
     redirect_uri: Annotated[str | None, Query()] = None,
@@ -411,7 +413,7 @@ async def authorize(
 async def keycloak_login_callback(
     request: Request,
     state: str,
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
     code: str | None = None,
     error: str | None = None,
 ) -> Response:
@@ -520,7 +522,7 @@ async def keycloak_login_callback(
 )
 async def token(
     request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
     grant_type: Annotated[str, Form()],
     code: Annotated[str, Form()],
     redirect_uri: Annotated[str, Form()],

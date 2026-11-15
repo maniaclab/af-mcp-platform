@@ -12,7 +12,6 @@ import uuid
 import structlog
 from broker_state_helpers import set_broker_state
 
-from af_mcp_broker.api.rate_limits import build_rate_limits_response
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.rate_limit import tool_rate_limit_key
 from af_mcp_broker.shared_state import RedisSharedState
@@ -112,18 +111,6 @@ def test_unreachable_store_returns_rules_with_unknown_usage(
     assert rule["used"] is None
     assert rule["resets_in_seconds"] is None
     assert "rate_limits.shared_state_unavailable" in [log["event"] for log in logs]
-
-
-def test_no_store_installed_marks_usage_unknown() -> None:
-    policy = EntitlementPolicy()
-    policy.rate_limits = [STATE_CHANGE_RULE]
-
-    body = asyncio.run(
-        build_rate_limits_response(policy, None, f"sub-{uuid.uuid4()}")
-    ).model_dump()
-
-    assert body["usage_available"] is False
-    assert body["rate_limits"][0]["used"] is None
 
 
 def test_no_rules_configured_returns_an_empty_list(

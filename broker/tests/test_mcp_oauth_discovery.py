@@ -38,10 +38,9 @@ from af_mcp_broker.api.mcp_oauth import (
     _keycloak_authorization_endpoint,
     _keycloak_token_endpoint,
 )
-from af_mcp_broker.app import _mcp_aggregator, app
+from af_mcp_broker.app import app
 from af_mcp_broker.config import Settings
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.mcp.aggregator import _find_middleware
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_pair
 
@@ -356,16 +355,16 @@ def test_full_bootstrap_round_trip_yields_working_pat(
 
     mcp_verifier, mcp_challenge = generate_pkce_pair()
 
+    # The lifespan hands the principal cache to /mcp's AsgiAuthMiddleware, which
+    # resolves a PAT's authority through it -- build it as a directory-backed
+    # cache that needs no real Keycloak, same seam
+    # test_mcp_middleware_identity.py's own PAT tests use.
+    monkeypatch.setattr(
+        "af_mcp_broker.app.build_principal_cache",
+        lambda *_args, **_kwargs: static_principal_cache[0],
+    )
+
     with app_client_factory() as (client, state):
-        # AsgiAuthMiddleware resolves a PAT's authority via IdentityMiddleware's
-        # own principal_cache handle (see mcp/aggregator.py's populate_aggregator/
-        # _find_middleware), not request.app.state -- swap in a directory-backed
-        # cache that needs no real Keycloak, same seam
-        # test_mcp_middleware_identity.py's own PAT tests use.
-
-        identity_mw, _, _ = _find_middleware(_mcp_aggregator)
-        identity_mw.principal_cache = static_principal_cache[0]
-
         authorize_resp: Any = client.get(
             "/v1/oauth/authorize",
             params={

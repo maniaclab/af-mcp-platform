@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import aggregator_stores
 from conftest import make_claims, run_aggregator_async
 from fastmcp.exceptions import ToolError
 from pydantic import SecretStr
@@ -111,11 +112,13 @@ async def test_af_tools_declare_a_proper_object_output_schema(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         tools = await client.list_tools()
@@ -156,11 +159,13 @@ async def test_af_tools_declare_read_only_annotations(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         tools = await client.list_tools()
@@ -188,15 +193,13 @@ async def test_af_whoami_returns_subject_groups_and_permissions(
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
-        ServiceRegistry(),
-        settings,
-        policy,
-        CredentialRegistry(),
-        principal_cache=principal_cache,
+        ServiceRegistry(), settings, policy, CredentialRegistry(), **aggregator_stores()
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         result = await client.call_tool(WHOAMI_TOOL_NAME, {})
@@ -230,13 +233,15 @@ async def test_af_list_identities_reflects_linkage_per_provider(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
         identity_providers=identity_providers,
         identity_provider_configs=identity_provider_configs,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
@@ -285,16 +290,18 @@ async def test_af_list_identities_describes_job_credentials_when_credmon_is_wire
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
         identity_providers=identity_providers,
         identity_provider_configs=identity_provider_configs,
         job_credentials=JobCredentialGuide(
             service_prefix="af_", kinds=frozenset({"krb5", "x509"})
         ),
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
@@ -336,13 +343,15 @@ async def test_af_link_identity_returns_portal_url_and_linked_status(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
         identity_providers=identity_providers,
         identity_provider_configs=identity_provider_configs,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         linked_result = await client.call_tool(
@@ -382,13 +391,15 @@ async def test_af_link_identity_unknown_provider_raises_tool_error(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
         identity_providers=identity_providers,
         identity_provider_configs=identity_provider_configs,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         with pytest.raises(ToolError) as excinfo:
@@ -524,12 +535,14 @@ async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
         settings,
         EntitlementPolicy(group_permissions={"atlas": ["read_data"]}),
         credential_registry,
-        principal_cache=principal_cache,
         target_to_alias=target_to_alias,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
@@ -593,15 +606,13 @@ async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
 
     mcp = build_aggregator(
-        registry,
-        settings,
-        policy,
-        CredentialRegistry(),
-        principal_cache=principal_cache,
+        registry, settings, policy, CredentialRegistry(), **aggregator_stores()
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         tools = await client.list_tools()
@@ -642,11 +653,13 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         await client.call_tool(WHOAMI_TOOL_NAME, {})
@@ -709,14 +722,16 @@ async def test_no_diagnostic_tool_response_contains_a_url(
         settings,
         EntitlementPolicy(),
         credential_registry,
-        principal_cache=principal_cache,
         identity_providers=identity_providers,
         identity_provider_configs=identity_provider_configs,
         target_to_alias=target_to_alias,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         whoami = await client.call_tool(WHOAMI_TOOL_NAME, {})
@@ -732,10 +747,9 @@ async def test_no_diagnostic_tool_response_contains_a_url(
 # ---------------------------------------------------------------------------
 # af_usage -- the caller's own usage summary through the MCP surface, the
 # same data GET /v1/usage serves (both are thin wrappers over
-# usage/summary.py's build_usage_summary). Seeded through the process-wide
-# usage store (init_usage_store), which is what the tool reads at call time
-# -- the aggregator harness runs in-process, so the module-level store the
-# app lifespan would install is visible to the tool closure here too.
+# usage/summary.py's build_usage_summary). Seeded through the usage store
+# handed to build_aggregator, which is also the process-wide store (as in
+# app.py's lifespan) so the metering pipeline's own records land in it.
 # ---------------------------------------------------------------------------
 
 
@@ -769,7 +783,11 @@ def _usage_record(**overrides: Any) -> AuditRecord:
 
 
 async def _call_af_usage(
-    settings: Any, principal_cache: Any, token: str, args: dict[str, Any]
+    settings: Any,
+    principal_cache: Any,
+    token: str,
+    args: dict[str, Any],
+    usage_store: UsageStore,
 ) -> Any:
     """Round-trip one af_usage call through a real aggregator (the same harness the other af_* tests use)."""
     mcp = build_aggregator(
@@ -777,10 +795,12 @@ async def _call_af_usage(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        principal_cache=principal_cache,
+        **aggregator_stores(usage_store=usage_store),
     )
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         return await client.call_tool(USAGE_TOOL_NAME, args)
@@ -809,7 +829,7 @@ async def test_af_usage_returns_only_the_callers_usage(
         _usage_record(principal_sub="someone-else", result_tokens_est=7)
     )
 
-    result = await _call_af_usage(settings, principal_cache, token, {})
+    result = await _call_af_usage(settings, principal_cache, token, {}, usage_store)
 
     body = result.structured_content
     assert body["subject"] == "user-123"
@@ -853,12 +873,16 @@ async def test_af_usage_days_parameter(
         _usage_record(timestamp=time.time() - 10 * 86400, result_tokens_est=500)
     )
 
-    narrow = await _call_af_usage(settings, principal_cache, token, {"days": 7})
+    narrow = await _call_af_usage(
+        settings, principal_cache, token, {"days": 7}, usage_store
+    )
     assert narrow.structured_content["window_days"] == 7
     assert narrow.structured_content["totals"]["calls"] == 1
     assert narrow.structured_content["totals"]["result_tokens_est"] == 1000
 
-    wide = await _call_af_usage(settings, principal_cache, token, {"days": 30})
+    wide = await _call_af_usage(
+        settings, principal_cache, token, {"days": 30}, usage_store
+    )
     body = wide.structured_content
     # af_usage now meters itself (issue #240): the narrow call above shows up
     # here as one af-mcp call -- an accepted, deliberately visible side
@@ -868,24 +892,6 @@ async def test_af_usage_days_parameter(
     assert per_service["gateway_service"]["calls"] == 1
     assert body["totals"]["calls"] == 3
     assert per_service["rucio"]["result_tokens_est"] == 1500
-
-
-async def test_af_usage_without_installed_store_degrades_to_empty_window(
-    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
-) -> None:
-    """No process-wide store (outside the lifespan) means an empty window,
-    never a crash -- the same degrade GET /v1/usage applies."""
-    principal_cache, directory = static_principal_cache
-    directory.groups_by_subject["user-123"] = []
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims())
-
-    result = await _call_af_usage(settings, principal_cache, token, {})
-
-    body = result.structured_content
-    assert body["totals"]["calls"] == 0
-    assert body["by_service"] == []
-    assert body["by_day"] == []
 
 
 async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(
@@ -940,11 +946,13 @@ async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(
             group_permissions={"/connect/atlas-af": ["read_data"], "other": []}
         ),
         CredentialRegistry(),
-        principal_cache=principal_cache,
+        **aggregator_stores(),
     )
 
     async with (
-        run_aggregator_async(mcp, path="/mcp") as server,
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
         server.client(headers={"Authorization": f"Bearer {token}"}) as client,
     ):
         result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})

@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, assert_never
 import structlog
 
 from af_mcp_broker import metrics
-from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.errors import require
 from af_mcp_broker.usage.batcher import UsageBatcher
 from af_mcp_broker.usage.otel_events import (
@@ -27,6 +26,7 @@ from af_mcp_broker.usage.store import InMemoryUsageStore, UsageAggregate, UsageS
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit.logger import AuditRecord
+    from af_mcp_broker.config import Settings
 
 __all__ = [
     "EventEmittingUsageStore",
@@ -81,17 +81,14 @@ def build_usage_store(settings: Settings) -> UsageStore:
     return store
 
 
-async def init_usage_store(settings: Settings | None = None) -> UsageStore:
+async def init_usage_store(settings: Settings) -> UsageStore:
     """Create, start, and install the process-wide store (app.py lifespan).
 
-    The implementation is selected by ``settings.usage_store_backend``; with
-    no Settings passed (tests), the process-wide ``get_settings()`` is used.
-    With ``settings.usage_events_otlp_enabled`` the store is wrapped so each
+    The implementation is selected by ``settings.usage_store_backend``. With
+    ``settings.usage_events_otlp_enabled`` the store is wrapped so each
     recorded usage is also emitted as an OTel log record (``otel_events.py``).
     """
     global _store
-    if settings is None:
-        settings = get_settings()
     _store = build_usage_store(settings)
     await _store.start()
     return _store

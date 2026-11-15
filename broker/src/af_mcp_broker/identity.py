@@ -14,8 +14,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
 from af_mcp_broker.authorization import is_admin
-from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.config import Settings, get_settings
+from af_mcp_broker.broker_state import get_broker_state, get_state_settings
+from af_mcp_broker.config import (
+    Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
+)
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
 from af_mcp_broker.logging import bind_subject, current_correlation_id
@@ -450,7 +452,7 @@ async def keycloak_dependency(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
     ],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
 ) -> Principal:
     """FastAPI dependency that resolves to the authenticated Principal.
 
@@ -502,7 +504,7 @@ async def keycloak_dependency(
 
 async def require_admin(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(get_state_settings)],
 ) -> Principal:
     """FastAPI dependency: 403s unless *principal* is in ``settings.admin_group``.
 

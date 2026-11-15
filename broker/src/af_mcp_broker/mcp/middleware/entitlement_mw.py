@@ -35,9 +35,6 @@ logger = structlog.get_logger(__name__)
 
 class EntitlementMiddleware(Middleware):
     def __init__(self, registry: ServiceRegistry, policy: EntitlementPolicy) -> None:
-        # Mutable on purpose: populate_aggregator() refreshes these in place
-        # on every lifespan entry rather than constructing a new middleware
-        # instance each time.
         self.registry = registry
         self.policy = policy
         # Where each listing's lint findings are recorded for the admin
@@ -45,7 +42,7 @@ class EntitlementMiddleware(Middleware):
         self.lint_store: LintObservationStore | None = None
 
     def use_lint_store(self, lint_store: LintObservationStore) -> None:
-        """Record every listing's lint findings in *lint_store*. Called again by populate_aggregator() on each lifespan entry, as for registry and policy."""
+        """Record every listing's lint findings in *lint_store*."""
         self.lint_store = lint_store
 
     async def on_list_tools(

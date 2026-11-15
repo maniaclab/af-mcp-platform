@@ -4,6 +4,8 @@ FastAPI app (see test_dev_bypass.py / test_api.py for full-boot coverage).
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +18,7 @@ from af_mcp_broker.config import (
     OAuth21DirectProviderConfig,
     X509ProviderConfig,
 )
-from af_mcp_broker.mcp.aggregator import _find_middleware
+from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
 from af_mcp_broker.shared_state import RedisSharedState
 from af_mcp_broker.wiring.checks import build_target_to_alias
 
@@ -449,8 +451,12 @@ def test_shared_state_url_backs_the_tool_rate_limits(
     monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
     monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
 
-    with app_client_factory() as (_client, _state):
-        *_, authorization_mw = _find_middleware(app_module._mcp_aggregator)
+    with app_client_factory() as (client, _state):
+        authorization_mw = next(
+            mw
+            for mw in client.app.state.broker.mcp_aggregator.middleware
+            if isinstance(mw, AuthorizationMiddleware)
+        )
         assert isinstance(authorization_mw.shared_state.primary, RedisSharedState)
 
 
@@ -463,3 +469,40 @@ def test_malformed_shared_state_url_refuses_to_start(
     with pytest.raises(ValueError, match="redis://"):  # noqa: SIM117
         with app_client_factory():
             pass
+
+
+def test_importing_the_app_builds_no_entitlement_policy() -> None:
+    """The aggregator is built by the lifespan from the loaded policy, so no
+    stand-in policy exists before it. A fresh interpreter, because the module
+    under test is already imported here."""
+    script = (
+        "from af_mcp_broker.authorization import EntitlementPolicy\n"
+        "built = []\n"
+        "original_init = EntitlementPolicy.__init__\n"
+        "def counting_init(self, *args, **kwargs):\n"
+        "    built.append(self)\n"
+        "    original_init(self, *args, **kwargs)\n"
+        "EntitlementPolicy.__init__ = counting_init\n"
+        "import af_mcp_broker.app\n"
+        "print(len(built))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip().splitlines()[-1] == "0"
+
+
+def test_each_lifespan_entry_builds_its_own_aggregator(
+    app_client_factory: Callable[..., Any],
+) -> None:
+    with app_client_factory() as (client, _state):
+        first = client.app.state.broker.mcp_aggregator
+    with app_client_factory() as (client, _state):
+        second = client.app.state.broker.mcp_aggregator
+
+    assert first is not second

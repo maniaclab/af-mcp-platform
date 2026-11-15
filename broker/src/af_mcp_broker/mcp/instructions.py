@@ -7,7 +7,7 @@ guidance the LLM agent itself reads and reasons over. This module builds that
 second layer: a platform preamble plus one policy line per service that
 declares an ``agent_policy`` (service_registry.py's ``ServiceSpec.agent_policy``).
 The result is passed as FastMCP's ``instructions`` on the aggregator (see
-mcp/aggregator.py's ``build_aggregator``/``populate_aggregator``), which surface
+mcp/aggregator.py's ``build_aggregator``), which surface
 it to clients in the MCP ``initialize`` response.
 
 The model-facing layer is guidance, NOT an access-control boundary -- a
@@ -67,9 +67,7 @@ def compose_agent_instructions(
 
     Returns the platform preamble followed by one policy line per service that
     declares an ``agent_policy``; services with ``agent_policy=None`` are
-    omitted. Pure function of the registry so ``build_aggregator`` can compose
-    at construction and ``populate_aggregator`` can recompose once the real
-    registry is loaded (the eager build starts with an empty one -- see app.py).
+    omitted. Pure function of the registry.
 
     *job_credentials*, given only when the HTCondor credmon integration is
     enabled, adds its kind-agnostic section on using linked credentials in
