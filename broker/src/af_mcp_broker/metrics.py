@@ -195,9 +195,9 @@ krb5_tickets_issued_total = Counter(
 
 maintenance_store_unavailable_total = Counter(
     "af_mcp_maintenance_store_unavailable_total",
-    "require_not_in_maintenance (identity.py, /v1) or AsgiAuthMiddleware "
-    "(mcp/middleware/identity_mw.py, /mcp) failed to reach the "
-    "maintenance-mode store and fell open, letting the non-admin request "
+    "require_not_in_maintenance (api/maintenance_gate.py, /v1) or "
+    "AsgiMaintenanceMiddleware (mcp/middleware/maintenance_mw.py, /mcp) "
+    "failed to reach the maintenance-mode store and fell open, letting the non-admin request "
     "through as if maintenance mode were disabled -- see either call site's "
     "docstring for why this fails open rather than closed, and for the "
     "resulting limitation: maintenance mode cannot be relied on as an "

@@ -49,7 +49,7 @@ from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp import cache_invalidation, lint_observations
-from af_mcp_broker.mcp.aggregator import build_asgi_auth_middleware
+from af_mcp_broker.mcp.aggregator import build_asgi_middleware
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
@@ -593,9 +593,9 @@ async def run_aggregator_async(
     ASGIServer a test builds its clients from (``server.transport(...)``,
     ``server.client(...)``, ``server.http_client()``).
 
-    Installs the ASGI-layer identity middleware (build_asgi_auth_middleware)
-    the same way app.py does when mounting /mcp, since issue #138/#144 step 1
-    moved identity enforcement to that layer, out of FastMCP's own middleware
+    Installs the ASGI-layer identity and maintenance middleware
+    (build_asgi_middleware) the same way app.py does when mounting /mcp, since
+    issue #138/#144 step 1 moved identity enforcement to that layer, out of FastMCP's own middleware
     pipeline -- asgi_server forwards ``middleware`` to ``http_app()``, the
     same call run_http_async makes.
 
@@ -603,7 +603,7 @@ async def run_aggregator_async(
     too, through _route_backends_in_process (see run_inprocess_server).
     """
     async with asgi_server(
-        mcp, path=path, middleware=[build_asgi_auth_middleware(mcp)]
+        mcp, path=path, middleware=build_asgi_middleware(mcp)
     ) as server:
         yield server
 

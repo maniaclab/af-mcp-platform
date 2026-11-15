@@ -31,7 +31,7 @@ from af_mcp_broker.credentials import (
 )
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.mcp import aggregator as aggregator_module
-from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_auth_middleware
+from af_mcp_broker.mcp.aggregator import build_aggregator, build_asgi_middleware
 from af_mcp_broker.mcp.registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
@@ -622,7 +622,7 @@ async def test_replica_split_session_continuity(
             mcp,
             path="/mcp",
             stateless_http=stateless,
-            middleware=[build_asgi_auth_middleware(mcp)],
+            middleware=build_asgi_middleware(mcp),
         )
 
     headers = {

@@ -24,10 +24,6 @@ from af_mcp_broker.logging import (
     log_request_finished,
     log_request_received,
 )
-from af_mcp_broker.maintenance import (
-    MaintenanceModeStore,
-    check_not_maintenance_or_fail_open,
-)
 from af_mcp_broker.pat import PAT_PREFIX
 from af_mcp_broker.pat_auth import LastUsedTracker, resolve_pat_principal
 
@@ -35,6 +31,7 @@ if TYPE_CHECKING:
     from starlette.types import Message, Receive, Scope, Send
 
     from af_mcp_broker.config import Settings
+    from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.token_registry import TokenRegistryBackend
 
@@ -100,7 +97,7 @@ def _get_authorization_header(scope: Scope) -> str | None:
     return value.decode("latin-1") if value is not None else None
 
 
-async def _send_error(
+async def send_error(
     scope: Scope,
     receive: Receive,
     send: Send,
@@ -147,7 +144,7 @@ def _www_authenticate_header(scope: Scope, settings: Settings) -> str:
 async def _send_401(
     scope: Scope, receive: Receive, send: Send, detail: str, settings: Settings
 ) -> None:
-    await _send_error(
+    await send_error(
         scope,
         receive,
         send,
@@ -193,7 +190,7 @@ class AsgiAuthMiddleware:
         # capture it off the outgoing ``http.response.start`` message
         # instead. Logging "finished" happens in the ``finally`` block below,
         # which only runs once ``_authenticate_and_dispatch`` (or an early
-        # ``_send_401``/``_send_error`` reply within it) has actually
+        # ``_send_401``/``send_error`` reply within it) has actually
         # returned -- for a streaming (SSE) /mcp response that's when the
         # stream ends, not when headers go out, since headers are just one
         # of the messages this wrapper passes through on the way there.
@@ -228,7 +225,6 @@ class AsgiAuthMiddleware:
         settings = self._identity_mw.settings
         pat_backend = self._identity_mw.pat_backend
         principal_cache = self._identity_mw.principal_cache
-        maintenance_mode_store = self._identity_mw.maintenance_mode_store
 
         if settings.dev_insecure_principal is not None:
             # Local-dev auth bypass, mirroring app.py's lifespan check
@@ -318,7 +314,7 @@ class AsgiAuthMiddleware:
                 logger.exception(
                     "mcp_principal_directory_unavailable", error=str(exc.detail)
                 )
-                await _send_error(
+                await send_error(
                     scope,
                     receive,
                     send,
@@ -333,26 +329,6 @@ class AsgiAuthMiddleware:
                 # to a client.
                 await _send_401(scope, receive, send, "Invalid bearer token", settings)
                 return
-
-        # Runs after principal resolution converges for every branch above
-        # (dev-bypass, JWT, PAT) -- one gate covers both credential types on
-        # /mcp, mirroring /v1's require_not_in_maintenance (identity.py)
-        # exactly, including its fail-open-on-store-unavailability behavior
-        # (see maintenance.check_not_maintenance_or_fail_open's docstring for
-        # the full reasoning and the resulting limitation -- that function is
-        # also where the fail-open logging/counting shared with /v1 lives).
-        maintenance_exc = await check_not_maintenance_or_fail_open(
-            principal, settings, maintenance_mode_store
-        )
-        if maintenance_exc is not None:
-            await _send_error(
-                scope,
-                receive,
-                send,
-                maintenance_exc.status_code,
-                str(maintenance_exc.detail),
-            )
-            return
 
         scope.setdefault("state", {})
         scope["state"]["principal"] = principal
@@ -372,8 +348,9 @@ class IdentityMiddleware(Middleware):
         # because this instance is the single mutable config handle
         # aggregator.populate_aggregator() already updates once app.py's
         # lifespan has the real Settings/PAT store/principal
-        # cache; AsgiAuthMiddleware reads all of them off *this* instance
-        # rather than holding a second, separately-updated copy.
+        # cache; AsgiAuthMiddleware and maintenance_mw.AsgiMaintenanceMiddleware
+        # read them off *this* instance rather than holding a second,
+        # separately-updated copy.
         self.settings = settings
         self.pat_backend = pat_backend
         self.principal_cache = principal_cache

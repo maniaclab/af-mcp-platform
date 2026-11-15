@@ -59,6 +59,7 @@ from af_mcp_broker.mcp.middleware.identity_mw import (
     AsgiAuthMiddleware,
     IdentityMiddleware,
 )
+from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
 from af_mcp_broker.mcp.registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -2007,21 +2008,26 @@ def build_aggregator(
     return mcp
 
 
-def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
-    """Return the Starlette middleware spec that enforces identity at the ASGI layer.
+def build_asgi_middleware(mcp: FastMCP) -> list[Middleware]:
+    """Return the Starlette middleware specs that gate /mcp at the ASGI layer, outermost first.
 
-    Enforces identity for ``mcp``'s http_app (issue #138/#144 step 1) -- pass
-    this into ``FastMCP.http_app(middleware=[...])`` when mounting.
+    Enforces identity (issue #138/#144 step 1) and then maintenance mode for
+    ``mcp``'s http_app -- pass this into ``FastMCP.http_app(middleware=...)``
+    when mounting. The order is load-bearing: the maintenance gate reads the
+    Principal the identity middleware stashes, so identity must wrap it.
 
     Must be built from the same FastMCP instance ``build_aggregator()``
-    constructed: it shares that instance's IdentityMiddleware (found via
-    ``_find_middleware``), which is the single mutable settings handle
-    ``populate_aggregator()`` keeps up to date --
+    constructed: both middlewares share that instance's IdentityMiddleware
+    (found via ``_find_middleware``), which is the single mutable settings
+    handle ``populate_aggregator()`` keeps up to date --
     see ``identity_mw.AsgiAuthMiddleware``'s docstring for why sharing it
     rather than holding a second copy matters.
     """
     identity_mw, _, _ = _find_middleware(mcp)
-    return Middleware(AsgiAuthMiddleware, identity_mw=identity_mw)
+    return [
+        Middleware(AsgiAuthMiddleware, identity_mw=identity_mw),
+        Middleware(AsgiMaintenanceMiddleware, identity_mw=identity_mw),
+    ]
 
 
 def populate_aggregator(

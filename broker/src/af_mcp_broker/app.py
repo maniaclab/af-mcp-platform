@@ -87,7 +87,7 @@ from af_mcp_broker.maintenance import (
 )
 from af_mcp_broker.mcp.aggregator import (
     build_aggregator,
-    build_asgi_auth_middleware,
+    build_asgi_middleware,
     invalidate_all_subject_caches,
     invalidate_subject_cache,
     populate_aggregator,
@@ -1282,8 +1282,8 @@ _mcp_aggregator = build_aggregator(
 # above already reflects the real MCP_STATELESS_HTTP value -- no need to
 # wait for populate_aggregator() to push in a later value.
 #
-# middleware=[build_asgi_auth_middleware(...)] (issue #138/#144 step 1):
-# enforces identity at the ASGI layer, in front of FastMCP's own
+# middleware=build_asgi_middleware(...) (issue #138/#144 step 1):
+# enforces identity (then maintenance mode) at the ASGI layer, in front of FastMCP's own
 # message-processing pipeline, so a missing/invalid/expired bearer token
 # produces a genuine HTTP 401 instead of a 200 carrying a JSON-RPC error --
 # see mcp/middleware/identity_mw.py's module docstring for the full mechanism
@@ -1292,7 +1292,7 @@ _mcp_aggregator = build_aggregator(
 _mcp_aggregator_app = _mcp_aggregator.http_app(
     path="/",
     stateless_http=_mcp_aggregator_placeholder_settings.mcp_stateless_http,
-    middleware=[build_asgi_auth_middleware(_mcp_aggregator)],
+    middleware=build_asgi_middleware(_mcp_aggregator),
 )
 
 app = FastAPI(
