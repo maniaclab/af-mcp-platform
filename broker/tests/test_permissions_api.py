@@ -9,6 +9,7 @@ would grant me X" -- see docs/plans/2026-09-01-ops-platform-usability.md.
 from __future__ import annotations
 
 import pytest
+from broker_state_helpers import set_broker_state
 
 from af_mcp_broker.authorization import PERMISSIONS, EntitlementPolicy
 from af_mcp_broker.identity import keycloak_dependency
@@ -17,8 +18,11 @@ from af_mcp_broker.service_registry import ServiceSpec
 
 def test_permissions_includes_callers_raw_groups(app_client, make_principal) -> None:
     client, state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={"atlas": ["read_data"], "admins": ["admin"]}
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={"atlas": ["read_data"], "admins": ["admin"]}
+        ),
     )
     state["principal"] = make_principal(groups=["atlas", "some-other-group"])
 
@@ -41,11 +45,14 @@ def test_permissions_groups_empty_for_no_group_membership(
 
 def test_entitlements_returns_the_full_policy_table(app_client) -> None:
     client, _state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={
-            "atlas": ["read_data", "submit_jobs"],
-            "admins": ["admin"],
-        }
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={
+                "atlas": ["read_data", "submit_jobs"],
+                "admins": ["admin"],
+            }
+        ),
     )
 
     resp = client.get("/v1/entitlements")
@@ -68,7 +75,7 @@ def test_entitlements_catalog_lists_each_builtin_with_its_kind_and_description(
     app_client, name
 ) -> None:
     client, _state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy()
+    set_broker_state(client.app, entitlement_policy=EntitlementPolicy())
 
     by_name = {entry["name"]: entry for entry in _entitlement_catalog(client)}
 
@@ -83,9 +90,12 @@ def test_entitlements_catalog_carries_custom_permissions_without_a_description(
     app_client,
 ) -> None:
     client, _state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={"atlas": ["exec_jobs"]},
-        custom_permissions={"exec_jobs": "state_change", "peek_logs": "read"},
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={"atlas": ["exec_jobs"]},
+            custom_permissions={"exec_jobs": "state_change", "peek_logs": "read"},
+        ),
     )
 
     by_name = {entry["name"]: entry for entry in _entitlement_catalog(client)}
@@ -106,8 +116,11 @@ def test_entitlements_catalog_orders_builtins_then_customs_in_policy_order(
     app_client,
 ) -> None:
     client, _state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        custom_permissions={"zeta": "read", "alpha": "state_change"},
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            custom_permissions={"zeta": "read", "alpha": "state_change"},
+        ),
     )
 
     names = [entry["name"] for entry in _entitlement_catalog(client)]
@@ -122,9 +135,15 @@ def test_entitlements_catalog_includes_an_undeclared_name_a_group_grants(
     group can grant a name that is neither built-in nor custom. It is listed
     last, with the action type the shared resolver yields ("read")."""
     client, _state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={"atlas": ["read_data", "typo_perm"], "ops": ["typo_perm"]},
-        custom_permissions={"exec_jobs": "state_change"},
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={
+                "atlas": ["read_data", "typo_perm"],
+                "ops": ["typo_perm"],
+            },
+            custom_permissions={"exec_jobs": "state_change"},
+        ),
     )
 
     catalog = _entitlement_catalog(client)
@@ -144,9 +163,12 @@ def test_entitlements_catalog_includes_an_undeclared_name_a_group_grants(
 def test_entitlements_catalog_leaves_group_permissions_unchanged(app_client) -> None:
     client, _state = app_client
     group_permissions = {"atlas": ["read_data", "exec_jobs"], "admins": ["admin"]}
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions=group_permissions,
-        custom_permissions={"exec_jobs": "state_change"},
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions=group_permissions,
+            custom_permissions={"exec_jobs": "state_change"},
+        ),
     )
 
     resp = client.get("/v1/entitlements")
@@ -160,9 +182,12 @@ def test_grants_report_a_custom_permissions_declared_action_type(
     """The portal's token picker groups by a grant's action_types, so a custom
     state_change permission must not be reported as "read"."""
     client, state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={"atlas": ["exec_jobs", "read_data"]},
-        custom_permissions={"exec_jobs": "state_change"},
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={"atlas": ["exec_jobs", "read_data"]},
+            custom_permissions={"exec_jobs": "state_change"},
+        ),
     )
     state["principal"] = make_principal(groups=["atlas"])
 
@@ -181,10 +206,13 @@ def test_grants_reflect_every_permission_a_dict_form_service_can_require(
     required_permission, condor_service's query_jobs/manage_jobs split)."""
 
     client, state = app_client
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={"atlas": ["read_monitoring", "manage_jobs"]}
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={"atlas": ["read_monitoring", "manage_jobs"]}
+        ),
     )
-    client.app.state.service_registry.register(
+    client.app.state.broker.service_registry.register(
         ServiceSpec(
             name="condor_service",
             prefix="condor",

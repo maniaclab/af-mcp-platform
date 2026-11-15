@@ -31,7 +31,7 @@ _AUTH = {"Authorization": "Bearer test"}
 
 def _use_voms_outcome(client: TestClient, outcome: Exception | None = None) -> None:
     """Point the app's X509Provider at a voms-token-service fake that mints (default) or raises *outcome*."""
-    client.app.state.x509_provider._voms_client = FakeVomsClient(outcome)
+    client.app.state.broker.x509_provider._voms_client = FakeVomsClient(outcome)
 
 
 def _bad_passphrase(client: TestClient) -> None:
@@ -41,7 +41,7 @@ def _bad_passphrase(client: TestClient) -> None:
 
 def _seed_unrenewable_proxy(client: TestClient) -> None:
     """Store a nearly-expired proxy and no passphrase: the principal is linked, but nothing can renew without a passphrase."""
-    seed_x509_proxy(client.app.state.x509_provider.vault_store, remaining=100.0)
+    seed_x509_proxy(client.app.state.broker.x509_provider.vault_store, remaining=100.0)
 
 
 def _probe(client: TestClient):

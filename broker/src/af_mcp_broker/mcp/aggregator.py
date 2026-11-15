@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from fastmcp.utilities.versions import VersionSpec
 
     from af_mcp_broker.authorization import EntitlementPolicy
+    from af_mcp_broker.broker_state import BrokerState
     from af_mcp_broker.config import IdentityProviderConfig, Settings
     from af_mcp_broker.credentials import (
         CredentialProvider,
@@ -87,7 +88,6 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.credmon.guidance import JobCredentialGuide
     from af_mcp_broker.lint_observations import LintObservationStore
-    from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
@@ -1353,7 +1353,6 @@ def build_aggregator(
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
     target_to_alias: dict[str, str] | None = None,
     broker_token_issuer: BrokerTokenIssuer | None = None,
-    maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
 ) -> Aggregator:
@@ -1414,14 +1413,7 @@ def build_aggregator(
         name="af-mcp-aggregator",
         instructions=compose_agent_instructions(registry, job_credentials),
     )
-    mcp.add_middleware(
-        IdentityMiddleware(
-            settings,
-            pat_backend,
-            principal_cache,
-            maintenance_mode_store,
-        )
-    )
+    mcp.add_middleware(IdentityMiddleware(settings, pat_backend, principal_cache))
     mcp.add_middleware(EntitlementMiddleware(registry, policy))
     authorization_mw = AuthorizationMiddleware(registry, policy)
     if shared_state is not None:
@@ -1452,7 +1444,9 @@ def build_aggregator(
     return mcp
 
 
-def build_asgi_middleware(mcp: FastMCP) -> list[Middleware]:
+def build_asgi_middleware(
+    mcp: FastMCP, get_state: Callable[[], BrokerState]
+) -> list[Middleware]:
     """Return the Starlette middleware specs that gate /mcp at the ASGI layer, outermost first.
 
     Enforces identity (issue #138/#144 step 1) and then maintenance mode for
@@ -1465,12 +1459,14 @@ def build_asgi_middleware(mcp: FastMCP) -> list[Middleware]:
     (found via ``_find_middleware``), which is the single mutable settings
     handle ``populate_aggregator()`` keeps up to date --
     see ``identity_mw.AsgiAuthMiddleware``'s docstring for why sharing it
-    rather than holding a second copy matters.
+    rather than holding a second copy matters. The maintenance gate instead
+    reads the settings and maintenance store off the broker state *get_state*
+    returns at request time.
     """
     identity_mw, _, _ = _find_middleware(mcp)
     return [
         Middleware(AsgiAuthMiddleware, identity_mw=identity_mw),
-        Middleware(AsgiMaintenanceMiddleware, identity_mw=identity_mw),
+        Middleware(AsgiMaintenanceMiddleware, get_state=get_state),
     ]
 
 
@@ -1486,12 +1482,11 @@ def populate_aggregator(
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
     target_to_alias: dict[str, str] | None = None,
     broker_token_issuer: BrokerTokenIssuer | None = None,
-    maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
     lint_observations: LintObservationStore | None = None,
 ) -> None:
-    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/maintenance_mode_store/shared_state/lint_observations.
+    """Refresh an aggregator built by ``build_aggregator`` with a freshly loaded registry/settings/policy/credential_registry/pat_backend/principal_cache/identity_providers/identity_provider_configs/target_to_alias/shared_state/lint_observations.
 
     app.py's mount-time constraint means the aggregator's FastMCP instance
     and ASGI app must exist before SERVICES_FILE/POLICY_FILE/the credential
@@ -1512,7 +1507,6 @@ def populate_aggregator(
     identity_mw.settings = settings
     identity_mw.pat_backend = pat_backend
     identity_mw.principal_cache = principal_cache
-    identity_mw.maintenance_mode_store = maintenance_mode_store
     entitlement_mw.registry = registry
     entitlement_mw.policy = policy
     authorization_mw.registry = registry

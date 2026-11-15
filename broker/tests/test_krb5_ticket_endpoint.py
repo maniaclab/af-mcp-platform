@@ -135,7 +135,9 @@ def krb5_app(
     monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
     with app_client_factory() as (client, state):
-        provider = asyncio.run(client.app.state.credential_registry.resolve(_TARGET))
+        provider = asyncio.run(
+            client.app.state.broker.credential_registry.resolve(_TARGET)
+        )
         assert isinstance(provider, KrbTokenProvider)
         fake_client = FakeKrb5Client()
         provider._client = fake_client
@@ -184,8 +186,8 @@ def test_happy_path_returns_metadata_without_ccache(krb5_app) -> None:
 def _record_links(client) -> list[tuple[str, str]]:
     """Replace the credential cache's on_link hook with a recorder."""
     linked: list[tuple[str, str]] = []
-    client.app.state.credential_cache._on_link = lambda subject, target: linked.append(
-        (subject, target)
+    client.app.state.broker.credential_cache._on_link = lambda subject, target: (
+        linked.append((subject, target))
     )
     return linked
 
@@ -253,7 +255,7 @@ def test_link_keytab_route_success(krb5_app) -> None:
     test_link_keytab_validates_and_stores_link asserts on."""
     client, state, fake_client = krb5_app
     vault_store = asyncio.run(
-        client.app.state.credential_registry.resolve(_TARGET)
+        client.app.state.broker.credential_registry.resolve(_TARGET)
     )._vault_store
 
     resp = client.post(
@@ -291,7 +293,7 @@ def test_link_keytab_route_bad_keytab_returns_400(krb5_app) -> None:
     client, state, fake_client = krb5_app
     fake_client.outcome = Krb5TokenBadCredentialError()
     vault_store = asyncio.run(
-        client.app.state.credential_registry.resolve(_TARGET)
+        client.app.state.broker.credential_registry.resolve(_TARGET)
     )._vault_store
 
     resp = client.post(
@@ -410,7 +412,7 @@ def test_ticket_route_mints_hands_free_via_stored_keytab_with_no_credential(
     sends before ever asking for a password."""
     client, state, fake_client = krb5_app
     vault_store = asyncio.run(
-        client.app.state.credential_registry.resolve(_TARGET)
+        client.app.state.broker.credential_registry.resolve(_TARGET)
     )._vault_store
     asyncio.run(
         vault_store.store_link(

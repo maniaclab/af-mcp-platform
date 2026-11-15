@@ -116,7 +116,7 @@ def test_x509_entry_with_signing_key_boots(
     boot_env([_X509_ENTRY], with_signing_key=True)
 
     with app_client_factory() as (client, _):
-        assert client.app.state.broker_token_issuer is not None
+        assert client.app.state.broker.broker_token_issuer is not None
 
 
 def test_x509_entry_without_service_url_refuses_to_boot(

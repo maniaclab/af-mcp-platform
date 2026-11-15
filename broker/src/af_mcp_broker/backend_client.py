@@ -7,6 +7,7 @@ from __future__ import annotations
 # which lists and proxies every service for /mcp) and the /v1 per-service tool
 # listing (api/catalog_tools.py), so both always see a backend the same way.
 import json
+import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx2
@@ -547,6 +548,42 @@ class ToolListingEntry(NamedTuple):
     description: str
     annotations: ToolAnnotations | None
     has_output_schema: bool
+
+
+class ToolListingCache:
+    """In-process TTL cache of successful tool listings, keyed by service.
+
+    Tool schemas aren't user-specific (the same cross-user assumption
+    fastmcp's ProxyProvider component cache already relies on -- see
+    aggregator.py's _make_client_factory docstring; that cache itself can't
+    be reused here because its client factories require an in-flight MCP
+    request context), so one process-wide entry per service is safe. The TTL
+    is the service's own ``tools_cache_ttl`` -- the same operator knob that
+    governs the ProxyProvider cache, and 0 disables caching here too.
+    Per-caller decisions (entitlement, linkage) are re-evaluated on every
+    request; only the network fan-out is skipped. Each broker replica keeps
+    its own copy -- acceptable divergence for a tool *catalog* (worst case a
+    just-redeployed service's new tool appears on one replica up to one TTL
+    before another), unlike per-caller status data which is never cached.
+    """
+
+    def __init__(self) -> None:
+        # service name -> (monotonic fetch time, [ToolListingEntry, ...])
+        self._entries: dict[str, tuple[float, list[ToolListingEntry]]] = {}
+
+    def get(self, service: str, ttl: float) -> list[ToolListingEntry] | None:
+        if ttl <= 0:
+            return None
+        entry = self._entries.get(service)
+        if entry is None:
+            return None
+        fetched_at, tools = entry
+        if time.monotonic() - fetched_at > ttl:
+            return None
+        return tools
+
+    def put(self, service: str, tools: list[ToolListingEntry]) -> None:
+        self._entries[service] = (time.monotonic(), tools)
 
 
 async def fetch_service_tool_listing(

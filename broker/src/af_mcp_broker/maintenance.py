@@ -343,9 +343,7 @@ async def check_not_maintenance(
     after a Principal is resolved (JWT or PAT) -- one gate, two call sites, so both
     credential types and both surfaces are covered uniformly.
     A None *store* (maintenance mode unconfigured -- unreachable in a
-    properly started app, but matches the getattr-default-None pattern every
-    other optional app.state lookup in this codebase uses) never blocks
-    anyone.
+    properly started app) never blocks anyone.
 
     ``state.reason`` is echoed verbatim to every blocked caller across both
     /v1 and /mcp -- treat it like a public status-page message; never put

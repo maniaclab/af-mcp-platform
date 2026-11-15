@@ -105,7 +105,7 @@ def test_broker_issued_provider_registered_from_config(
     broker_issued_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         assert state.broker_token_issuer is not None
         assert isinstance(state.identity_providers["af-native"], BrokerIssuedProvider)
         provider = asyncio.run(
@@ -138,7 +138,7 @@ def test_unconfigured_feature_boots_cleanly(
     with app_client_factory() as (client, _):
         resp = client.get("/v1/healthz")
         assert resp.status_code == 200, resp.text
-        assert client.app.state.broker_token_issuer is None
+        assert client.app.state.broker.broker_token_issuer is None
 
 
 def test_signing_key_without_broker_issued_entry_boots_and_serves_jwks(
@@ -309,14 +309,14 @@ def test_identities_lists_broker_issued_provider_as_linked(
 # backend connects with no Authorization header at list time (the backend
 # 401s and is dropped as "unavailable") and an authorized tools/call raises a
 # ToolError claiming no signing key is configured -- even though
-# app.state.broker_token_issuer loaded fine and the /v1 redeem endpoint uses
+# app.state.broker.broker_token_issuer loaded fine and the /v1 redeem endpoint uses
 # it happily.
 # ---------------------------------------------------------------------------
 
 
 def _find_service_provider(state: Any, service_name: str) -> Any:
     """Return one backend's ``_ObservableProxyProvider`` from the app's recorded providers."""
-    return state.backend_providers.get(service_name)
+    return state.broker.mcp_aggregator.backend_providers.get(service_name)
 
 
 def test_lifespan_threads_issuer_into_x509_client_factory(
@@ -326,18 +326,18 @@ def test_lifespan_threads_issuer_into_x509_client_factory(
     make_principal: Any,
 ) -> None:
     """The x509 client factory the lifespan wires up must mint with the same
-    issuer the lifespan loaded onto ``app.state.broker_token_issuer``."""
+    issuer the lifespan loaded onto ``app.state.broker.broker_token_issuer``."""
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(_private_pem(_make_rsa_key()))
     monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
 
     with app_client_factory() as (client, _):
-        issuer = client.app.state.broker_token_issuer
+        issuer = client.app.state.broker.broker_token_issuer
         assert issuer is not None
         # A list-time credential is only minted for a caller who has linked
         # their x509 identity.
-        seed_x509_link(client.app.state.x509_provider.vault_store)
+        seed_x509_link(client.app.state.broker.x509_provider.vault_store)
         # SHIPPED_SERVICES' "ami" is its auth_type: x509 entry.
         ami_provider = _find_service_provider(app_module.app.state, "ami")
         # A list-time invocation (no authorized_call_target) by an entitled

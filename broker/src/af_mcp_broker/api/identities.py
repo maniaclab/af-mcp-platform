@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
-from af_mcp_broker.config import get_settings
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.credentials import (
     KrbTokenProvider,
     OIDCProvider,
@@ -20,7 +20,6 @@ from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
-    from af_mcp_broker.config import IdentityProviderConfig
     from af_mcp_broker.credentials import CredentialProvider
 
 logger = structlog.get_logger(__name__)
@@ -210,17 +209,14 @@ async def _build_providers(
     may simply be absent from the token.
 
     Both the provider instances and their metadata are read from
-    ``app.state`` (populated together, in config order, by ``app.py``'s
+    the ``BrokerState`` (populated together, in config order, by ``app.py``'s
     lifespan) rather than re-consulting ``Settings`` here — this keeps the
     two in lockstep even if a cached ``Settings`` instance elsewhere in the
     process ever diverges from what was actually wired at startup.
     """
-    identity_providers: dict[str, CredentialProvider] = (
-        getattr(request.app.state, "identity_providers", None) or {}
-    )
-    identity_provider_configs: dict[str, IdentityProviderConfig] = (
-        getattr(request.app.state, "identity_provider_configs", None) or {}
-    )
+    state = get_broker_state(request)
+    identity_providers = state.identity_providers
+    identity_provider_configs = state.identity_provider_configs
 
     providers: list[IdentityProvider] = []
     for alias, provider in identity_providers.items():
@@ -295,7 +291,7 @@ async def get_identities(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> IdentitiesResponse:
     providers = await _build_providers(request, principal)
-    settings = getattr(request.app.state, "settings", None) or get_settings()
+    settings = get_broker_state(request).settings
     return IdentitiesResponse(
         subject=principal.subject,
         email=principal.email,
@@ -312,10 +308,7 @@ def _typed_provider[P: CredentialProvider](
     request: Request, alias: str, kind: type[P]
 ) -> P:
     """Return the identity provider registered under *alias*, which its ``identity_providers`` entry type guarantees is a *kind*."""
-    identity_providers: dict[str, CredentialProvider] = (
-        getattr(request.app.state, "identity_providers", None) or {}
-    )
-    provider = identity_providers[alias]
+    provider = get_broker_state(request).identity_providers[alias]
     if not isinstance(provider, kind):
         raise TypeError(
             f"identity provider {alias!r} is a {type(provider).__name__}, "
@@ -334,10 +327,8 @@ async def unlink_identity(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> None:
-    identity_provider_configs: dict[str, IdentityProviderConfig] = (
-        getattr(request.app.state, "identity_provider_configs", None) or {}
-    )
-    cfg = identity_provider_configs.get(provider)
+    state = get_broker_state(request)
+    cfg = state.identity_provider_configs.get(provider)
     if cfg is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -345,15 +336,10 @@ async def unlink_identity(
         )
 
     if cfg.type == "oauth21-direct":
-        identity_providers: dict[str, CredentialProvider] = (
-            getattr(request.app.state, "identity_providers", None) or {}
-        )
-        await identity_providers[provider].revoke(principal, provider)
+        await state.identity_providers[provider].revoke(principal, provider)
 
-        credential_cache = getattr(request.app.state, "credential_cache", None)
-        if credential_cache is not None:
-            for target in cfg.targets:
-                await credential_cache.revoke(principal.subject, target)
+        for target in cfg.targets:
+            await state.credential_cache.revoke(principal.subject, target)
 
         logger.info(
             "identity_unlink_completed",
@@ -366,10 +352,8 @@ async def unlink_identity(
         krb5_provider = _typed_provider(request, provider, KrbTokenProvider)
         await krb5_provider.unlink(principal)
 
-        credential_cache = getattr(request.app.state, "credential_cache", None)
-        if credential_cache is not None:
-            for target in cfg.targets:
-                await credential_cache.revoke(principal.subject, target)
+        for target in cfg.targets:
+            await state.credential_cache.revoke(principal.subject, target)
 
         logger.info(
             "identity_unlink_completed",
@@ -382,10 +366,8 @@ async def unlink_identity(
         servicex_provider = _typed_provider(request, provider, ServiceXProvider)
         await servicex_provider.unlink(principal)
 
-        credential_cache = getattr(request.app.state, "credential_cache", None)
-        if credential_cache is not None:
-            for target in cfg.targets:
-                await credential_cache.revoke(principal.subject, target)
+        for target in cfg.targets:
+            await state.credential_cache.revoke(principal.subject, target)
 
         logger.info(
             "identity_unlink_completed",

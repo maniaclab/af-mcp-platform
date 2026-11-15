@@ -549,7 +549,9 @@ def test_delete_record_removes_an_expired_token(
 ) -> None:
 
     client, state = app_client
-    _seed_expired(app.state, principal_id=state["principal"].subject, lookup_id="old")
+    _seed_expired(
+        app.state.broker, principal_id=state["principal"].subject, lookup_id="old"
+    )
 
     resp = client.delete("/v1/tokens/old/record", headers=_AUTH)
 
@@ -600,7 +602,9 @@ def test_clear_inactive_deletes_only_the_callers_revoked_and_expired_rows(
     other = _mint(client, name="other-revoked").json()["lookup_id"]
     client.delete(f"/v1/tokens/{other}", headers=_AUTH)
     state["principal"] = owner_principal
-    _seed_expired(app.state, principal_id=owner_principal.subject, lookup_id="old")
+    _seed_expired(
+        app.state.broker, principal_id=owner_principal.subject, lookup_id="old"
+    )
 
     resp = client.delete("/v1/tokens?inactive=true", headers=_AUTH)
 

@@ -19,11 +19,14 @@ if TYPE_CHECKING:
 
     from fastmcp import FastMCP
 
+    from af_mcp_broker.maintenance import MaintenanceModeStore
+
 import fastmcp
 import httpx2
 import jwt
 import pytest
 import structlog
+from broker_state_helpers import asgi_state_getter
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -261,7 +264,7 @@ def configure_x509_service_env(
     key or a Vault connection. VaultKV's startup trial auth is faked out
     rather than requiring a real Vault, and the x509 link/proxy store is an
     in-memory fake (no Vault KV traffic); tests that need a linked principal
-    seed it through ``client.app.state.x509_provider.vault_store``.
+    seed it through ``client.app.state.broker.x509_provider.vault_store``.
     """
     monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(signing_key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
@@ -588,7 +591,9 @@ async def run_inprocess_server(mcp: FastMCP, path: str = "/mcp") -> AsyncIterato
 
 @asynccontextmanager
 async def run_aggregator_async(
-    mcp: FastMCP, path: str = "/mcp"
+    mcp: FastMCP,
+    path: str = "/mcp",
+    maintenance_mode_store: MaintenanceModeStore | None = None,
 ) -> AsyncIterator[ASGIServer]:
     """Serve an aggregator built by mcp.aggregator.build_aggregator() in-process
     through fastmcp's asgi_server (no socket, no uvicorn), and yield the
@@ -605,7 +610,11 @@ async def run_aggregator_async(
     too, through _route_backends_in_process (see run_inprocess_server).
     """
     async with asgi_server(
-        mcp, path=path, middleware=build_asgi_middleware(mcp)
+        mcp,
+        path=path,
+        middleware=build_asgi_middleware(
+            mcp, asgi_state_getter(mcp, maintenance_mode_store)
+        ),
     ) as server:
         yield server
 

@@ -61,6 +61,7 @@ import structlog
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.cimd_client import (
     CimdError,
     redirect_uri_matches,
@@ -130,7 +131,7 @@ def _bad_request(detail: str) -> HTTPException:
 
 
 def _state_cipher(request: Request) -> Fernet:
-    cipher = getattr(request.app.state, "oauth21_state_cipher", None)
+    cipher = get_broker_state(request).oauth21_state_cipher
     if cipher is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -140,7 +141,7 @@ def _state_cipher(request: Request) -> Fernet:
 
 
 def _auth_code_store(request: Request) -> McpAuthCodeStore:
-    store = getattr(request.app.state, "mcp_auth_code_store", None)
+    store = get_broker_state(request).mcp_auth_code_store
     if store is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -270,7 +271,7 @@ async def _mint_bootstrap_pat(
     bootstrap rather than reusing one" decision) -- never looks up or reuses
     an existing record for this principal.
     """
-    registry = request.app.state.token_registry
+    registry = get_broker_state(request).token_registry
     plaintext, lookup_id, secret_hash = mint_pat()
     now = time.time()
     expires_at = now + settings.pat_default_expiry_days * 86400

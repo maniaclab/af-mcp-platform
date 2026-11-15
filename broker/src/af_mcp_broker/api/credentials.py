@@ -9,10 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.credentials import (
-    CredentialCache,
     CredentialKind,
-    CredentialRegistry,
     KrbTokenProvider,
     ServiceXProvider,
     X509Provider,
@@ -278,50 +277,26 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
-def _registry(request: Request) -> CredentialRegistry:
-    registry = getattr(request.app.state, "credential_registry", None)
-    if registry is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Credential subsystem is not configured",
-        )
-    return registry
-
-
-def _cache(request: Request) -> CredentialCache:
-    cache = getattr(request.app.state, "credential_cache", None)
-    if cache is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Credential cache is not configured",
-        )
-    return cache
-
-
 def notify_identity_linked(request: Request, subject: str, alias: str | None) -> None:
     """Tell the credential cache that *subject* just completed a link for identity-provider entry *alias* (issue #355), so its cached listings for every service that entry targets are dropped.
 
     Every target of the entry is notified, not just the one the caller named:
     ``is_linked`` is per subject, so a link made through one target makes the
     entry's other targets usable too (the same fan-out ``unlink_identity``
-    uses). A no-op for an unknown *alias* or an unconfigured cache, mirroring
+    uses). A no-op for an unknown *alias*, mirroring
     ``unlink_identity``'s own tolerance.
     """
-    configs: dict[str, IdentityProviderConfig] = (
-        getattr(request.app.state, "identity_provider_configs", None) or {}
-    )
-    cache = getattr(request.app.state, "credential_cache", None)
-    if alias is None or alias not in configs or cache is None:
+    state = get_broker_state(request)
+    configs: dict[str, IdentityProviderConfig] = state.identity_provider_configs
+    if alias is None or alias not in configs:
         return
     for target in configs[alias].targets:
-        cache.notify_linked(subject, target)
+        state.credential_cache.notify_linked(subject, target)
 
 
 def _alias_for_target(request: Request, target: str) -> str | None:
     """Return the identity-provider entry alias serving *target*, if any."""
-    target_to_alias: dict[str, str] = (
-        getattr(request.app.state, "target_to_alias", None) or {}
-    )
+    target_to_alias: dict[str, str] = get_broker_state(request).target_to_alias
     return target_to_alias.get(target)
 
 
@@ -334,7 +309,7 @@ async def _x509_provider(request: Request, target: str) -> X509Provider:
     surfaces must mint/serve via the entry that actually services the
     requested target.
     """
-    registry = _registry(request)
+    registry = get_broker_state(request).credential_registry
     try:
         provider = await registry.resolve(target)
     except KeyError as exc:
@@ -353,7 +328,7 @@ async def _x509_provider(request: Request, target: str) -> X509Provider:
 def _resolve_x509_target(request: Request, target: str | None) -> str:
     if target is not None:
         return target
-    targets: list[str] = getattr(request.app.state, "x509_targets", [])
+    targets: list[str] = get_broker_state(request).x509_targets
     if not targets:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -370,7 +345,7 @@ async def _krb5_provider(request: Request, target: str) -> KrbTokenProvider:
     the /v1/krb5 surfaces must mint via the entry that actually services the
     requested target.
     """
-    registry = _registry(request)
+    registry = get_broker_state(request).credential_registry
     try:
         provider = await registry.resolve(target)
     except KeyError as exc:
@@ -389,7 +364,7 @@ async def _krb5_provider(request: Request, target: str) -> KrbTokenProvider:
 def _resolve_krb5_target(request: Request, target: str | None) -> str:
     if target is not None:
         return target
-    targets: list[str] = getattr(request.app.state, "krb5_targets", [])
+    targets: list[str] = get_broker_state(request).krb5_targets
     if not targets:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -406,7 +381,7 @@ async def _servicex_provider(request: Request, target: str) -> ServiceXProvider:
     servicex-token-service client, so the /v1/servicex surfaces must
     redeem via the entry that actually services the requested target.
     """
-    registry = _registry(request)
+    registry = get_broker_state(request).credential_registry
     try:
         provider = await registry.resolve(target)
     except KeyError as exc:
@@ -425,7 +400,7 @@ async def _servicex_provider(request: Request, target: str) -> ServiceXProvider:
 def _resolve_servicex_target(request: Request, target: str | None) -> str:
     if target is not None:
         return target
-    targets: list[str] = getattr(request.app.state, "servicex_targets", [])
+    targets: list[str] = get_broker_state(request).servicex_targets
     if not targets:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -475,7 +450,7 @@ async def issue_credential(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> IssuedCredential:
-    registry = _registry(request)
+    registry = get_broker_state(request).credential_registry
     try:
         provider = await registry.resolve(body.target)
     except KeyError as exc:
@@ -546,7 +521,7 @@ async def delete_credential(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> None:
-    await _cache(request).revoke_all(principal.subject)
+    await get_broker_state(request).credential_cache.revoke_all(principal.subject)
 
 
 @router.post(
@@ -603,7 +578,9 @@ async def create_proxy(
     notify_identity_linked(
         request, principal.subject, _alias_for_target(request, target)
     )
-    meta = _cache(request).get_proxy_meta(principal.subject, target)
+    meta = get_broker_state(request).credential_cache.get_proxy_meta(
+        principal.subject, target
+    )
     if meta is None:  # pragma: no cover - mint succeeded but nothing cached
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -908,11 +885,7 @@ async def delete_proxy(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
     target: str | None = None,
 ) -> None:
-    targets: list[str]
-    if target is not None:
-        targets = [target]
-    else:
-        targets = getattr(request.app.state, "x509_targets", [])
+    targets = [target] if target is not None else get_broker_state(request).x509_targets
     for tgt in targets:
         provider = await _x509_provider(request, tgt)
         await provider.revoke(principal, tgt)
@@ -1103,7 +1076,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
     request over in-cluster TLS, and audited as a distinct credential-release
     event. Backends must never persist the PEM (see docs/auth.md).
     """
-    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    issuer = get_broker_state(request).broker_token_issuer
     if issuer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1132,7 +1105,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
     # proxy/provider are keyed under. Map it back rather than assuming
     # aud == target name -- that assumption 403'd every renamed x509 backend
     # on 2026-08-27. An aud that maps to no x509 target is genuinely not ours.
-    x509_audiences: dict[str, str] = getattr(request.app.state, "x509_audiences", {})
+    x509_audiences: dict[str, str] = get_broker_state(request).x509_audiences
     audience = x509_audiences.get(token_aud)
     if audience is None:
         await write_audit(
@@ -1195,7 +1168,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     caller with nothing renewable/reminted still gets the same
     actionable 404 as before.
     """
-    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    issuer = get_broker_state(request).broker_token_issuer
     if issuer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1222,7 +1195,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     # Same effective_audience -> target reverse map as x509_audiences above
     # (issue #257) -- the aud a krb5 backend presents may differ from the
     # krb5 target name the ticket/provider are keyed under.
-    krb5_audiences: dict[str, str] = getattr(request.app.state, "krb5_audiences", {})
+    krb5_audiences: dict[str, str] = get_broker_state(request).krb5_audiences
     target = krb5_audiences.get(token_aud)
     if target is None:
         # Mirrors redeem_x509_proxy's audience-not-mapped audit exactly
@@ -1352,7 +1325,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
     redeem_from_link``) -- no principal is available here (only a
     broker-token subject), which is exactly what that method is built for.
     """
-    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    issuer = get_broker_state(request).broker_token_issuer
     if issuer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1380,9 +1353,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
     # krb5_audiences above (issue #257) -- the aud a servicex backend
     # presents may differ from the servicex target name the token/provider
     # are keyed under.
-    servicex_audiences: dict[str, str] = getattr(
-        request.app.state, "servicex_audiences", {}
-    )
+    servicex_audiences: dict[str, str] = get_broker_state(request).servicex_audiences
     target = servicex_audiences.get(token_aud)
     if target is None:
         # Mirrors redeem_x509_proxy's/redeem_krb5_ticket's audience-not-

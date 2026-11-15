@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 from cryptography.fernet import Fernet
 
-from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig, Settings
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import (
@@ -19,6 +18,7 @@ from af_mcp_broker.principal_cache import (
 from af_mcp_broker.shared_state import InMemorySharedState
 from af_mcp_broker.token_registry import (
     InMemoryTokenRegistryBackend,
+    TokenRegistry,
     VaultTokenRegistryBackend,
 )
 from af_mcp_broker.vault_kv import VaultKV

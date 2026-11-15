@@ -127,7 +127,7 @@ def servicex_redeem_env(
 
 def _fake_vault_store(client: TestClient, target: str = _TARGET) -> FakeServiceXStore:
     """Resolve *target*'s ServiceXProvider and swap in a FakeServiceXStore, returning it."""
-    provider = asyncio.run(client.app.state.credential_registry.resolve(target))
+    provider = asyncio.run(client.app.state.broker.credential_registry.resolve(target))
     store = FakeServiceXStore()
     provider._vault_store = store
     return store
@@ -137,7 +137,7 @@ def _fake_service_client(
     client: TestClient, target: str = _TARGET, **kwargs: Any
 ) -> FakeServiceXClient:
     """Resolve *target*'s ServiceXProvider and swap in a scriptable fake service client."""
-    provider = asyncio.run(client.app.state.credential_registry.resolve(target))
+    provider = asyncio.run(client.app.state.broker.credential_registry.resolve(target))
     fake_client = FakeServiceXClient(**kwargs)
     provider._servicex_client = fake_client
     return fake_client
@@ -146,7 +146,7 @@ def _fake_service_client(
 def _mint(
     client: TestClient, *, subject: str = "sub-abc", audience: str = _TARGET
 ) -> str:
-    token, _ = client.app.state.broker_token_issuer.mint(subject, audience)
+    token, _ = client.app.state.broker.broker_token_issuer.mint(subject, audience)
     return str(token)
 
 

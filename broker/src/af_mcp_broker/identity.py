@@ -14,6 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
 from af_mcp_broker.authorization import is_admin
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.http import get_http_client
@@ -466,8 +467,9 @@ async def keycloak_dependency(
     without inspecting the request. That path is unconditional: a real bearer
     token, if present, is ignored.
     """
-    if getattr(request.app.state, "dev_bypass_active", False):
-        dev_principal: Principal = request.app.state.dev_bypass_principal
+    state = get_broker_state(request)
+    dev_principal = state.dev_bypass_principal
+    if dev_principal is not None:
         bind_subject(dev_principal.subject)
         # Emit an audit-visible line on every bypassed request so the trail
         # captures every call that skipped real authentication.
@@ -485,15 +487,11 @@ async def keycloak_dependency(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Absent (getattr default None) only in a bare app.state; in a properly
-    # started app this is never None here -- app.py's lifespan refuses to
-    # start without either a configured PrincipalDirectory or the dev bypass
-    # (issue #144 step 3), and the bypass check above already returned. A
-    # None cache reaching get_principal is therefore always either a test
-    # double or an actual misconfiguration that slipped past the startup
-    # check; either way get_principal surfaces it as
-    # PrincipalDirectoryUnavailableError rather than crashing.
-    principal_cache = getattr(request.app.state, "principal_cache", None)
+    # None only when the deployment has no PrincipalDirectory: app.py's
+    # lifespan refuses to start without either one or the dev bypass (issue
+    # #144 step 3), and the bypass check above already returned.
+    # get_principal surfaces a None cache as PrincipalDirectoryUnavailableError.
+    principal_cache = state.principal_cache
     return await get_principal(
         credentials.credentials,
         settings,

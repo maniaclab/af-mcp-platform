@@ -19,6 +19,7 @@ from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.broker_state import BrokerState, broker_state_of
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
@@ -73,7 +74,7 @@ from af_mcp_broker.wiring.lifecycle import (
     start_usage_store,
 )
 from af_mcp_broker.wiring.services import build_identity_targets, build_service_catalog
-from af_mcp_broker.wiring.state import BrokerState
+from af_mcp_broker.wiring.state import build_broker_state
 from af_mcp_broker.wiring.vault import build_vault_kv
 
 logger = structlog.get_logger(__name__)
@@ -168,8 +169,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         stack.push_async_callback(aclose_http_client)
 
         dev_principal = build_dev_bypass_principal(settings)
-        application.state.dev_bypass_active = dev_principal is not None
-        application.state.dev_bypass_principal = dev_principal
         _warn_replica_hazards(settings)
         shared_state = open_shared_state(settings, stack)
 
@@ -179,7 +178,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         targets = build_identity_targets(settings, catalog.services)
 
         list_cache_invalidator = build_list_cache_invalidator(
-            shared_state, application.state.backend_providers, stack
+            shared_state, _mcp_aggregator.backend_providers, stack
         )
         credential_cache = build_credential_cache(
             settings, shared_state, list_cache_invalidator, stack
@@ -230,7 +229,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             pat_backend=token_registries.backend,
             principal_cache=principal_cache,
             broker_token_issuer=broker_token_issuer,
-            maintenance_mode_store=maintenance_mode_store,
             job_credentials=build_job_credential_guide(settings, targets),
             shared_state=shared_state,
             lint_observations=lint_observations,
@@ -244,7 +242,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         init_otel_metrics(settings)
         stack.callback(shutdown_otel_metrics)
         await start_metering_pipeline(settings, stack)
-        application.state.metrics_port = start_metrics_server(settings, stack)
+        metrics_port = start_metrics_server(settings, stack)
 
         credmon_sync = await start_credmon_sync(
             settings,
@@ -256,12 +254,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             principal_cache=principal_cache,
             stack=stack,
         )
-        BrokerState(
-            settings=settings,
+        application.state.broker = build_broker_state(
+            settings,
             catalog=catalog,
             targets=targets,
-            credential_cache=credential_cache,
             providers=providers,
+            credential_cache=credential_cache,
             x509_provider=x509_provider,
             oauth21_token_store=oauth21_token_store,
             oauth21_state_cipher=oauth21_state_cipher,
@@ -275,7 +273,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             shared_state=shared_state,
             link_stores=link_stores,
             credmon_sync=credmon_sync,
-        ).publish(application.state)
+            mcp_aggregator=_mcp_aggregator,
+            dev_bypass_principal=dev_principal,
+            metrics_port=metrics_port,
+        )
 
         await prime_jwks_cache(settings)
         logger.info(
@@ -335,10 +336,19 @@ _mcp_aggregator = build_aggregator(
 # see mcp/middleware/identity_mw.py's module docstring for the full mechanism
 # and why IdentityMiddleware (still registered inside build_aggregator()
 # above) survives alongside it as a thin hand-off rather than being removed.
+
+
+def _current_broker_state() -> BrokerState:
+    # The ASGI middleware below wraps a mounted sub-app, which has no handle on
+    # the parent app; it reads the state the lifespan stores on ``app`` (defined
+    # below) at request time.
+    return broker_state_of(app)
+
+
 _mcp_aggregator_app = _mcp_aggregator.http_app(
     path="/",
     stateless_http=_mcp_aggregator_placeholder_settings.mcp_stateless_http,
-    middleware=build_asgi_middleware(_mcp_aggregator),
+    middleware=build_asgi_middleware(_mcp_aggregator, _current_broker_state),
 )
 
 app = FastAPI(
@@ -363,13 +373,6 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # by the aggregator sub-application; they do not pass through the broker's
 # FastAPI middleware chain after the mount point.
 app.mount("/mcp", _mcp_aggregator_app)
-
-# The mounted aggregator instance itself, for /v1 routes that read the
-# broker's own local tools: GET /v1/catalog/gateway_service/tools (api/catalog_tools.py)
-# lists the builtin gateway service's methods straight from this instance's
-# local provider instead of HTTP-fetching a backend (issue #240).
-app.state.mcp_aggregator = _mcp_aggregator
-app.state.backend_providers = _mcp_aggregator.backend_providers
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)
@@ -442,8 +445,11 @@ async def _dev_bypass_header(request: Request, call_next):  # type: ignore[no-un
     against a "prod" URL that unexpectedly answers with this header is a
     signal the deployment is misconfigured.
     """
+    # Read before call_next: a request routed into the mounted /mcp sub-app has
+    # its scope's "app" rebound to that sub-app, which holds no BrokerState.
+    dev_bypass_active = broker_state_of(request.app).dev_bypass_principal is not None
     response = await call_next(request)
-    if getattr(request.app.state, "dev_bypass_active", False):
+    if dev_bypass_active:
         response.headers["X-Dev-Bypass"] = "true"
     return response
 

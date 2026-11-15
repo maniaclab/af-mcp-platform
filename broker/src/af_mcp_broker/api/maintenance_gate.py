@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
@@ -60,7 +61,7 @@ async def require_not_in_maintenance(
     maintenance convenience feature; it is not, and should not be treated
     as, an incident-response kill switch.
     """
-    store = getattr(request.app.state, "maintenance_mode_store", None)
+    store = get_broker_state(request).maintenance_mode_store
     exc = await check_not_maintenance_or_fail_open(principal, settings, store)
     if exc is not None:
         raise exc

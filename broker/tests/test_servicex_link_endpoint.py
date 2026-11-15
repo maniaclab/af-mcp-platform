@@ -87,7 +87,7 @@ def _fake_provider(client: TestClient, **kwargs: object) -> FakeServiceXClient:
     any successful link -- the same reason test_servicex_redeem.py's
     _fake_vault_store swaps the store out entirely.
     """
-    provider = client.app.state.identity_providers["servicex"]
+    provider = client.app.state.broker.identity_providers["servicex"]
     provider._vault_store = FakeServiceXStore()
     fake_client = FakeServiceXClient(**kwargs)
     provider._servicex_client = fake_client
@@ -116,7 +116,7 @@ class TestLink:
         with app_client_factory() as (client, state):
             _fake_provider(client)
             linked: list[tuple[str, str]] = []
-            client.app.state.credential_cache._on_link = lambda subject, target: (
+            client.app.state.broker.credential_cache._on_link = lambda subject, target: (
                 linked.append((subject, target))
             )
             resp = client.post(_LINK, json={"refresh_token": "a-refresh-token"})
@@ -131,7 +131,7 @@ class TestLink:
         with app_client_factory() as (client, _):
             _fake_provider(client, outcome=ServiceXBadRefreshTokenError())
             linked: list[tuple[str, str]] = []
-            client.app.state.credential_cache._on_link = lambda subject, target: (
+            client.app.state.broker.credential_cache._on_link = lambda subject, target: (
                 linked.append((subject, target))
             )
             resp = client.post(_LINK, json={"refresh_token": "bad-token"})

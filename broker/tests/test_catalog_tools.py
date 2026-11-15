@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
+from broker_state_helpers import make_broker_state, set_broker_state
 from conftest import (
     HungBackend,
     run_inprocess_asgi_app,
@@ -266,17 +267,19 @@ def _make_app(
     principal_state: dict[str, Any] | None = None,
     broker_token_issuer: Any = None,
 ) -> tuple[FastAPI, dict[str, Any]]:
-    """Minimal FastAPI app carrying only the new router plus the app.state
-    the route reads -- same state names app.py's lifespan sets. Returns the
+    """Minimal FastAPI app carrying only the new router plus the BrokerState
+    the route reads. Returns the
     app and the mutable ``{"principal": ...}`` holder (swap the value to
     change who the caller is, same trick as conftest's app_client)."""
     state = principal_state if principal_state is not None else {}
     app = FastAPI()
     app.include_router(catalog_tools.router, prefix="/v1")
-    app.state.service_registry = registry
-    app.state.entitlement_policy = policy
-    app.state.credential_registry = credential_registry or CredentialRegistry()
-    app.state.broker_token_issuer = broker_token_issuer
+    app.state.broker = make_broker_state(
+        service_registry=registry,
+        entitlement_policy=policy,
+        credential_registry=credential_registry or CredentialRegistry(),
+        broker_token_issuer=broker_token_issuer,
+    )
     app.dependency_overrides[keycloak_dependency] = lambda: state["principal"]
     return app, state
 
@@ -683,7 +686,9 @@ _MAX_LIST_SECONDS = 8.0
 
 
 def _with_list_deadline(app: FastAPI) -> None:
-    app.state.settings = Settings(mcp_list_timeout_seconds=_LIST_DEADLINE_SECONDS)
+    set_broker_state(
+        app, settings=Settings(mcp_list_timeout_seconds=_LIST_DEADLINE_SECONDS)
+    )
 
 
 async def test_unavailable_when_backend_never_answers(
@@ -1056,8 +1061,9 @@ async def test_builtin_service_lists_the_af_methods_locally(
     its real description -- served from the local provider, no network."""
     registry = ServiceRegistry()
     app, state = _make_app(registry, policy)
-    app.state.mcp_aggregator = _aggregator_with_diagnostic_tools(
-        registry, policy, settings
+    set_broker_state(
+        app,
+        mcp_aggregator=_aggregator_with_diagnostic_tools(registry, policy, settings),
     )
     state["principal"] = make_principal(groups=[])
 
@@ -1078,20 +1084,3 @@ async def test_builtin_service_lists_the_af_methods_locally(
         assert tool["has_output_schema"] is True
     # Light payload by design, same as every other service's listing.
     assert "inputSchema" not in resp.text
-
-
-async def test_builtin_service_degrades_to_unavailable_without_an_aggregator(
-    policy: EntitlementPolicy, make_principal: Callable[..., Any]
-) -> None:
-    """A bare app with no mounted aggregator on app.state (shouldn't happen
-    in production -- app.py stamps it at mount time) reports "unavailable"
-    rather than pretending an empty method list is the truth."""
-    registry = ServiceRegistry()
-    app, state = _make_app(registry, policy)
-    state["principal"] = make_principal(groups=[])
-
-    resp = await _get_tools(app, BUILTIN_SERVICE_NAME)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["status"] == "unavailable"
-    assert body["tools"] == []

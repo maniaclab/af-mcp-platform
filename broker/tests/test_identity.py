@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import structlog
+from broker_state_helpers import make_broker_state
 from conftest import AUDIENCE, RaisingTokenRegistryBackend, make_claims
 from fastapi import HTTPException
 
@@ -199,7 +200,7 @@ async def test_keycloak_dependency_dev_bypass_binds_subject_to_structlog_context
     fake_request = SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
-                dev_bypass_active=True, dev_bypass_principal=dev_principal
+                broker=make_broker_state(dev_bypass_principal=dev_principal)
             )
         ),
         url=SimpleNamespace(path="/v1/identities"),
@@ -528,9 +529,10 @@ async def test_valid_jwt_accepted_with_a_token_registry_that_raises_on_every_cal
     fake_request = SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
-                dev_bypass_active=False,
-                principal_cache=principal_cache,
-                token_registry=RaisingTokenRegistryBackend(),
+                broker=make_broker_state(
+                    principal_cache=principal_cache,
+                    token_registry=RaisingTokenRegistryBackend(),
+                )
             )
         ),
         url=SimpleNamespace(path="/v1/identities"),

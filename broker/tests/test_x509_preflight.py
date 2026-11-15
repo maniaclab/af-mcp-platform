@@ -78,7 +78,7 @@ def _use_preflight_client(
 ) -> FakePreflightClient:
     """Point the app's default x509 provider at a scriptable fake voms-token-service client."""
     fake = FakePreflightClient(outcome)
-    client.app.state.x509_provider._voms_client = fake
+    client.app.state.broker.x509_provider._voms_client = fake
     return fake
 
 

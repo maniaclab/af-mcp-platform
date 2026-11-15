@@ -437,7 +437,7 @@ def test_shared_state_url_backs_the_unlock_limiter(
     monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
 
     with app_client_factory() as (client, _state):
-        cache = client.app.state.credential_cache
+        cache = client.app.state.broker.credential_cache
         assert isinstance(cache._shared_state.primary, RedisSharedState)
 
 

@@ -10,7 +10,9 @@ import asyncio
 import uuid
 
 import structlog
+from broker_state_helpers import set_broker_state
 
+from af_mcp_broker.api.rate_limits import build_rate_limits_response
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.rate_limit import tool_rate_limit_key
 from af_mcp_broker.shared_state import RedisSharedState
@@ -35,11 +37,12 @@ def _seed(url: str, rule: RateLimitRule, subject: str, calls: int) -> None:
     asyncio.run(_run())
 
 
-def _install(client, url: str | None, *rules: RateLimitRule) -> None:
+def _install(client, url: str, *rules: RateLimitRule) -> None:
     policy = EntitlementPolicy()
     policy.rate_limits = list(rules)
-    client.app.state.entitlement_policy = policy
-    client.app.state.shared_state = RedisSharedState(url) if url else None
+    set_broker_state(
+        client.app, entitlement_policy=policy, shared_state=RedisSharedState(url)
+    )
 
 
 def test_returns_rules_with_the_callers_usage(
@@ -111,12 +114,13 @@ def test_unreachable_store_returns_rules_with_unknown_usage(
     assert "rate_limits.shared_state_unavailable" in [log["event"] for log in logs]
 
 
-def test_no_store_installed_marks_usage_unknown(app_client, make_principal) -> None:
-    client, state = app_client
-    state["principal"] = make_principal(subject=f"sub-{uuid.uuid4()}")
-    _install(client, None, STATE_CHANGE_RULE)
+def test_no_store_installed_marks_usage_unknown() -> None:
+    policy = EntitlementPolicy()
+    policy.rate_limits = [STATE_CHANGE_RULE]
 
-    body = client.get("/v1/rate-limits").json()
+    body = asyncio.run(
+        build_rate_limits_response(policy, None, f"sub-{uuid.uuid4()}")
+    ).model_dump()
 
     assert body["usage_available"] is False
     assert body["rate_limits"][0]["used"] is None

@@ -76,7 +76,7 @@ def test_readyz_body_reports_services_count(
 
     with app_client_factory() as (client, _):
         resp: Any = client.get("/v1/readyz")
-        services_count_on_app = len(client.app.state.services)
+        services_count_on_app = len(client.app.state.broker.services)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()

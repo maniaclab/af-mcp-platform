@@ -532,7 +532,7 @@ class TestAppWiring:
         voms_service_env()
 
         with app_client_factory() as (client, _):
-            provider = client.app.state.x509_provider
+            provider = client.app.state.broker.x509_provider
             assert isinstance(provider.voms_client, VomsTokenServiceClient)
             assert isinstance(provider.vault_store, FakeX509Store)
 

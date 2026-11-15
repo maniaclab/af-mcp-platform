@@ -71,7 +71,7 @@ def test_condor_token_provider_registered_from_config(
     condor_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         assert state.broker_token_issuer is not None
         assert isinstance(state.identity_providers["condor"], CondorTokenProvider)
         provider = asyncio.run(state.credential_registry.resolve("condor-mcp"))

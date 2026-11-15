@@ -212,15 +212,19 @@ root_package = "af_mcp_broker"
 #                    middleware). Independent: anything both need lives below.
 #   4. credentials   pat_auth resolves a broker PAT to a Principal; identity
 #                    validates a Keycloak JWT and is the FastAPI auth dependency.
-#   5. features      services built on the subsystems below that the edges share:
+#   5. broker_state  the typed BrokerState stored on ``app.state.broker`` and its
+#                    accessors. Below identity, which reads the principal cache
+#                    and dev-bypass principal from it, and above every
+#                    subsystem it holds; construction stays in wiring.
+#   6. features      services built on the subsystems below that the edges share:
 #                    credential monitor, backend client, service status, lint
 #                    observations, maintenance gate store.
-#   6. registry      credential providers and the service registry.
-#   7. metering      the audit pipeline above the usage store and OTel metrics,
+#   7. registry      credential providers and the service registry.
+#   8. metering      the audit pipeline above the usage store and OTel metrics,
 #                    above the audit record writer.
-#   8. platform      stores, caches and the entitlement policy.
-#   9. settings      config and the infrastructure clients it sits beside.
-#  10. leaf          types, constants and helpers with no first-party imports.
+#   9. platform      stores, caches and the entitlement policy.
+#  10. settings      config and the infrastructure clients it sits beside.
+#  11. leaf          types, constants and helpers with no first-party imports.
 [[tool.importlinter.contracts]]
 name = "Broker import layers"
 type = "layers"
@@ -232,6 +236,7 @@ layers = [
   "api | mcp",
   "pat_auth",
   "identity",
+  "broker_state",
   "credmon | backend_client | service_status | lint_observations | maintenance",
   "credentials | service_registry",
   "metering",

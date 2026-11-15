@@ -100,7 +100,7 @@ def x509_redeem_env(
 def _seed_vault_proxy(client: TestClient, *, subject: str) -> None:
     """Swap the app's X509Provider onto in-memory fakes and store a valid proxy for *subject*."""
     store = FakeX509Store()
-    provider = client.app.state.x509_provider
+    provider = client.app.state.broker.x509_provider
     provider._vault_store = store
     provider._voms_client = FakeVomsClient()
     asyncio.run(
@@ -122,7 +122,7 @@ def _seed_vault_proxy(client: TestClient, *, subject: str) -> None:
 def _mint(
     client: TestClient, *, subject: str = "sub-abc", audience: str = "ami"
 ) -> str:
-    token, _ = client.app.state.broker_token_issuer.mint(
+    token, _ = client.app.state.broker.broker_token_issuer.mint(
         subject, audience, uid=1000, gid=1000, unixname="tuser"
     )
     return str(token)

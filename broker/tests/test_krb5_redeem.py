@@ -152,7 +152,7 @@ def _fake_vault_store(client: TestClient, target: str = _TARGET) -> FakeKrb5Vaul
     Krb5VaultStore wired in, any Vault-tier read would hit the (stubbed but
     otherwise real) VaultKV client.
     """
-    provider = asyncio.run(client.app.state.credential_registry.resolve(target))
+    provider = asyncio.run(client.app.state.broker.credential_registry.resolve(target))
     store = FakeKrb5VaultStore()
     provider._vault_store = store
     return store
@@ -162,7 +162,7 @@ def _fake_service_client(
     client: TestClient, target: str = _TARGET, **kwargs: Any
 ) -> _FakeClient:
     """Resolve *target*'s KrbTokenProvider and swap in a scriptable fake service client -- the redeem-path counterpart to ``_fake_vault_store``, needed once the hands-free fallback can actually call renew()/mint(). ``kwargs`` forward to ``_FakeClient`` (``ticket``/``error``/``renew_ticket``/``renew_error``)."""
-    provider = asyncio.run(client.app.state.credential_registry.resolve(target))
+    provider = asyncio.run(client.app.state.broker.credential_registry.resolve(target))
     fake_client = _FakeClient(**kwargs)
     provider._client = fake_client
     return fake_client
@@ -171,7 +171,7 @@ def _fake_service_client(
 def _mint(
     client: TestClient, *, subject: str = "sub-abc", audience: str = _TARGET
 ) -> str:
-    token, _ = client.app.state.broker_token_issuer.mint(subject, audience)
+    token, _ = client.app.state.broker.broker_token_issuer.mint(subject, audience)
     return str(token)
 
 
@@ -202,7 +202,7 @@ def _seed_cache_ticket(
         execution_model=ExecutionModel.DELEGATED,
     )
     asyncio.run(
-        client.app.state.credential_cache.put(
+        client.app.state.broker.credential_cache.put(
             subject, target, cred, expires_at=not_after
         )
     )
@@ -784,7 +784,7 @@ class TestCredmonWiring:
         _enable_credmon(monkeypatch, tmp_path)
         monkeypatch.setenv("CREDMON_KINDS", '["krb5", "servicex"]')
         with app_client_factory() as (client, _):
-            sync = client.app.state.credmon_sync
+            sync = client.app.state.broker.credmon_sync
             assert sync is not None
             # servicex is requested but has no servicex-token provider here.
             assert sync.kinds == ["krb5"]
@@ -794,7 +794,7 @@ class TestCredmonWiring:
     ) -> None:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
-            assert client.app.state.credmon_sync is None
+            assert client.app.state.broker.credmon_sync is None
 
     def test_enabled_tells_agents_about_job_credentials(
         self,

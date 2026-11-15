@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from broker_state_helpers import set_broker_state
 from prometheus_client import REGISTRY
 
 from af_mcp_broker import maintenance as maintenance_module
@@ -23,7 +24,7 @@ def _store_unavailable_count() -> float:
 
 
 def test_lifespan_constructs_the_default_in_memory_store(app_client_factory):
-    """Every test above manually overwrites ``client.app.state.maintenance_mode_store``
+    """Every test above manually overwrites ``client.app.state.broker.maintenance_mode_store``
     after entering ``app_client_factory``'s context, which proves
     ``check_not_maintenance`` works but not that app.py's lifespan actually
     constructs a store on its own. Here nothing overrides it: with
@@ -33,7 +34,7 @@ def test_lifespan_constructs_the_default_in_memory_store(app_client_factory):
     check_not_maintenance treats as "never blocks anyone", masking a broken
     wiring path in every other test in this file)."""
     with app_client_factory() as (client, _state):
-        store = client.app.state.maintenance_mode_store
+        store = client.app.state.broker.maintenance_mode_store
         assert isinstance(store, InMemoryMaintenanceModeStore)
         state = asyncio.run(store.get())
         assert state.enabled is False
@@ -56,9 +57,11 @@ def test_lifespan_constructs_the_default_in_memory_store(app_client_factory):
 def test_non_admin_blocked_when_maintenance_enabled(app_client_factory, monkeypatch):
     monkeypatch.setenv("ADMIN_GROUP", "af-admins")
     with app_client_factory() as (client, _state):
-        client.app.state.maintenance_mode_store = InMemoryMaintenanceModeStore()
+        set_broker_state(
+            client.app, maintenance_mode_store=InMemoryMaintenanceModeStore()
+        )
         asyncio.run(
-            client.app.state.maintenance_mode_store.set(
+            client.app.state.broker.maintenance_mode_store.set(
                 MaintenanceState(
                     enabled=True, reason="r", enabled_by="a", enabled_at=1.0
                 )
@@ -74,9 +77,11 @@ def test_admin_not_blocked_when_maintenance_enabled(
     monkeypatch.setenv("ADMIN_GROUP", "af-admins")
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["af-admins"])
-        client.app.state.maintenance_mode_store = InMemoryMaintenanceModeStore()
+        set_broker_state(
+            client.app, maintenance_mode_store=InMemoryMaintenanceModeStore()
+        )
         asyncio.run(
-            client.app.state.maintenance_mode_store.set(
+            client.app.state.broker.maintenance_mode_store.set(
                 MaintenanceState(
                     enabled=True, reason="r", enabled_by="a", enabled_at=1.0
                 )
@@ -88,9 +93,11 @@ def test_admin_not_blocked_when_maintenance_enabled(
 
 def test_health_probe_never_blocked(app_client_factory):
     with app_client_factory() as (client, _state):
-        client.app.state.maintenance_mode_store = InMemoryMaintenanceModeStore()
+        set_broker_state(
+            client.app, maintenance_mode_store=InMemoryMaintenanceModeStore()
+        )
         asyncio.run(
-            client.app.state.maintenance_mode_store.set(
+            client.app.state.broker.maintenance_mode_store.set(
                 MaintenanceState(
                     enabled=True, reason="r", enabled_by="a", enabled_at=1.0
                 )
@@ -126,7 +133,9 @@ def test_non_admin_not_blocked_when_store_unavailable(app_client_factory):
     maintenance mode were disabled.
     """
     with app_client_factory() as (client, _state):
-        client.app.state.maintenance_mode_store = _BrokenMaintenanceModeStore()
+        set_broker_state(
+            client.app, maintenance_mode_store=_BrokenMaintenanceModeStore()
+        )
         resp = client.get("/v1/identities")
         assert resp.status_code == 200
 
@@ -171,7 +180,9 @@ def test_store_unavailable_is_logged_at_error_with_traceback_and_counted(
     monkeypatch.setattr(maintenance_module.logger, "exception", _capture)
 
     with app_client_factory() as (client, _state):
-        client.app.state.maintenance_mode_store = _BrokenMaintenanceModeStore()
+        set_broker_state(
+            client.app, maintenance_mode_store=_BrokenMaintenanceModeStore()
+        )
         before = _store_unavailable_count()
         resp = client.get("/v1/identities")
         assert resp.status_code == 200

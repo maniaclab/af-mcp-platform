@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import structlog
 
-from af_mcp_broker.api.tokens import (
+from af_mcp_broker.shared_state import RedisSharedState
+from af_mcp_broker.token_registry import (
+    InMemoryTokenRegistryBackend,
     PatMintRateLimitError,
     TokenRegistry,
     pat_mint_key,
 )
-from af_mcp_broker.shared_state import RedisSharedState
-from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable

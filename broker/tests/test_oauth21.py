@@ -1601,7 +1601,7 @@ def test_callback_completes_flow_and_stores_credential(
         assert sent["code"] == "auth-code-xyz"
         assert sent["client_id"] == CLIENT_ID
 
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         stored = _run(store.get("sub-abc", ALIAS))
         assert stored is not None
         cred, version = stored
@@ -1624,7 +1624,7 @@ def test_callback_notifies_listing_caches_for_the_linking_subject(
 
     with app_client_factory() as (client, _state):
         linked: list[tuple[str, str]] = []
-        client.app.state.credential_cache._on_link = lambda subject, target: (
+        client.app.state.broker.credential_cache._on_link = lambda subject, target: (
             linked.append((subject, target))
         )
         authorize_resp = client.get(
@@ -1655,7 +1655,7 @@ def test_callback_backend_error_does_not_notify_listing_caches(
 
     with app_client_factory() as (client, _state):
         linked: list[tuple[str, str]] = []
-        client.app.state.credential_cache._on_link = lambda subject, target: (
+        client.app.state.broker.credential_cache._on_link = lambda subject, target: (
             linked.append((subject, target))
         )
         authorize_resp = client.get(
@@ -1810,7 +1810,7 @@ def test_callback_sends_client_secret_post_when_confidential(
         assert sent["client_id"] == CONFIDENTIAL_CLIENT_ID
         assert sent["client_secret"] == CONFIDENTIAL_CLIENT_SECRET
 
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         stored = _run(store.get("sub-abc", ALIAS))
         assert stored is not None
         cred, _version = stored
@@ -1856,7 +1856,7 @@ def test_callback_relink_clears_a_rejected_credential(
     )
 
     with app_client_factory() as (client, _state):
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         _run(
             store.write_cas(
                 "sub-abc",

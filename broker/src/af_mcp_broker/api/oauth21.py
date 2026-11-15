@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from af_mcp_broker.api.credentials import notify_identity_linked
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.credentials.oauth21 import (
@@ -57,7 +58,7 @@ callback_router = APIRouter(tags=["oauth21"])
 
 
 def _oauth21_providers(request: Request) -> dict[str, OAuth21Provider]:
-    identity_providers = getattr(request.app.state, "identity_providers", None) or {}
+    identity_providers = get_broker_state(request).identity_providers
     providers = {
         alias: p
         for alias, p in identity_providers.items()
@@ -82,7 +83,7 @@ def _resolve_provider(request: Request, alias: str) -> OAuth21Provider:
 
 
 def _token_store(request: Request) -> TokenStore:
-    store = getattr(request.app.state, "oauth21_token_store", None)
+    store = get_broker_state(request).oauth21_token_store
     if store is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -92,7 +93,7 @@ def _token_store(request: Request) -> TokenStore:
 
 
 def _state_cipher(request: Request) -> Fernet:
-    cipher = getattr(request.app.state, "oauth21_state_cipher", None)
+    cipher = get_broker_state(request).oauth21_state_cipher
     if cipher is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

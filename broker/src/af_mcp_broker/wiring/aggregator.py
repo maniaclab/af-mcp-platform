@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials import BrokerTokenIssuer
     from af_mcp_broker.lint_observations import LintObservationStore
-    from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp.aggregator import Aggregator
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
@@ -47,7 +46,6 @@ def populate_mcp_aggregator(
     pat_backend: TokenRegistryBackend,
     principal_cache: PrincipalCache | None,
     broker_token_issuer: BrokerTokenIssuer | None,
-    maintenance_mode_store: MaintenanceModeStore,
     job_credentials: JobCredentialGuide | None,
     shared_state: SharedState,
     lint_observations: LintObservationStore,
@@ -57,10 +55,7 @@ def populate_mcp_aggregator(
     The FastMCP instance and its ASGI app are built eagerly at import time
     (see app.py), before any of these exist; the lifespan calls this once they
     are real. The registry/policy/settings/credential registry/identity
-    providers feed the af_* diagnostic tools (issue #153), and
-    *maintenance_mode_store* feeds AsgiAuthMiddleware's /mcp enforcement
-    (mirroring /v1's require_not_in_maintenance, which reads it straight off
-    app.state).
+    providers feed the af_* diagnostic tools (issue #153).
     """
     populate_aggregator(
         aggregator,
@@ -74,7 +69,6 @@ def populate_mcp_aggregator(
         identity_provider_configs=providers.configs,
         target_to_alias=targets.target_to_alias,
         broker_token_issuer=broker_token_issuer,
-        maintenance_mode_store=maintenance_mode_store,
         job_credentials=job_credentials,
         shared_state=shared_state,
         lint_observations=lint_observations,

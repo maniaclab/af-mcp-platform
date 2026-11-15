@@ -64,7 +64,7 @@ def service_app(
     with app_client_factory() as (client, state):
         store = FakeX509Store()
         voms_client = FakeVomsClient()
-        provider = client.app.state.x509_provider
+        provider = client.app.state.broker.x509_provider
         provider._vault_store = store
         provider._voms_client = voms_client
         yield client, store, voms_client, {**state, "audit_log": tmp_path / "audit.log"}
@@ -73,7 +73,7 @@ def service_app(
 def _mint_token(
     client: TestClient, *, subject: str = "sub-abc", audience: str = "ami"
 ) -> str:
-    token, _ = client.app.state.broker_token_issuer.mint(
+    token, _ = client.app.state.broker.broker_token_issuer.mint(
         subject, audience, uid=1000, gid=1000, unixname="tuser"
     )
     return str(token)
@@ -117,7 +117,7 @@ def _seed_cache_proxy_meta(client: TestClient, *, subject: str) -> None:
     not_after = time.time() + 3600.0
     meta = ProxyMeta(dn=_DN, voms_attributes=list(_VOMS_ATTRS), not_after=not_after)
     asyncio.run(
-        client.app.state.credential_cache.put(
+        client.app.state.broker.credential_cache.put(
             subject,
             "ami",
             {"proxy_handle": subject},
@@ -273,7 +273,7 @@ class TestRedeemHandsFreeRenewal:
     ) -> None:
         client, store, _, state = service_app
         store_client = FakeVomsClient(VomsServiceBadPassphraseError())
-        client.app.state.x509_provider._voms_client = store_client
+        client.app.state.broker.x509_provider._voms_client = store_client
         await _seed_link(store)
 
         resp = _redeem(client, _mint_token(client))
@@ -290,7 +290,7 @@ class TestRedeemHandsFreeRenewal:
         self, service_app
     ) -> None:
         client, store, _, state = service_app
-        client.app.state.x509_provider._voms_client = FakeVomsClient(
+        client.app.state.broker.x509_provider._voms_client = FakeVomsClient(
             VomsServiceMintError("service down")
         )
         await _seed_link(store)
@@ -315,7 +315,7 @@ class TestRedeemHandsFreeRenewal:
         rejected stored passphrase -- the Globus link is untouched, unlike
         the bad-passphrase case above."""
         client, store, _, state = service_app
-        client.app.state.x509_provider._voms_client = FakeVomsClient(
+        client.app.state.broker.x509_provider._voms_client = FakeVomsClient(
             VomsServiceRejectedError("Your grid certificate has expired.")
         )
         await _seed_link(store)
@@ -335,7 +335,7 @@ class TestRedeemHandsFreeRenewal:
 class TestUnlockEndpointServiceMode:
     def test_bad_passphrase_is_400(self, service_app) -> None:
         client, _, _, _ = service_app
-        client.app.state.x509_provider._voms_client = FakeVomsClient(
+        client.app.state.broker.x509_provider._voms_client = FakeVomsClient(
             VomsServiceBadPassphraseError()
         )
 
@@ -348,7 +348,7 @@ class TestUnlockEndpointServiceMode:
 
     def test_infra_failure_is_502(self, service_app) -> None:
         client, _, _, _ = service_app
-        client.app.state.x509_provider._voms_client = FakeVomsClient(
+        client.app.state.broker.x509_provider._voms_client = FakeVomsClient(
             VomsServiceMintError("service down")
         )
 
@@ -363,7 +363,7 @@ class TestUnlockEndpointServiceMode:
         The detail is safe to relay verbatim (see
         VomsServiceRejectedError's docstring)."""
         client, store, _, _ = service_app
-        client.app.state.x509_provider._voms_client = FakeVomsClient(
+        client.app.state.broker.x509_provider._voms_client = FakeVomsClient(
             VomsServiceRejectedError("Your grid certificate has expired.")
         )
 

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import cast
-
 import structlog
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.config import Settings
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.identity import get_jwks
 
 logger = structlog.get_logger(__name__)
@@ -55,9 +53,8 @@ async def readyz(
     (issue #29) — so services_loaded/services_count are informational only
     and never gate the HTTP status.
     """
-    settings: Settings = (
-        cast("Settings", getattr(request.app.state, "settings", None)) or Settings()
-    )
+    state = get_broker_state(request)
+    settings = state.settings
 
     jwks_ok = False
     try:
@@ -66,11 +63,11 @@ async def readyz(
     except Exception:  # noqa: BLE001  # readiness probe: broad catch is intentional
         logger.warning("readyz_jwks_check_failed")
 
-    # services_loaded/services are set on app.state during the lifespan
+    # services_loaded/services are set on the BrokerState during the lifespan
     # startup handler. services_loaded reflects whether services.yaml parsed
     # without error, not whether any service is configured.
-    services_ok: bool = getattr(request.app.state, "services_loaded", False)
-    services_count: int = len(getattr(request.app.state, "services", []))
+    services_ok = state.services_loaded
+    services_count = len(state.services)
 
     if not jwks_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

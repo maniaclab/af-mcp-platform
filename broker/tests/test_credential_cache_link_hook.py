@@ -92,7 +92,7 @@ def test_lifespan_wires_on_link_to_the_targeted_service_and_subject_only(
     """The real lifespan's notify_linked drops the subject's cached listing and
     per-caller record for the targeted service, and nothing else."""
     with app_client_factory() as (client, _state):
-        registry = client.app.state.service_registry
+        registry = client.app.state.broker.service_registry
         rucio = _find_service_provider(app_module.app.state, "rucio")
         ami = _find_service_provider(app_module.app.state, "ami")
         for provider in (rucio, ami):
@@ -101,7 +101,7 @@ def test_lifespan_wires_on_link_to_the_targeted_service_and_subject_only(
             registry.record_list_failure(provider._service_name, "not_linked", "alice")
             registry.record_list_failure(provider._service_name, "not_linked", "bob")
 
-        client.app.state.credential_cache.notify_linked("alice", "rucio")
+        client.app.state.broker.credential_cache.notify_linked("alice", "rucio")
 
         assert ("tools", "alice") not in rucio._subject_list_cache
         assert registry.recent_list_failure("rucio", "alice") is None
@@ -115,12 +115,12 @@ async def test_lifespan_revoke_also_drops_the_per_caller_record(
     app_client_factory: Any,
 ) -> None:
     with app_client_factory() as (client, _state):
-        registry = client.app.state.service_registry
+        registry = client.app.state.broker.service_registry
         rucio = _find_service_provider(app_module.app.state, "rucio")
         _seed_negative_entry(rucio, "alice")
         registry.record_list_failure("rucio", "unauthorized", "alice")
 
-        await client.app.state.credential_cache.revoke("alice", "rucio")
+        await client.app.state.broker.credential_cache.revoke("alice", "rucio")
 
         assert ("tools", "alice") not in rucio._subject_list_cache
         assert registry.recent_list_failure("rucio", "alice") is None
@@ -130,8 +130,8 @@ async def test_lifespan_link_and_revoke_keep_the_service_wide_failure_record(
     app_client_factory: Any,
 ) -> None:
     with app_client_factory() as (client, _state):
-        registry = client.app.state.service_registry
-        cache = client.app.state.credential_cache
+        registry = client.app.state.broker.service_registry
+        cache = client.app.state.broker.credential_cache
         registry.record_list_failure("rucio", "unavailable", None)
         registry.record_list_failure("rucio", "not_linked", "alice")
 

@@ -30,12 +30,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker import metrics
-from af_mcp_broker.api.app_state import get_registry
 from af_mcp_broker.audit import AuditRecord, write_audit
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.identity import require_admin
 from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.maintenance import (
-    MaintenanceModeStore,
     MaintenanceState,
     MaintenanceStateConflictError,
 )
@@ -89,10 +88,6 @@ class SetMaintenanceRequest(BaseModel):
     )
 
 
-def _store(request: Request) -> MaintenanceModeStore | None:
-    return getattr(request.app.state, "maintenance_mode_store", None)
-
-
 async def _resolve_enabled_by(
     request: Request, enabled_by: str | None
 ) -> tuple[str | None, str]:
@@ -105,7 +100,7 @@ async def _resolve_enabled_by(
     """
     if enabled_by is None:
         return None, ""
-    principal_cache = getattr(request.app.state, "principal_cache", None)
+    principal_cache = get_broker_state(request).principal_cache
     if principal_cache is None:
         return None, ""
     try:
@@ -131,24 +126,21 @@ async def _resolve_enabled_by(
     ),
 )
 async def get_maintenance_status(request: Request) -> MaintenanceStatusResponse:
-    store = _store(request)
-    if store is None:
+    store = get_broker_state(request).maintenance_mode_store
+    try:
+        state = await store.get()
+    except Exception as exc:
+        # Same event name/shape as maintenance.check_not_maintenance_or_fail_open's
+        # store-unavailability handling: ERROR level with a traceback, plus
+        # the same counter, so an operator's dashboard doesn't need a
+        # second signal for this route's store outages. Fails open (looks
+        # disabled) rather than 500ing -- this route's entire reason to
+        # exist is staying reachable precisely when everything else is
+        # refusing traffic, so surfacing the outage as a 500 here would be
+        # exactly backwards.
+        logger.exception("maintenance_store_unavailable", error=str(exc))
+        metrics.maintenance_store_unavailable_total.inc()
         state = _DISABLED_DEFAULT
-    else:
-        try:
-            state = await store.get()
-        except Exception as exc:
-            # Same event name/shape as maintenance.check_not_maintenance_or_fail_open's
-            # store-unavailability handling: ERROR level with a traceback, plus
-            # the same counter, so an operator's dashboard doesn't need a
-            # second signal for this route's store outages. Fails open (looks
-            # disabled) rather than 500ing -- this route's entire reason to
-            # exist is staying reachable precisely when everything else is
-            # refusing traffic, so surfacing the outage as a 500 here would be
-            # exactly backwards.
-            logger.exception("maintenance_store_unavailable", error=str(exc))
-            metrics.maintenance_store_unavailable_total.inc()
-            state = _DISABLED_DEFAULT
     unixname, email = await _resolve_enabled_by(request, state.enabled_by)
     return MaintenanceStatusResponse(
         enabled=state.enabled,
@@ -180,7 +172,7 @@ async def set_maintenance_status(
     request: Request,
     principal: Annotated[Principal, Depends(require_admin)],
 ) -> MaintenanceStatusResponse:
-    store = _store(request)
+    store = get_broker_state(request).maintenance_mode_store
     state = MaintenanceState(
         enabled=body.enabled,
         # Cleared to None on disable, same as enabled_by/enabled_at just
@@ -191,47 +183,46 @@ async def set_maintenance_status(
         enabled_by=principal.subject if body.enabled else None,
         enabled_at=time.time() if body.enabled else None,
     )
-    if store is not None:
-        # The Vault backend's set() does a read-then-CAS-write with no retry
-        # loop (see VaultMaintenanceModeStore.set()'s docstring) -- silently
-        # retrying an admin's explicit lockdown/unlock decision behind their
-        # back could commit them to a choice made with stale knowledge of the
-        # current state. 409 is the standard HTTP semantic for "someone else
-        # changed this concurrently, please retry" (there's no other
-        # precedent for this in the codebase to match), so surface it as
-        # such rather than letting it become an unhandled 500.
-        try:
-            await store.set(state)
-        except MaintenanceStateConflictError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Another admin changed maintenance mode at the same "
-                    "time. Re-check GET /v1/admin/maintenance and retry."
-                ),
-            ) from exc
-        # Written only after the store accepted the change: a toggle that
-        # lost the compare-and-set race changed nothing and is not audited.
-        action = "maintenance_enable" if body.enabled else "maintenance_disable"
-        await write_audit(
-            AuditRecord(
-                principal_sub=principal.subject,
-                principal_uid=principal.uid,
-                permission=None,
-                target="mcp-gateway",
-                action=action,
-                action_type="state_change",
-                args_summary=f"enabled={body.enabled} reason={body.reason!r}",
-                timestamp=time.time(),
-                request_id=current_correlation_id(),
-            )
+    # The Vault backend's set() does a read-then-CAS-write with no retry
+    # loop (see VaultMaintenanceModeStore.set()'s docstring) -- silently
+    # retrying an admin's explicit lockdown/unlock decision behind their
+    # back could commit them to a choice made with stale knowledge of the
+    # current state. 409 is the standard HTTP semantic for "someone else
+    # changed this concurrently, please retry" (there's no other
+    # precedent for this in the codebase to match), so surface it as
+    # such rather than letting it become an unhandled 500.
+    try:
+        await store.set(state)
+    except MaintenanceStateConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Another admin changed maintenance mode at the same "
+                "time. Re-check GET /v1/admin/maintenance and retry."
+            ),
+        ) from exc
+    # Written only after the store accepted the change: a toggle that
+    # lost the compare-and-set race changed nothing and is not audited.
+    action = "maintenance_enable" if body.enabled else "maintenance_disable"
+    await write_audit(
+        AuditRecord(
+            principal_sub=principal.subject,
+            principal_uid=principal.uid,
+            permission=None,
+            target="mcp-gateway",
+            action=action,
+            action_type="state_change",
+            args_summary=f"enabled={body.enabled} reason={body.reason!r}",
+            timestamp=time.time(),
+            request_id=current_correlation_id(),
         )
-        logger.info(
-            "maintenance_mode_changed",
-            subject=principal.subject,
-            enabled=body.enabled,
-            reason=body.reason,
-        )
+    )
+    logger.info(
+        "maintenance_mode_changed",
+        subject=principal.subject,
+        enabled=body.enabled,
+        reason=body.reason,
+    )
     unixname, email = await _resolve_enabled_by(request, state.enabled_by)
     return MaintenanceStatusResponse(
         enabled=state.enabled,
@@ -283,18 +274,20 @@ class AnnotationMismatchesResponse(BaseModel):
 
 async def _lint_observations(request: Request) -> list[ServiceLintObservation | None]:
     """Each non-builtin service's last lint observation, in service-name order; None where there is none."""
-    store: LintObservationStore = request.app.state.lint_observations
+    state = get_broker_state(request)
     names = sorted(
-        s.name for s in get_registry(request).all_services() if not s.builtin
+        s.name for s in state.service_registry.all_services() if not s.builtin
     )
-    return [await store.get(name) for name in names]
+    return [await state.lint_observations.get(name) for name in names]
 
 
 def _lint_service_statuses(
     request: Request, observations: list[ServiceLintObservation | None]
 ) -> list[LintServiceStatus]:
     names = sorted(
-        s.name for s in get_registry(request).all_services() if not s.builtin
+        s.name
+        for s in get_broker_state(request).service_registry.all_services()
+        if not s.builtin
     )
     return [
         LintServiceStatus(service=name, last_observed=obs.observed_at if obs else None)
@@ -328,7 +321,7 @@ async def get_annotation_mismatches(
     _principal: Annotated[Principal, Depends(require_admin)],
 ) -> AnnotationMismatchesResponse:
     observations = await _lint_observations(request)
-    store: LintObservationStore = request.app.state.lint_observations
+    store: LintObservationStore = get_broker_state(request).lint_observations
     return AnnotationMismatchesResponse(
         retention_seconds=store.retention_seconds,
         services=_lint_service_statuses(request, observations),
@@ -403,7 +396,7 @@ async def get_tool_mapping_drift(
     _principal: Annotated[Principal, Depends(require_admin)],
 ) -> ToolMappingDriftReport:
     observations = await _lint_observations(request)
-    store: LintObservationStore = request.app.state.lint_observations
+    store: LintObservationStore = get_broker_state(request).lint_observations
     return ToolMappingDriftReport(
         retention_seconds=store.retention_seconds,
         services=_lint_service_statuses(request, observations),
@@ -460,7 +453,7 @@ class CredmonStatusResponse(BaseModel):
 
 
 def _credmon_sync(request: Request) -> CredmonSyncService | None:
-    return getattr(request.app.state, "credmon_sync", None)
+    return get_broker_state(request).credmon_sync
 
 
 @router.get(
@@ -479,7 +472,7 @@ async def get_credmon_status(
     request: Request,
     _principal: Annotated[Principal, Depends(require_admin)],
 ) -> CredmonStatusResponse:
-    settings = request.app.state.settings
+    settings = get_broker_state(request).settings
     sync = _credmon_sync(request)
     if sync is None:
         return CredmonStatusResponse(
