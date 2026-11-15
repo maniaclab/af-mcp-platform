@@ -229,6 +229,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         # tables (lint_observations.py): shared, so every replica reports the
         # same.
         lint_observations = LintObservationStore(shared_state)
+        usage_store = await start_usage_store(settings, stack)
         mcp_aggregator = build_mcp_aggregator(
             settings,
             catalog=catalog,
@@ -238,6 +239,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             broker_token_issuer=broker_token_issuer,
             job_credentials=build_job_credential_guide(settings, targets),
             shared_state=shared_state,
+            usage_store=usage_store,
             lint_observations=lint_observations,
         )
         mcp_app = build_mcp_app(
@@ -248,7 +250,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             maintenance_mode_store=maintenance_mode_store,
         )
 
-        usage_store = await start_usage_store(settings, stack)
         # OTel aggregate metrics (otel_metrics.py): a no-op unless
         # OTEL_METRICS_ENABLED. Installed before the pipeline so the worker's
         # first record is counted; flushed after the pipeline drains, so the

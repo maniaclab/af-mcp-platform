@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
+    from af_mcp_broker.usage import UsageStore
 
 
 def make_broker_state(**overrides: Any) -> BrokerState:
@@ -78,11 +79,14 @@ def set_broker_state(app: Starlette, **changes: Any) -> None:
     app.state.broker = replace(app.state.broker, **changes)
 
 
-def aggregator_stores(shared_state: SharedState | None = None) -> dict[str, Any]:
-    """The stores ``build_aggregator`` requires, as keyword arguments: *shared_state* (or a fresh in-memory one) and the lint-observation store over it."""
+def aggregator_stores(
+    shared_state: SharedState | None = None, usage_store: UsageStore | None = None
+) -> dict[str, Any]:
+    """The stores ``build_aggregator`` requires, as keyword arguments: *shared_state*, *usage_store* (each a fresh in-memory one when omitted) and the lint-observation store over the shared state."""
     shared_state = shared_state or InMemorySharedState()
     return {
         "shared_state": shared_state,
+        "usage_store": usage_store or InMemoryUsageStore(),
         "lint_observations": LintObservationStore(shared_state),
     }
 

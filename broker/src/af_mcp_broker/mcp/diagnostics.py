@@ -31,7 +31,6 @@ from af_mcp_broker.service_status import (
     granting_groups_for,
     service_status,
 )
-from af_mcp_broker.usage import get_usage_store
 from af_mcp_broker.usage.summary import (
     UsageResponse,
     build_usage_summary,
@@ -50,6 +49,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.service_registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
+    from af_mcp_broker.usage import UsageStore
 
 # Broker-native diagnostic tools (issue #153), registered directly on the
 # aggregator's FastMCP instance -- never as a services.yaml entry -- for two
@@ -352,6 +352,7 @@ def register_diagnostic_tools(
     target_to_alias: dict[str, str],
     settings: Settings,
     shared_state: SharedState,
+    usage_store: UsageStore,
     job_credentials: JobCredentialGuide | None = None,
 ) -> None:
     """(Re)register the af_* diagnostic tools on *mcp*, bound to the given state.
@@ -505,10 +506,7 @@ def register_diagnostic_tools(
         service.
         """
         principal = await _require_principal()
-        # The process-wide store app.py's lifespan installed -- None outside
-        # the lifespan, which build_usage_summary degrades to an empty
-        # window (mirroring GET /v1/usage's own bare-router behavior).
-        return await build_usage_summary(get_usage_store(), principal.subject, days)
+        return await build_usage_summary(usage_store, principal.subject, days)
 
     @mcp.tool(
         name=LIST_MCP_SERVERS_TOOL_NAME,

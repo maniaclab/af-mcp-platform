@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
+    from af_mcp_broker.usage import UsageStore
 
 logger = structlog.get_logger(__name__)
 
@@ -1352,6 +1353,7 @@ def build_aggregator(
     credential_registry: CredentialRegistry,
     *,
     shared_state: SharedState,
+    usage_store: UsageStore,
     lint_observations: LintObservationStore,
     identity_providers: dict[str, CredentialProvider] | None = None,
     identity_provider_configs: dict[str, IdentityProviderConfig] | None = None,
@@ -1389,7 +1391,7 @@ def build_aggregator(
     keeping given it's a no-op for everything this docstring's ordering
     invariant actually cares about.
 
-    *shared_state* backs ``policy.rate_limits``; *lint_observations* is where
+    *shared_state* backs ``policy.rate_limits``; *usage_store* answers af_usage; *lint_observations* is where
     the tool-listing lint's findings are recorded. *identity_providers*/
     *identity_provider_configs*/*target_to_alias* default to empty:
     af_list_identities/af_list_mcp_servers then report nothing.
@@ -1431,6 +1433,7 @@ def build_aggregator(
         target_to_alias or {},
         settings,
         shared_state,
+        usage_store,
         job_credentials,
     )
     return mcp

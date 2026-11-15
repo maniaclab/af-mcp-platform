@@ -51,6 +51,7 @@ from af_mcp_broker.service_registry import (
     ServiceSpec,
 )
 from af_mcp_broker.shared_state import InMemorySharedState
+from af_mcp_broker.usage.store import InMemoryUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -1058,6 +1059,7 @@ def _aggregator_with_diagnostic_tools(
         {},
         settings,
         InMemorySharedState(),
+        InMemoryUsageStore(),
     )
     return mcp
 

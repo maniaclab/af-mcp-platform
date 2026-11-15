@@ -747,10 +747,9 @@ async def test_no_diagnostic_tool_response_contains_a_url(
 # ---------------------------------------------------------------------------
 # af_usage -- the caller's own usage summary through the MCP surface, the
 # same data GET /v1/usage serves (both are thin wrappers over
-# usage/summary.py's build_usage_summary). Seeded through the process-wide
-# usage store (init_usage_store), which is what the tool reads at call time
-# -- the aggregator harness runs in-process, so the module-level store the
-# app lifespan would install is visible to the tool closure here too.
+# usage/summary.py's build_usage_summary). Seeded through the usage store
+# handed to build_aggregator, which is also the process-wide store (as in
+# app.py's lifespan) so the metering pipeline's own records land in it.
 # ---------------------------------------------------------------------------
 
 
@@ -784,7 +783,11 @@ def _usage_record(**overrides: Any) -> AuditRecord:
 
 
 async def _call_af_usage(
-    settings: Any, principal_cache: Any, token: str, args: dict[str, Any]
+    settings: Any,
+    principal_cache: Any,
+    token: str,
+    args: dict[str, Any],
+    usage_store: UsageStore,
 ) -> Any:
     """Round-trip one af_usage call through a real aggregator (the same harness the other af_* tests use)."""
     mcp = build_aggregator(
@@ -792,7 +795,7 @@ async def _call_af_usage(
         settings,
         EntitlementPolicy(),
         CredentialRegistry(),
-        **aggregator_stores(),
+        **aggregator_stores(usage_store=usage_store),
     )
     async with (
         run_aggregator_async(
@@ -826,7 +829,7 @@ async def test_af_usage_returns_only_the_callers_usage(
         _usage_record(principal_sub="someone-else", result_tokens_est=7)
     )
 
-    result = await _call_af_usage(settings, principal_cache, token, {})
+    result = await _call_af_usage(settings, principal_cache, token, {}, usage_store)
 
     body = result.structured_content
     assert body["subject"] == "user-123"
@@ -870,12 +873,16 @@ async def test_af_usage_days_parameter(
         _usage_record(timestamp=time.time() - 10 * 86400, result_tokens_est=500)
     )
 
-    narrow = await _call_af_usage(settings, principal_cache, token, {"days": 7})
+    narrow = await _call_af_usage(
+        settings, principal_cache, token, {"days": 7}, usage_store
+    )
     assert narrow.structured_content["window_days"] == 7
     assert narrow.structured_content["totals"]["calls"] == 1
     assert narrow.structured_content["totals"]["result_tokens_est"] == 1000
 
-    wide = await _call_af_usage(settings, principal_cache, token, {"days": 30})
+    wide = await _call_af_usage(
+        settings, principal_cache, token, {"days": 30}, usage_store
+    )
     body = wide.structured_content
     # af_usage now meters itself (issue #240): the narrow call above shows up
     # here as one af-mcp call -- an accepted, deliberately visible side
@@ -885,24 +892,6 @@ async def test_af_usage_days_parameter(
     assert per_service["gateway_service"]["calls"] == 1
     assert body["totals"]["calls"] == 3
     assert per_service["rucio"]["result_tokens_est"] == 1500
-
-
-async def test_af_usage_without_installed_store_degrades_to_empty_window(
-    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
-) -> None:
-    """No process-wide store (outside the lifespan) means an empty window,
-    never a crash -- the same degrade GET /v1/usage applies."""
-    principal_cache, directory = static_principal_cache
-    directory.groups_by_subject["user-123"] = []
-    prime_jwks([sig_key.jwk])
-    token = sig_key.sign(make_claims())
-
-    result = await _call_af_usage(settings, principal_cache, token, {})
-
-    body = result.structured_content
-    assert body["totals"]["calls"] == 0
-    assert body["by_service"] == []
-    assert body["by_day"] == []
 
 
 async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(

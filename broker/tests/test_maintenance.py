@@ -259,13 +259,6 @@ async def test_disabled_maintenance_never_raises(make_principal: Callable[..., o
     await check_not_maintenance(principal, settings, store)  # must not raise
 
 
-async def test_no_store_configured_never_raises(make_principal: Callable[..., object]):
-    settings = Settings(admin_group="af-admins")
-    principal = make_principal(groups=["atlas"])
-
-    await check_not_maintenance(principal, settings, None)  # must not raise
-
-
 async def test_reason_none_produces_clean_detail_with_no_suffix(
     make_principal: Callable[..., object],
 ):

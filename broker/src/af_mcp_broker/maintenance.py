@@ -334,7 +334,7 @@ class CachingMaintenanceModeStore(MaintenanceModeStore):
 async def check_not_maintenance(
     principal: Principal,
     settings: Settings,
-    store: MaintenanceModeStore | None,
+    store: MaintenanceModeStore,
 ) -> None:
     """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
 
@@ -342,9 +342,6 @@ async def check_not_maintenance(
     /mcp (``mcp.middleware.maintenance_mw.AsgiMaintenanceMiddleware``) right
     after a Principal is resolved (JWT or PAT) -- one gate, two call sites, so both
     credential types and both surfaces are covered uniformly.
-    A None *store* (maintenance mode unconfigured -- unreachable in a
-    properly started app) never blocks anyone.
-
     ``state.reason`` is echoed verbatim to every blocked caller across both
     /v1 and /mcp -- treat it like a public status-page message; never put
     secrets or internal details in it.
@@ -360,8 +357,6 @@ async def check_not_maintenance(
     store outage lets non-admins straight through rather than blocking
     them.
     """
-    if store is None:
-        return
     # Admin check runs before store.get() as a fail-safe, not just an
     # optimization: if the store backend itself is unreachable (a Vault or
     # Postgres outage), an admin must still be able to get through to fix
@@ -381,7 +376,7 @@ async def check_not_maintenance(
 async def check_not_maintenance_or_fail_open(
     principal: Principal,
     settings: Settings,
-    store: MaintenanceModeStore | None,
+    store: MaintenanceModeStore,
 ) -> HTTPException | None:
     """Run ``check_not_maintenance``, converting its store-unavailability fail-open behavior into a return value instead of a raise.
 

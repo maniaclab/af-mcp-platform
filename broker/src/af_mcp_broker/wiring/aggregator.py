@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
+    from af_mcp_broker.usage import UsageStore
     from af_mcp_broker.wiring.credentials import CredentialProviders
     from af_mcp_broker.wiring.services import IdentityTargets, ServiceCatalog
 
@@ -49,6 +50,7 @@ def build_mcp_aggregator(
     broker_token_issuer: BrokerTokenIssuer | None,
     job_credentials: JobCredentialGuide | None,
     shared_state: SharedState,
+    usage_store: UsageStore,
     lint_observations: LintObservationStore,
 ) -> Aggregator:
     """Build the aggregator from the loaded registry, policy, credential registry, providers and stores.
@@ -64,6 +66,7 @@ def build_mcp_aggregator(
         catalog.entitlement_policy,
         providers.registry,
         shared_state=shared_state,
+        usage_store=usage_store,
         lint_observations=lint_observations,
         identity_providers=providers.providers,
         identity_provider_configs=providers.configs,

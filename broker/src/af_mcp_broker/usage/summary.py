@@ -74,18 +74,12 @@ class UsageResponse(BaseModel):
 
 
 async def build_usage_summary(
-    store: UsageStore | None,
+    store: UsageStore,
     subject: str,
     days: int,
 ) -> UsageResponse:
-    """Return *subject*'s usage over the trailing *days*-day window.
-
-    A None *store* (outside the lifespan) degrades to an empty window
-    rather than failing a self-service view.
-    """
-    aggregates: list[UsageAggregate] = (
-        await store.query(subject, days) if store is not None else []
-    )
+    """Return *subject*'s usage over the trailing *days*-day window."""
+    aggregates: list[UsageAggregate] = await store.query(subject, days)
 
     totals = UsageTotals(
         calls=sum(a.calls for a in aggregates),
