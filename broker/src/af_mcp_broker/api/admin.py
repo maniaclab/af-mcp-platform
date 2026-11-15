@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker import metrics
-from af_mcp_broker.api.permissions import _get_registry
+from af_mcp_broker.api.app_state import get_registry
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.identity import require_admin
 from af_mcp_broker.logging import current_correlation_id
@@ -285,7 +285,7 @@ async def _lint_observations(request: Request) -> list[ServiceLintObservation | 
     """Each non-builtin service's last lint observation, in service-name order; None where there is none."""
     store: LintObservationStore = request.app.state.lint_observations
     names = sorted(
-        s.name for s in _get_registry(request).all_services() if not s.builtin
+        s.name for s in get_registry(request).all_services() if not s.builtin
     )
     return [await store.get(name) for name in names]
 
@@ -294,7 +294,7 @@ def _lint_service_statuses(
     request: Request, observations: list[ServiceLintObservation | None]
 ) -> list[LintServiceStatus]:
     names = sorted(
-        s.name for s in _get_registry(request).all_services() if not s.builtin
+        s.name for s in get_registry(request).all_services() if not s.builtin
     )
     return [
         LintServiceStatus(service=name, last_observed=obs.observed_at if obs else None)

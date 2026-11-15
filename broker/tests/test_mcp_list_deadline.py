@@ -18,7 +18,6 @@ from conftest import (
 )
 from fastmcp import Client, FastMCP
 
-from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.backend_errors import ListDeadlineExceededError
 from af_mcp_broker.config import Settings
@@ -30,6 +29,7 @@ from af_mcp_broker.credentials import (
 from af_mcp_broker.mcp import aggregator as aggregator_module
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_status import service_status
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -288,7 +288,7 @@ async def test_deadline_miss_shows_unavailable_service_wide_in_catalog(
 
     # Every caller sees the service-wide record, not only the one whose
     # listing missed the deadline.
-    status, _detail, _correlation_id, link_state = await _service_status(
+    status, _detail, _correlation_id, link_state = await service_status(
         spec,
         make_principal(subject="someone-else"),
         set(),

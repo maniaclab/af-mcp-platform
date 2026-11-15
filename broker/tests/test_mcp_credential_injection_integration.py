@@ -21,7 +21,6 @@ from fastmcp.server.dependencies import get_http_headers
 from pydantic import SecretStr
 from starlette.responses import JSONResponse
 
-from af_mcp_broker.api.permissions import _service_status
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
     CredentialKind,
@@ -38,6 +37,7 @@ from af_mcp_broker.credentials.oauth21 import (
 )
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
+from af_mcp_broker.service_status import service_status
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -537,7 +537,7 @@ async def _catalog_view(
     assert spec is not None
     credentials = CredentialRegistry()
     credentials.register("toy", provider)
-    status, _detail, _correlation_id, link_state = await _service_status(
+    status, _detail, _correlation_id, link_state = await service_status(
         spec, principal, {"read_data"}, credentials, service_registry
     )
     return status, link_state

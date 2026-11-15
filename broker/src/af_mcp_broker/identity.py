@@ -226,7 +226,7 @@ class TokenAudienceError(IdentityError):
     carrying a stable ``error`` discriminator (RFC 6750's
     ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
     when contacting an administrator -- the same pattern
-    ``api/permissions.py``'s ``_service_status`` already uses for
+    ``service_status.py``'s ``service_status`` already uses for
     ``permission_required``/``misconfigured``.
     """
 

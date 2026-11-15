@@ -9,15 +9,12 @@ from fastmcp.server.dependencies import get_context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
-from af_mcp_broker.api.permissions import (
-    LinkState,
-    ServiceStatus,
-    _granting_groups_for,
-    _service_status,
-)
-from af_mcp_broker.api.rate_limits import RateLimitStatus, rate_limit_statuses
 from af_mcp_broker.authorization import get_action_type, get_principal_permissions
-from af_mcp_broker.authorization.rate_limit import read_rate_limit_usage
+from af_mcp_broker.authorization.rate_limit import (
+    RateLimitStatus,
+    rate_limit_statuses,
+    read_rate_limit_usage,
+)
 from af_mcp_broker.service_registry import (
     LINK_IDENTITY_TOOL_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -27,6 +24,12 @@ from af_mcp_broker.service_registry import (
     USAGE_TOOL_NAME,
     WHOAMI_TOOL_NAME,
     identity_provider_url,
+)
+from af_mcp_broker.service_status import (
+    LinkState,
+    ServiceStatus,
+    granting_groups_for,
+    service_status,
 )
 from af_mcp_broker.usage import get_usage_store
 from af_mcp_broker.usage.summary import (
@@ -71,8 +74,8 @@ if TYPE_CHECKING:
 # builtin spec gets no provider (aggregator.py's _register_services skips
 # it), so dispatch stays local to the tools registered below.
 #
-# Reuses rather than reimplements: af_list_mcp_servers calls api/permissions.py's
-# _service_status() (issue #123's per-service status derivation, same
+# Reuses rather than reimplements: af_list_mcp_servers calls service_status.py's
+# service_status() (issue #123's per-service status derivation, same
 # "available"/"link_required"/"permission_required"/"unavailable"/
 # "misconfigured" taxonomy and canned sentences /v1/catalog already returns),
 # and both af_list_identities/af_list_mcp_servers read the identity<->service
@@ -545,10 +548,10 @@ def register_diagnostic_tools(
         caps = get_principal_permissions(principal, policy)
         servers: list[DiagnosticMcpServer] = []
         for spec in registry.all_services():
-            status, status_detail, _correlation_id, link_state = await _service_status(
+            status, status_detail, _correlation_id, link_state = await service_status(
                 spec, principal, caps, credential_registry, registry
             )
-            granting_groups = _granting_groups_for(spec, status, policy)
+            granting_groups = granting_groups_for(spec, status, policy)
             servers.append(
                 DiagnosticMcpServer(
                     name=spec.name,

@@ -6,79 +6,32 @@ import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.app_state import (
+    get_credential_registry,
+    get_policy,
+    get_registry,
+    get_target_to_alias,
+)
 from af_mcp_broker.authorization import (
     PERMISSIONS,
     EntitlementPolicy,
     check_entitlement,
     get_action_type,
     get_principal_permissions,
-    groups_granting_any,
 )
-from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
-from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.principal import Principal
-from af_mcp_broker.service_registry import (
-    LIST_IDENTITIES_TOOL_NAME,
-    WHOAMI_TOOL_NAME,
-    ServiceRegistry,
+from af_mcp_broker.service_status import (
+    LinkState,
+    ServiceStatus,
+    granting_groups_for,
+    service_status,
 )
 
 if TYPE_CHECKING:
-    from af_mcp_broker.service_registry import ServiceSpec
+    from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 logger = structlog.get_logger(__name__)
-
-# Per-service availability status for /v1/catalog (issue #123). A short,
-# canned sentence per status -- never an upstream error body or policy/group
-# detail (see _service_status below).
-ServiceStatus = Literal[
-    "available",
-    "link_required",
-    "permission_required",
-    "unavailable",
-    "misconfigured",
-]
-
-# Why a "link_required" service needs a link: the caller never linked the
-# identity ("not_linked"), or linked it and the backend rejected the stored
-# credential ("rejected"). None for every other status.
-LinkState = Literal["not_linked", "rejected"]
-
-_STATUS_DETAILS: dict[ServiceStatus, str] = {
-    "available": "Available.",
-    "link_required": (
-        "Link your identity to use this service. Call the "
-        f"{BUILTIN_SERVICE_NAME} service's `{LIST_IDENTITIES_TOOL_NAME}` "
-        "method to see which identity provider it needs."
-    ),
-    "permission_required": (
-        "Your account doesn't have the access this service requires. "
-        f"Contact the AF admins. Call the {BUILTIN_SERVICE_NAME} service's "
-        f"`{WHOAMI_TOOL_NAME}` method to see your current permissions."
-    ),
-    "unavailable": "Temporarily unavailable. Try again shortly.",
-    "misconfigured": "This service is misconfigured. Contact the AF admins.",
-}
-
-# A stored credential that was itself rejected (a recorded "unauthorized"
-# listing failure -- see aggregator.py's _classify_list_failure) still maps
-# to "link_required" (re-linking is the fix, same as never having linked at
-# all), but the sentence should say "re-link", not "link for the first time".
-_RELINK_DETAIL = (
-    "Your linked credential was rejected. Re-link your identity. Call the "
-    f"{BUILTIN_SERVICE_NAME} service's `{LIST_IDENTITIES_TOOL_NAME}` method "
-    "to see which identity provider to re-link."
-)
-
-# "misconfigured" for a service whose backend advertises tools but none the
-# broker can route (see _service_status) -- distinct from the generic
-# sentence so the catalog says why the service shows no tools.
-_NO_ROUTABLE_TOOLS_DETAIL = (
-    "No routable tools: the service advertises tools the gateway cannot "
-    "route ({advertised} advertised, 0 routable). Contact the AF admins."
-)
 
 router = APIRouter(tags=["permissions"])
 
@@ -177,7 +130,7 @@ class CatalogServer(BaseModel):
     auth_type: str
     action_type: Literal["read", "state_change"]
     credential_provider: str | None
-    # Per-caller availability (issue #123) -- see _service_status. Always
+    # Per-caller availability (issue #123) -- see service_status. Always
     # populated; status_detail is a short, human, internals-free sentence.
     status: ServiceStatus
     status_detail: str
@@ -225,28 +178,6 @@ class CatalogResponse(BaseModel):
 # Helpers — all decisions run through the authorization/ policy engine, which
 # is the schema shipped in policy.yaml.
 # ---------------------------------------------------------------------------
-
-
-def _empty_policy() -> EntitlementPolicy:
-    return EntitlementPolicy()
-
-
-def _get_policy(request: Request) -> EntitlementPolicy:
-    return getattr(request.app.state, "entitlement_policy", None) or _empty_policy()
-
-
-def _get_registry(request: Request) -> ServiceRegistry:
-    return getattr(request.app.state, "service_registry", None) or ServiceRegistry()
-
-
-def _get_target_to_alias(request: Request) -> dict[str, str]:
-    return getattr(request.app.state, "target_to_alias", None) or {}
-
-
-def _get_credential_registry(request: Request) -> CredentialRegistry:
-    return (
-        getattr(request.app.state, "credential_registry", None) or CredentialRegistry()
-    )
 
 
 def _action_type_for_permission(
@@ -337,145 +268,6 @@ def _grants_for(
     return grants
 
 
-def _holds_any_required_permission(spec: ServiceSpec, caps: set[str]) -> bool:
-    """Return whether *spec* has no permission gate, or *caps* holds one it can require.
-
-    True if *spec* has no permission gate at all (nothing declared -- an
-    omitted, "__none__", or degenerate empty-dict required_permission), or
-    the caller holds at least one of the permissions it can require.
-
-    Shared between _service_status (GET /v1/catalog's per-service rollup) and
-    catalog_tools.get_service_tools' pre-fetch gate (GET /v1/catalog/{service}
-    /tools) -- both need the same "is at least one tool possibly reachable"
-    check before deciding whether it's worth fetching/filtering a live tool
-    listing at all.
-    """
-    required = spec.all_required_permissions()
-    return not required or bool(required & caps)
-
-
-def _granting_groups_for(
-    spec: ServiceSpec, status: ServiceStatus, policy: EntitlementPolicy
-) -> list[str]:
-    """Return the groups granting a permission *spec* requires: empty unless *status* is "permission_required"."""
-    if status != "permission_required":
-        return []
-    return groups_granting_any(policy, spec.all_required_permissions())
-
-
-async def _service_status(
-    spec: ServiceSpec,
-    principal: Principal,
-    caps: set[str],
-    credential_registry: CredentialRegistry,
-    registry: ServiceRegistry,
-) -> tuple[ServiceStatus, str, str | None, LinkState | None]:
-    """Derive one service's per-caller availability status for /v1/catalog (issue #123) from data the broker already has -- never an upstream probe of the service itself, an upstream error body, or a policy internal (see _STATUS_DETAILS's canned sentences). The groups that would grant a missing permission travel separately, as CatalogServer.granting_groups.
-
-    Precedence mirrors the real enforcement order (AuthorizationMiddleware
-    checks entitlement before a client_factory ever attempts to mint a
-    credential -- see aggregator.py's _bearer_factory): a missing permission
-    is reported before a credential problem, since the credential is moot
-    until the permission gate is fixed. Returns
-    ``(status, status_detail, correlation_id, link_state)`` --
-    correlation_id is set only for the two admin-actionable statuses and
-    link_state only for "link_required".
-
-    For a dict-form required_permission a service can require several
-    different permissions across its tools -- "available" here means the
-    caller holds at least one of them (some tool is callable), matching
-    EntitlementMiddleware's per-tool tools/list filtering rather than an
-    all-or-nothing gate on a single value.
-    """
-    if not _holds_any_required_permission(spec, caps):
-        correlation_id = current_correlation_id()
-        logger.info(
-            "catalog.service_status_flagged",
-            subject=principal.subject,
-            target=spec.name,
-            status="permission_required",
-            request_id=correlation_id,
-        )
-        return (
-            "permission_required",
-            _STATUS_DETAILS["permission_required"],
-            correlation_id,
-            None,
-        )
-
-    # A backend whose every advertised tool lost the service's prefix (a
-    # rename under apply_namespace: false -- ToolRouting, recorded by
-    # aggregator.py's _ObservableProxyProvider) leaves callers with zero
-    # tools however linked they are: a platform misconfiguration, checked
-    # before the credential like the missing-provider case below.
-    routing = registry.tool_routing(spec.name)
-    if routing is not None and routing.advertised > 0 and routing.routable == 0:
-        correlation_id = current_correlation_id()
-        logger.info(
-            "catalog.service_status_flagged",
-            subject=principal.subject,
-            target=spec.name,
-            status="misconfigured",
-            request_id=correlation_id,
-        )
-        return (
-            "misconfigured",
-            _NO_ROUTABLE_TOOLS_DETAIL.format(advertised=routing.advertised),
-            correlation_id,
-            None,
-        )
-
-    if spec.auth_type == "none":
-        # No permission gate (or one just satisfied) and no user credential
-        # needed at all -- nothing left to block on except a backend that is
-        # down. Only the service-wide "unavailable" record applies: the
-        # caller-specific reasons are about a per-user credential this
-        # service has none of.
-        if registry.recent_list_failure(spec.name, principal.subject) == "unavailable":
-            return "unavailable", _STATUS_DETAILS["unavailable"], None, None
-        return "available", _STATUS_DETAILS["available"], None, None
-
-    try:
-        provider = await credential_registry.resolve(spec.name)
-    except KeyError:
-        # auth_type is "bearer"/"x509" (a credential IS expected) but no
-        # provider resolves for this target -- a platform misconfiguration,
-        # not something the caller can fix themselves.
-        correlation_id = current_correlation_id()
-        logger.info(
-            "catalog.service_status_flagged",
-            subject=principal.subject,
-            target=spec.name,
-            status="misconfigured",
-            request_id=correlation_id,
-        )
-        return "misconfigured", _STATUS_DETAILS["misconfigured"], correlation_id, None
-
-    if not await provider.is_linked(principal):
-        if await provider.is_rejected(principal):
-            return "link_required", _RELINK_DETAIL, None, "rejected"
-        return "link_required", _STATUS_DETAILS["link_required"], None, "not_linked"
-
-    # Permission satisfied, provider resolves, and linked -- the live checks
-    # above all say "available". Factor in a recent classified tools/list
-    # failure (ServiceRegistry.record_list_failure, written by aggregator.py's
-    # _ObservableProxyProvider) as a best-effort refinement, without an extra
-    # live probe of the service itself. "not_linked" can't appear here (the
-    # live is_linked() check above already accounts for it); "unauthorized"
-    # means the stored credential itself was rejected, so re-linking (not
-    # waiting it out) is the fix. A provider that tracks rejection itself
-    # already answered above through is_rejected(): its credential may have
-    # been refreshed or re-linked since the 401 behind the record, so the
-    # record doesn't count for it.
-    failure = registry.recent_list_failure(spec.name, principal.subject)
-    if failure == "unavailable":
-        return "unavailable", _STATUS_DETAILS["unavailable"], None, None
-    if failure == "unauthorized" and not provider.tracks_rejection:
-        return "link_required", _RELINK_DETAIL, None, "rejected"
-
-    return "available", _STATUS_DETAILS["available"], None, None
-
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -490,8 +282,8 @@ async def get_permissions(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> PermissionsResponse:
-    policy = _get_policy(request)
-    registry = _get_registry(request)
+    policy = get_policy(request)
+    registry = get_registry(request)
     return PermissionsResponse(
         subject=principal.subject,
         groups=principal.groups,
@@ -508,7 +300,7 @@ async def get_entitlements(
     request: Request,
     _principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> EntitlementsResponse:
-    policy = _get_policy(request)
+    policy = get_policy(request)
     return EntitlementsResponse(
         group_permissions=policy.group_permissions,
         permissions=_permission_catalog(policy),
@@ -526,8 +318,8 @@ async def authorize(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
     """Derive the required permission server-side from the service registry (``body.target``/``body.action`` -> ``ServiceRegistry.required_permission_for``) rather than trusting a permission supplied by the caller -- a client used to be able to claim any permission for any target and have it evaluated at face value (see issue #60)."""
-    policy = _get_policy(request)
-    registry = _get_registry(request)
+    policy = get_policy(request)
+    registry = get_registry(request)
     service = registry.get(body.target)
     if service is None:
         reason = f"target '{body.target}' is not a registered service"
@@ -573,11 +365,11 @@ async def get_catalog(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> CatalogResponse:
-    policy = _get_policy(request)
-    registry = _get_registry(request)
-    credential_registry = _get_credential_registry(request)
+    policy = get_policy(request)
+    registry = get_registry(request)
+    credential_registry = get_credential_registry(request)
     caps = get_principal_permissions(principal, policy)
-    target_to_alias = _get_target_to_alias(request)
+    target_to_alias = get_target_to_alias(request)
 
     servers: list[CatalogServer] = []
     for spec in registry.all_services():
@@ -585,10 +377,10 @@ async def get_catalog(
         # currently use -- status/status_detail say why instead of a silent
         # omission (issue #123: a hidden, permission-gated service left the
         # portal unable to explain an empty tools/list).
-        status, status_detail, correlation_id, link_state = await _service_status(
+        status, status_detail, correlation_id, link_state = await service_status(
             spec, principal, caps, credential_registry, registry
         )
-        granting_groups = _granting_groups_for(spec, status, policy)
+        granting_groups = granting_groups_for(spec, status, policy)
         servers.append(
             CatalogServer(
                 name=spec.name,

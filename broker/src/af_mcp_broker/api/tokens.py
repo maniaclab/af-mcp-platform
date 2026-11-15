@@ -334,7 +334,7 @@ class TokenRegistry:
         return record
 
 
-def _registry(request: Request) -> TokenRegistry:
+def get_token_registry(request: Request) -> TokenRegistry:
     registry = getattr(request.app.state, "token_registry", None)
     if registry is None:
         raise HTTPException(
@@ -345,7 +345,7 @@ def _registry(request: Request) -> TokenRegistry:
 
 
 def _get_policy(request: Request) -> EntitlementPolicy:
-    """Return the app's entitlement policy, falling back to an empty one -- same fallback ``api/permissions.py``'s ``_get_policy`` uses. An unconfigured policy resolves to "the caller holds nothing" rather than a 503, since the only consumer here (mint-time permission-grant validation) degrades safely rather than needing this route unavailable."""
+    """Return the app's entitlement policy, falling back to an empty one -- same fallback ``api/app_state.py``'s ``get_policy`` uses. An unconfigured policy resolves to "the caller holds nothing" rather than a 503, since the only consumer here (mint-time permission-grant validation) degrades safely rather than needing this route unavailable."""
     return getattr(request.app.state, "entitlement_policy", None) or EntitlementPolicy()
 
 
@@ -353,7 +353,7 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
-def _to_summary(record: TokenRecord) -> TokenSummary:
+def to_summary(record: TokenRecord) -> TokenSummary:
     return TokenSummary(
         lookup_id=record.lookup_id,
         name=record.name,
@@ -375,7 +375,7 @@ def _to_summary(record: TokenRecord) -> TokenSummary:
 # ---------------------------------------------------------------------------
 
 
-async def _audit(
+async def audit_token_action(
     principal: Principal, action: str, lookup_id: str, args_summary: str
 ) -> None:
     await write_audit(
@@ -418,7 +418,7 @@ async def mint_token(
     a PAT -- see this module's docstring for why a PAT must never be able to
     authenticate here.
     """
-    registry = _registry(request)
+    registry = get_token_registry(request)
     try:
         await registry.check_mint_rate_limit(principal.subject)
     except PatMintRateLimitError as exc:
@@ -494,7 +494,7 @@ async def mint_token(
     await registry.record_mint(principal.subject)
 
     # Log lookup_id-only — never the token itself.
-    await _audit(
+    await audit_token_action(
         principal,
         "token.minted",
         lookup_id,
@@ -532,9 +532,9 @@ async def list_tokens(
     rather than disappearing, so the portal can show a revoked/active/expired
     status.
     """
-    registry = _registry(request)
+    registry = get_token_registry(request)
     rows = await registry.list_for_principal(principal.subject)
-    return [_to_summary(r) for r in rows]
+    return [to_summary(r) for r in rows]
 
 
 @router.delete(
@@ -547,7 +547,7 @@ async def revoke_token(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> RevokeTokenResponse:
-    registry = _registry(request)
+    registry = get_token_registry(request)
 
     # owner_principal_id() distinguishes "unknown token" (404) from "exists
     # but belongs to someone else" (403) without a principal-scoped lookup
@@ -568,7 +568,7 @@ async def revoke_token(
             status_code=status.HTTP_404_NOT_FOUND, detail="Unknown token"
         )
 
-    await _audit(
+    await audit_token_action(
         principal, "token.revoked", lookup_id, args_summary=f"lookup_id={lookup_id}"
     )
 
@@ -592,7 +592,7 @@ async def delete_token_record(
     first, so a single mis-click can never both disable and erase a
     credential.
     """
-    registry = _registry(request)
+    registry = get_token_registry(request)
 
     owner_principal_id = await registry.owner_principal_id(lookup_id)
     if owner_principal_id is None:
@@ -619,7 +619,7 @@ async def delete_token_record(
 
     deleted = await registry.delete_inactive(principal.subject, frozenset({lookup_id}))
     if deleted:
-        await _audit(
+        await audit_token_action(
             principal,
             "token.deleted",
             lookup_id,
@@ -648,11 +648,11 @@ async def clear_inactive_tokens(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="inactive=true is required",
         )
-    registry = _registry(request)
+    registry = get_token_registry(request)
 
     deleted = await registry.delete_inactive(principal.subject)
     for lookup_id in deleted:
-        await _audit(
+        await audit_token_action(
             principal,
             "token.deleted",
             lookup_id,

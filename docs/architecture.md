@@ -749,7 +749,7 @@ remain the canonical authorization/credential logic either way.
 ### Catalog status and listing failures
 
 `GET /v1/catalog` (and `af_list_mcp_servers`) report a per-caller `status`
-for each service, derived by `_service_status` (`api/permissions.py`) from
+for each service, derived by `service_status` (`service_status.py`) from
 data the broker already holds: the caller's permissions, whether their
 credential provider `is_linked()`, and the most recent classified
 `tools/list` failure the aggregator observed
@@ -770,7 +770,7 @@ status it can change:
 backend refused the credential. An `oauth21` credential that a backend 401
 marked rejected (`rejected_at`, see
 [Rejected `oauth21-direct` tokens](auth.md#rejected-oauth21-direct-tokens))
-also fails `is_linked()`, so `_service_status` asks
+also fails `is_linked()`, so `service_status` asks
 `provider.is_rejected()` to report it as `rejected` rather than `not_linked`.
 Because that provider refreshes or rejects the credential itself
 (`tracks_rejection`), its stored state alone decides: the caller's

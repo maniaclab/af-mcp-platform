@@ -17,11 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.types import ToolAnnotations  # noqa: TC002
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.permissions import (
-    _get_credential_registry,
-    _get_policy,
-    _get_registry,
-    _holds_any_required_permission,
+from af_mcp_broker.api.app_state import (
+    get_credential_registry,
+    get_policy,
+    get_registry,
 )
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
@@ -37,6 +36,7 @@ from af_mcp_broker.mcp.aggregator import (
     resolve_list_time_credential,
 )
 from af_mcp_broker.principal import Principal
+from af_mcp_broker.service_status import holds_any_required_permission
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
@@ -246,13 +246,13 @@ async def get_service_tools(
     so what the portal shows always matches what a tools/list through /mcp
     would return for this caller.
     """
-    registry = _get_registry(request)
+    registry = get_registry(request)
     spec = registry.get(service)
     if spec is None:
         raise HTTPException(
             status_code=404, detail=f"service '{service}' is not registered"
         )
-    policy = _get_policy(request)
+    policy = get_policy(request)
     caps = get_principal_permissions(principal, policy)
 
     # Same pre-fetch gate /v1/catalog's status derivation applies (issue #60,
@@ -260,7 +260,7 @@ async def get_service_tools(
     # service could possibly require, no tool of it could be visible either
     # -- skip the fetch entirely rather than probing the service (or the
     # cache) just to filter everything back out.
-    if not _holds_any_required_permission(spec, caps):
+    if not holds_any_required_permission(spec, caps):
         return _respond(spec, "permission_required", [], policy, registry, caps)
 
     if spec.builtin:
@@ -297,7 +297,7 @@ async def get_service_tools(
     deadline = asyncio.timeout(settings.mcp_list_timeout_seconds)
     try:
         async with deadline:
-            credential_registry = _get_credential_registry(request)
+            credential_registry = get_credential_registry(request)
             broker_token_issuer = getattr(
                 request.app.state, "broker_token_issuer", None
             )

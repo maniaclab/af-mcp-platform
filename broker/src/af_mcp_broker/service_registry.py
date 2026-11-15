@@ -25,10 +25,10 @@ if TYPE_CHECKING:
 # ServiceRegistry.register() below.
 #
 # These names live here rather than in mcp/diagnostics.py itself so that
-# api/permissions.py (which names them in a status_detail sentence -- see
-# _STATUS_DETAILS) and mcp/aggregator.py (which names them in the not-linked
+# service_status.py (which names them in a status_detail sentence -- see
+# STATUS_DETAILS) and mcp/aggregator.py (which names them in the not-linked
 # ToolError text) can import them without importing mcp/diagnostics.py
-# itself, which in turn imports api/permissions.py's _service_status -- that
+# itself, which in turn imports service_status.py's service_status -- that
 # would be a straight import cycle.
 # Elwood v5 / Shannon trust tiers, as defined in docs/architecture.md's
 # "Trust tiers" section: user-tier acts only with per-user credentials;
@@ -259,7 +259,7 @@ class ServiceSpec:
         permission a group needs to grant). Used where the exact tool being
         called doesn't matter: the "your access" grants list
         (api/permissions.py's _grants_for), a service's coarse availability
-        status (_service_status), and app.py's startup check that every
+        status (service_status.py's service_status), and app.py's startup check that every
         declared permission is reachable by at least one group.
         """
         rp = self.required_permission
@@ -322,7 +322,7 @@ def _builtin_service_spec(name: str = BUILTIN_SERVICE_NAME) -> ServiceSpec:
         # exactly the bootstrap methods a caller with zero permissions needs.
         required_permission="__none__",
         # No per-user credential concept at all -- which also makes
-        # api/permissions.py's _service_status report it "available"
+        # service_status.py's service_status report it "available"
         # unconditionally (it is the thing serving the status).
         auth_type="none",
         description=(
@@ -413,8 +413,8 @@ class ToolRouting:
     provider's own ``_get_tool`` short-circuit) matches its tools on
     ``<prefix>_``, which a namespaced service's tools always carry but a
     self-prefixed backend's only carry until it renames them. Lets drift
-    (EntitlementMiddleware), service status (api/permissions.py's
-    ``_service_status``) and metrics attribute those tools to their service,
+    (EntitlementMiddleware), service status (service_status.py's
+    ``service_status``) and metrics attribute those tools to their service,
     which no prefix match can.
     """
 

@@ -14,6 +14,7 @@ import math
 from typing import TYPE_CHECKING
 
 import structlog
+from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.shared_state import SharedStateUnavailableError
@@ -106,3 +107,45 @@ async def read_rate_limit_usage(
     except SharedStateUnavailableError as exc:
         logger.warning("rate_limits.shared_state_unavailable", error=str(exc))
         return None
+
+
+class RateLimitStatus(BaseModel):
+    """One configured rule and the caller's usage of it.
+
+    A rule's selector is *action_type* and/or *tool* (an fnmatch glob over the
+    wire tool name); a call is covered when every selector the rule sets
+    matches. *used* and *resets_in_seconds* are ``None`` when usage could not
+    be read; with a readable store, *used* is 0 and *resets_in_seconds*
+    ``None`` while the caller has no open window.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    action_type: str | None
+    tool: str | None
+    limit: int
+    window_seconds: int
+    # Calls counted in the open window, which includes calls the limiter
+    # refused, so it can exceed *limit*.
+    used: int | None
+    # Whole seconds (rounded up, as ``Retry-After`` is) until the window
+    # closes and the count starts over.
+    resets_in_seconds: int | None
+
+
+def rate_limit_statuses(
+    rules: list[RateLimitRule], usage: list[WindowCount | None] | None
+) -> list[RateLimitStatus]:
+    """Pair *rules* with *usage* as ``read_rate_limit_usage`` returns it (``None`` meaning usage unknown)."""
+    windows = usage if usage is not None else [None] * len(rules)
+    return [
+        RateLimitStatus(
+            action_type=rule.action_type,
+            tool=rule.tool,
+            limit=rule.limit,
+            window_seconds=rule.window_seconds,
+            used=None if usage is None else (window.count if window else 0),
+            resets_in_seconds=math.ceil(window.ttl_seconds) if window else None,
+        )
+        for rule, window in zip(rules, windows, strict=True)
+    ]

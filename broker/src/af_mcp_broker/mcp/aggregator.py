@@ -41,7 +41,6 @@ from mcp.types import Tool as McpTool
 from starlette.middleware import Middleware
 
 from af_mcp_broker import metrics
-from af_mcp_broker.api.permissions import _RELINK_DETAIL
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.backend_errors import (
     BackendInvalidResponseError,
@@ -68,6 +67,7 @@ from af_mcp_broker.service_registry import (
     identity_provider_url,
     namespaced_tool_name,
 )
+from af_mcp_broker.service_status import RELINK_DETAIL
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Sequence
@@ -595,8 +595,8 @@ async def resolve_list_time_credential(
       linked caller's mint failed for an operational reason.
 
     Callers must gate on holding at least one of the service's required
-    permissions first (``_might_be_entitled`` here; ``api/permissions.py``'s
-    ``_holds_any_required_permission`` for ``api/catalog_tools.py``) -- a
+    permissions first (``_might_be_entitled`` here; ``service_status.py``'s
+    ``holds_any_required_permission`` for ``api/catalog_tools.py``) -- a
     caller who could never pass it shouldn't trigger a mint attempt at all.
     """
     if spec.auth_type == "none":
@@ -812,7 +812,7 @@ def _not_linked_error(
 
     *rejected* is the provider's ``is_rejected()``: the caller did link, and a
     backend rejected the stored credential, so the message is the catalog's
-    re-link sentence (``_RELINK_DETAIL``) plus the same link and hint.
+    re-link sentence (``RELINK_DETAIL``) plus the same link and hint.
     """
     url = _identity_link_url(settings, alias)
     if alias is None:
@@ -821,7 +821,7 @@ def _not_linked_error(
         link_hint = f'`{LINK_IDENTITY_TOOL_NAME}` (provider="{alias}")'
     if rejected:
         return ToolError(
-            f"{_RELINK_DETAIL} Visit {url} to re-link it, or call {link_hint} "
+            f"{RELINK_DETAIL} Visit {url} to re-link it, or call {link_hint} "
             "to get this link."
         )
     return ToolError(
