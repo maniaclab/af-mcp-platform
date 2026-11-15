@@ -2,15 +2,39 @@ from __future__ import annotations
 
 import io
 import json
+import logging
+import sys
 import threading
+from datetime import datetime
+
+import pytest
+import structlog
 
 from af_mcp_broker.audit import AuditRecord, write_audit
-from af_mcp_broker.audit.logger import init_audit_logger
+from af_mcp_broker.logging import (
+    AUDIT_LOGGER_NAME,
+    AuditFileHandler,
+    configure_logging,
+)
 
 
-async def test_write_audit_emits_json_line() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+def _record(**overrides: object) -> AuditRecord:
+    fields: dict[str, object] = {
+        "principal_sub": "sub-abc",
+        "principal_uid": 1000,
+        "permission": "submit_jobs",
+        "target": "panda",
+        "action": "submit_task",
+        "action_type": "state_change",
+        "args_summary": "task=...",
+        "timestamp": 1234.5,
+        "request_id": "req-1",
+    }
+    fields.update(overrides)
+    return AuditRecord(**fields)  # type: ignore[arg-type]
+
+
+async def test_write_audit_emits_json_line(audit_buffer) -> None:
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -25,7 +49,7 @@ async def test_write_audit_emits_json_line() -> None:
     )
     await write_audit(record)
 
-    out = buffer.getvalue().strip()
+    out = audit_buffer.getvalue().strip()
     assert out, "expected an audit line to be written to the configured output"
     line = json.loads(out)
     assert line["event"] == "audit"
@@ -38,13 +62,11 @@ async def test_write_audit_emits_json_line() -> None:
     assert line["error"] is None
 
 
-async def test_write_audit_metering_fields_default_none() -> None:
+async def test_write_audit_metering_fields_default_none(audit_buffer) -> None:
     """The per-call metering fields (duration_ms, result_bytes,
     result_tokens_est) must default to None so pre-existing call sites (and
     denied/unmapped paths, where nothing executed) still serialize -- None,
     not 0, distinguishes "not measured" from "measured as zero"."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -59,15 +81,13 @@ async def test_write_audit_metering_fields_default_none() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["duration_ms"] is None
     assert line["result_bytes"] is None
     assert line["result_tokens_est"] is None
 
 
-async def test_write_audit_metering_fields_serialize_when_set() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_write_audit_metering_fields_serialize_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -85,18 +105,16 @@ async def test_write_audit_metering_fields_serialize_when_set() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["duration_ms"] == 123.456
     assert line["result_bytes"] == 2048
     assert line["result_tokens_est"] == 512
 
 
-async def test_write_audit_token_id_defaults_none() -> None:
+async def test_write_audit_token_id_defaults_none(audit_buffer) -> None:
     """token_id (issue #247) must default to None so every pre-existing call
     site -- and every session-JWT call, which has no distinct long-lived
     token to attribute -- still serializes, with an explicit null."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -111,13 +129,11 @@ async def test_write_audit_token_id_defaults_none() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["token_id"] is None
 
 
-async def test_write_audit_token_id_serializes_when_set() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_write_audit_token_id_serializes_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -133,16 +149,14 @@ async def test_write_audit_token_id_serializes_when_set() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["token_id"] == "pat-lookup-1"
 
 
-async def test_write_audit_nickname_defaults_none() -> None:
+async def test_write_audit_nickname_defaults_none(audit_buffer) -> None:
     """nickname (issue #199) must default to None so every pre-existing call
     site -- and every non-x509 record, which has no grid identity to
     attribute -- still serializes, with an explicit null."""
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -157,13 +171,11 @@ async def test_write_audit_nickname_defaults_none() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["nickname"] is None
 
 
-async def test_write_audit_nickname_serializes_when_set() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_write_audit_nickname_serializes_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -179,55 +191,101 @@ async def test_write_audit_nickname_serializes_when_set() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["nickname"] == "jdoe"
 
 
-async def test_write_audit_runs_write_and_flush_off_the_event_loop_thread() -> None:
-    """AuditLogger.write must not block the event loop: the output can be a
-    real file (or stdout redirected to one) whose write/flush block, so both
-    must run in a worker thread."""
+async def test_write_audit_emits_off_the_event_loop_thread(audit_buffer) -> None:
+    """write_audit must not block the event loop: the destination can be a
+    real file (or stdout redirected to one) whose write/flush block, so the
+    emit must run in a worker thread."""
 
-    class _ThreadRecordingOutput(io.StringIO):
+    class _ThreadRecordingHandler(logging.Handler):
         def __init__(self) -> None:
             super().__init__()
-            self.io_threads: list[threading.Thread] = []
+            self.emit_threads: list[threading.Thread] = []
 
-        def write(self, s: str) -> int:
-            self.io_threads.append(threading.current_thread())
-            return super().write(s)
+        def emit(self, record: logging.LogRecord) -> None:
+            self.emit_threads.append(threading.current_thread())
 
-        def flush(self) -> None:
-            self.io_threads.append(threading.current_thread())
-            super().flush()
+    recorder = _ThreadRecordingHandler()
+    logging.getLogger(AUDIT_LOGGER_NAME).addHandler(recorder)
 
-    buffer = _ThreadRecordingOutput()
-    init_audit_logger(buffer)
-
-    record = AuditRecord(
-        principal_sub="sub-abc",
-        principal_uid=1000,
-        permission="submit_jobs",
-        target="panda",
-        action="submit_task",
-        action_type="state_change",
-        args_summary="task=...",
-        timestamp=1234.5,
-        request_id="req-1",
-    )
-    await write_audit(record)
+    await write_audit(_record())
 
     # The line still lands (same JSON contract as every other test here) ...
-    assert json.loads(buffer.getvalue().strip())["event"] == "audit"
-    # ... but no write or flush ever ran on the event loop's own thread.
-    assert buffer.io_threads
+    assert json.loads(audit_buffer.getvalue().strip())["event"] == "audit"
+    # ... but no emit ever ran on the event loop's own thread.
+    assert recorder.emit_threads
     loop_thread = threading.current_thread()
-    assert all(t is not loop_thread for t in buffer.io_threads)
+    assert all(t is not loop_thread for t in recorder.emit_threads)
 
 
-async def test_write_audit_records_denied_outcome_and_error() -> None:
-    buffer = io.StringIO()
-    init_audit_logger(buffer)
+async def test_write_audit_line_matches_the_shape_of_every_other_log_line(
+    audit_buffer,
+) -> None:
+    """Audit lines go through structlog's processor chain: ISO timestamp,
+    level, logger name, and the request's correlation_id/subject."""
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(correlation_id="corr-123", subject="sub-abc")
+
+    await write_audit(_record(timestamp=1234.5))
+
+    (line,) = audit_buffer.lines()
+    assert line["event"] == "audit"
+    assert line["level"] == "info"
+    assert line["logger"] == AUDIT_LOGGER_NAME
+    assert line["correlation_id"] == "corr-123"
+    assert line["subject"] == "sub-abc"
+    # `timestamp` is the write time as an ISO string, like every other line;
+    # the record's own epoch time is `recorded_at`.
+    assert isinstance(line["timestamp"], str)
+    datetime.fromisoformat(line["timestamp"])
+    assert line["recorded_at"] == "1970-01-01T00:20:34.500000+00:00"
+    structlog.contextvars.clear_contextvars()
+
+
+async def test_write_audit_raises_when_the_destination_cannot_be_written(
+    audit_buffer,
+) -> None:
+    """An audit line that cannot be written is an error for the caller, not
+    a message on stderr."""
+
+    class _UnwritableStream(io.StringIO):
+        def write(self, s: str) -> int:
+            msg = "disk full"
+            raise OSError(msg)
+
+    (handler,) = [
+        h
+        for h in logging.getLogger(AUDIT_LOGGER_NAME).handlers
+        if isinstance(h, AuditFileHandler)
+    ]
+    handler.stream = _UnwritableStream()
+
+    with pytest.raises(OSError, match="disk full"):
+        await write_audit(_record())
+
+
+async def test_stdout_destination_resolves_sys_stdout_at_write_time(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    audit_buffer,
+) -> None:
+    """A stdout that was current when logging was configured and is closed
+    since (a captured stream under pytest) cannot break later writes."""
+    stale = io.StringIO()
+    with monkeypatch.context() as m:
+        m.setattr(sys, "stdout", stale)
+        configure_logging("INFO")
+    stale.close()
+
+    await write_audit(_record())
+
+    assert json.loads(capsys.readouterr().out)["event"] == "audit"
+
+
+async def test_write_audit_records_denied_outcome_and_error(audit_buffer) -> None:
 
     record = AuditRecord(
         principal_sub="sub-abc",
@@ -244,6 +302,6 @@ async def test_write_audit_records_denied_outcome_and_error() -> None:
     )
     await write_audit(record)
 
-    line = json.loads(buffer.getvalue().strip())
+    line = json.loads(audit_buffer.getvalue().strip())
     assert line["outcome"] == "denied"
     assert line["error"] == "principal lacks permission 'submit_jobs'"

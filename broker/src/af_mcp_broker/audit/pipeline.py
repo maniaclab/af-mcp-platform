@@ -15,8 +15,7 @@ inline without measurement -- an overloaded broker paying that cost is
 acceptable, a lost audit line is not -- counted by
 ``metrics.metering_queue_overflow_total``. And with no pipeline installed
 at all (unit tests, local dev), the module-level helper degrades to
-measuring and writing synchronously, exactly the pre-pipeline behavior
-(mirrors ``write_audit``'s graceful not-initialized fallback).
+measuring and writing synchronously, exactly the pre-pipeline behavior.
 
 Metering is best-effort; audit records are authoritative.
 
@@ -127,9 +126,11 @@ class InProcessMeteringBackend(MeteringBackend):
     """Bounded queue + background worker measuring and writing audit records."""
 
     def __init__(self, settings: Settings, maxsize: int = QUEUE_MAXSIZE) -> None:
-        # Items are (record, result, enqueued_at) tuples -- enqueued_at is a
-        # time.monotonic() timestamp feeding the queue-delay gauge -- or the
-        # drain sentinel.
+        # Items are (record, result, enqueued_at, log_context) tuples --
+        # enqueued_at is a time.monotonic() timestamp feeding the queue-delay
+        # gauge, log_context the submitting request's structlog contextvars
+        # (correlation_id, subject), which the worker task does not inherit
+        # -- or the drain sentinel.
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
         self._worker: asyncio.Task[None] | None = None
         self._usage_batcher = UsageBatcher(
@@ -162,7 +163,14 @@ class InProcessMeteringBackend(MeteringBackend):
         and count the overflow.
         """
         try:
-            self._queue.put_nowait((record, result, time.monotonic()))
+            self._queue.put_nowait(
+                (
+                    record,
+                    result,
+                    time.monotonic(),
+                    structlog.contextvars.get_contextvars(),
+                )
+            )
             metrics.metering_queue_depth.set(self._queue.qsize())
         except asyncio.QueueFull:
             metrics.metering_queue_overflow_total.inc()
@@ -197,19 +205,27 @@ class InProcessMeteringBackend(MeteringBackend):
                 # buffered goes out before the worker exits.
                 await self._usage_batcher.flush()
                 return
-            record, result, enqueued_at = item
+            record, result, enqueued_at, log_context = item
             metrics.metering_queue_delay_seconds.set(time.monotonic() - enqueued_at)
             # _measure_into never raises (see its docstring), so a
             # measurement failure still reaches the write below unmeasured.
             _measure_into(record, result)
             try:
-                await write_audit(record)
-            except Exception as exc:  # noqa: BLE001 -- the worker must never die
+                with structlog.contextvars.bound_contextvars(**log_context):
+                    await write_audit(record)
+            except Exception:
+                # The worker has no caller to raise to and must outlive the
+                # failure, so surface it at error level with the traceback
+                # and count it; the record's identifying fields let an
+                # operator reconstruct the lost line from usage/traces.
                 metrics.metering_worker_errors_total.inc()
-                logger.warning(
+                logger.exception(
                     "metering_audit_write_failed",
                     audit_id=record.audit_id,
-                    error=str(exc),
+                    principal_sub=record.principal_sub,
+                    target=record.target,
+                    action=record.action,
+                    outcome=record.outcome,
                 )
             else:
                 metrics.metering_worker_processed_total.inc()
@@ -263,7 +279,7 @@ async def submit_metered_audit(record: AuditRecord, result: ToolResult | None) -
     """Module-level helper to submit audit record.
 
     With no running pipeline installed (unit tests,
-    local dev -- mirrors write_audit's graceful fallback), measure + write
+    local dev), measure + write
     synchronously inline: behavior degrades to exactly the pre-pipeline
     inline path.
     """

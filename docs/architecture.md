@@ -155,7 +155,19 @@ broker:
       port: 6379
 ```
 
-Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly.
+Every key and pub/sub channel the broker uses on the store starts with
+`broker.sharedState.keyPrefix` (env `SHARED_STATE_KEY_PREFIX`). The chart
+defaults it to `<release name>:`, so two releases can share one store without
+seeing each other's counters or cache invalidations. A redis database number
+in the URL does not isolate them: pub/sub ignores it. Changing the prefix on a
+running release drops the state held under the old prefix once. That state is
+short-lived (rate-limit windows, PAT mint windows, authorization codes, lint
+tables), so the effect is a reset of those counters and a brief reset of the
+cross-replica cache invalidation, not data loss.
+
+Outside the chart set `SHARED_STATE_URL` (and `MCP_REPLICA_COUNT`) directly,
+and `SHARED_STATE_KEY_PREFIX` to something unique per release (default
+`af-mcp:`).
 
 Per-replica state in the broker, what happens at more than one replica
 without a store, and what each item does when the store is down. "Phase"
@@ -716,7 +728,7 @@ Key endpoints:
 |---|---|---|
 | `GET` | `/v1/identities` | Caller identity, linked accounts, linkable providers |
 | `GET` | `/v1/permissions` | Caller's granted permissions |
-| `POST` | `/v1/authorize` | Check one entitlement (used by the aggregator per call) |
+| `POST` | `/v1/authorize` | Check one entitlement (the aggregator calls the same in-process function rather than this route) |
 | `GET` | `/v1/catalog` | Services visible to the caller, each with a per-caller `status`; `link_required` services carry `link_state` (`not_linked` or `rejected`, a linked credential the service refused), `null` for every other status; every entry carries `docs_url`, and `permission_required` entries carry `granting_groups` (see [Adding a Service](adding-a-service.md#docs_url-linking-to-where-the-service-is-described)) |
 | `POST` | `/v1/credential` | Issue or return a cached credential for a target |
 | `POST` | `/v1/x509/proxy` | Mint and cache a VOMS proxy (passphrase unlock) |

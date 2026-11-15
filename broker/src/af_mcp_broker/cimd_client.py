@@ -61,15 +61,6 @@ class CimdClient:
     client_name: str | None
 
 
-def is_cimd_client_id(client_id: str) -> bool:
-    """Return True if *client_id* is an ``https://`` URL (CIMD), not a pre-registered id."""
-    try:
-        parsed = urlparse(client_id)
-    except ValueError:
-        return False
-    return parsed.scheme == "https" and bool(parsed.netloc)
-
-
 def _is_loopback_host(host: str | None) -> bool:
     if host is None:
         return False

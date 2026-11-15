@@ -41,7 +41,6 @@ opentelemetry-instrumentation-fastapi = ">=0.65b0"
 [feature.broker.pypi-dependencies]
 # Editable install triggers hatch-vcs to generate _version.py from git tags.
 af-mcp-broker = {path = "broker/", editable = true}
-tokencost = ">=0.1.26, <0.2"
 
 [feature.dev.dependencies]
 pytest = ">=8.0"
@@ -76,7 +75,7 @@ dev = { cmd = "npm run dev", cwd = "portal", depends-on = ["install"], descripti
 build = { cmd = "npm run build", cwd = "portal", depends-on = ["install"], description = "Build portal static site to portal/dist/", inputs = ["portal/src/**", "portal/public/**", "portal/astro.config.mjs", "portal/tsconfig.json", "portal/src/styles/**"], outputs = ["portal/dist/"] }
 preview = { cmd = "npm run preview", cwd = "portal", depends-on = ["build"], description = "Serve production portal build locally" }
 design-preview = { cmd = "node scripts/design-preview.mjs", cwd = "portal", depends-on = ["build"], description = "Serve portal/dist with fictional example API data for design review (--scenario, --port)" }
-astro-check = { cmd = "npm run check", cwd = "portal", depends-on = ["install"], description = "Run `astro check` (types + template diagnostics)" }
+astro-check = { cmd = "npm run check", cwd = "portal", depends-on = ["install"], description = "Run `astro check` and `vue-tsc --noEmit` (types + template diagnostics for .astro and .vue)" }
 format = { cmd = "npx prettier --write .", cwd = "portal", depends-on = ["install"], description = "Auto-format portal source" }
 format-check = { cmd = "npx prettier --check .", cwd = "portal", depends-on = ["install"], description = "Verify portal source is prettier-formatted (CI-safe)" }
 lint = { cmd = "npx eslint .", cwd = "portal", depends-on = ["install"], description = "Lint portal source with eslint-plugin-astro" }

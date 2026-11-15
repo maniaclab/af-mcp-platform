@@ -46,7 +46,7 @@ Monorepo layout:
 
 ### Broker structure
 
-One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp` (speaks MCP-over-HTTP to LLM clients) and the `/v1` HTTP API. **`/v1` is the platform boundary** — the aggregator translates MCP calls into `/v1` calls, and everything behind `/v1` (aggregator choice, services, credential providers) is swappable implementation detail.
+One FastAPI process serves two surfaces: the FastMCP aggregator mounted at `/mcp` (speaks MCP-over-HTTP to LLM clients) and the `/v1` HTTP API. **`/v1` is the platform boundary** — the aggregator's middleware calls the same in-process functions the `/v1` route bodies call (it does not loop back over HTTP), and everything behind `/v1` (aggregator choice, services, credential providers) is swappable implementation detail.
 
 Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 
@@ -63,4 +63,4 @@ Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults 
 
 ### Critical auth constraint
 
-Keycloak Standard Token Exchange (V2) mints tokens **accepted only by AF-internal services** — `atlas-auth.cern.ch` rejects them. Any credential for external ATLAS services (Rucio, PanDA, AMI) must use Keycloak's stored brokered token: `GET /realms/<realm>/broker/atlas-oidc/token` (IdP alias `atlas-oidc`, configurable via `OIDC_IDP_ALIAS`), which requires the user to have linked their CERN account. x509/VOMS proxies are minted via ephemeral k8s Jobs that NFS-subPath-mount the user's `~/.globus`. Details in `docs/auth.md` — do not conflate these paths.
+Keycloak Standard Token Exchange (V2) mints tokens **accepted only by AF-internal services** — `atlas-auth.cern.ch` rejects them. Any credential for external ATLAS services (Rucio, PanDA, AMI) must use Keycloak's stored brokered token: `GET /realms/<realm>/broker/atlas-oidc/token` (IdP alias `atlas-oidc`, configurable via the `alias` of the `keycloak-brokered` entry in `IDENTITY_PROVIDERS` env var / `broker.identityProviders` chart value), which requires the user to have linked their CERN account. x509/VOMS proxies are minted via ephemeral k8s Jobs that NFS-subPath-mount the user's `~/.globus`. Details in `docs/auth.md` — do not conflate these paths.

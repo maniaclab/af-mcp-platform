@@ -611,3 +611,40 @@ describe('status line', () => {
     expect(wrapper.find('.bc__status-detail').exists()).toBe(false);
   });
 });
+
+describe('markdown service description', () => {
+  function mountDescribed(description: string): VueWrapper {
+    return mount(ServiceCard, {
+      props: {
+        server: { ...SERVER, description },
+        poweredBy: {
+          kind: 'none' as const,
+          label: 'No credential required',
+          linked: null,
+          linkHref: null,
+          linkLabel: null,
+          relinkLabel: null,
+          noun: null,
+        },
+      },
+    });
+  }
+
+  it('renders Markdown in the description', () => {
+    const description = mountDescribed('Data **management** via `rucio`.').get('.bc__description');
+    expect(description.get('strong').text()).toBe('management');
+    expect(description.get('code').text()).toBe('rucio');
+  });
+
+  it('strips scripts and unsafe links from the description', () => {
+    const wrapper = mountDescribed(
+      '<script>window.pwned = 1</script>\n\n[x](javascript:alert(1)) [ok](https://example.org)',
+    );
+    const description = wrapper.get('.bc__description');
+    expect(description.find('script').exists()).toBe(false);
+    expect(description.findAll('a').map((a) => a.attributes('href') ?? null)).toEqual([
+      null,
+      'https://example.org',
+    ]);
+  });
+});

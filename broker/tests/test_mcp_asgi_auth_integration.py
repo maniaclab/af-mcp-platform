@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import time
 from typing import TYPE_CHECKING, Any
@@ -9,7 +8,6 @@ import pytest
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
@@ -200,7 +198,10 @@ async def test_valid_bearer_tools_list_and_call_unchanged(
 
 
 async def test_pat_round_trip_tools_list_and_call(
-    settings: Any, policy: EntitlementPolicy, registry: ServiceRegistry
+    settings: Any,
+    policy: EntitlementPolicy,
+    registry: ServiceRegistry,
+    audit_buffer,
 ) -> None:
     """End-to-end coverage for issue #144 step 2a: mint a PAT through the
     same TokenRecord shape POST /v1/tokens produces, present it as a real
@@ -248,9 +249,6 @@ async def test_pat_round_trip_tools_list_and_call(
         pat_backend=pat_backend,
         principal_cache=principal_cache,
     )
-
-    audit_buffer = io.StringIO()
-    init_audit_logger(audit_buffer)
 
     async with (
         run_aggregator_async(mcp, path="/mcp") as server,

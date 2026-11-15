@@ -14,6 +14,10 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+import httpcore
+import httpcore2
+import httpx
+import httpx2
 import pytest
 import structlog
 
@@ -178,3 +182,32 @@ def test_configure_logging_emits_fastmcp_records_as_json(
     assert record["event"] == "provider failed"
     assert record["level"] == "warning"
     assert record["logger"] == "fastmcp.server.providers.aggregate"
+
+
+# The loggers each HTTP client library actually logs under, read from the
+# installed libraries rather than spelled out here: httpx2 (and its httpcore2
+# transport) log under "httpx2"/"httpcore2.*", not "httpx"/"httpcore".
+_HTTP_CLIENT_LOGGERS = [
+    pytest.param(httpx._client.logger, id="httpx"),
+    pytest.param(httpcore._async.http11.logger, id="httpcore"),
+    pytest.param(httpx2._client.logger, id="httpx2"),
+    pytest.param(httpcore2._async.http11.logger, id="httpcore2"),
+]
+
+
+@pytest.mark.parametrize("http_logger", _HTTP_CLIENT_LOGGERS)
+def test_configure_logging_applies_the_third_party_level_to_http_client_loggers(
+    http_logger: logging.Logger, restore_logging: None
+) -> None:
+    """INFO-level request lines from the HTTP client libraries are noise at the
+    broker's default level; configure_logging holds them at WARNING."""
+    # configure_logging sets the level on the library's top-level logger.
+    top_level_logger = logging.getLogger(http_logger.name.split(".")[0])
+    levels = [(lg, lg.level) for lg in (http_logger, top_level_logger)]
+    try:
+        configure_logging("INFO")
+
+        assert http_logger.getEffectiveLevel() == logging.WARNING
+    finally:
+        for lg, level in levels:
+            lg.setLevel(level)

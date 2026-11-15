@@ -112,11 +112,7 @@ const message = computed(() => resolveServicesMessage(servers.value, providers.v
             />
           </div>
 
-          <SegmentedControl
-            v-model="filter"
-            :options="FILTER_OPTIONS"
-            aria-label="Filter by type"
-          />
+          <SegmentedControl v-model="filter" :options="FILTER_OPTIONS" ariaLabel="Filter by type" />
 
           <span class="cp__count" aria-live="polite">
             {{ filteredServers.length }} service{{ filteredServers.length !== 1 ? 's' : '' }}

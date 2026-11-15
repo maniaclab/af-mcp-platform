@@ -148,6 +148,18 @@ jobs:
       - name: Verify OTLP transport rendering
         run: bash charts/af-mcp-platform/ci/check-otlp-rendering.sh
 
+      # Content assertions for the Vault connection env gate (every
+      # Vault-capable backend), the per-store KV path prefixes, and the
+      # oauth21-direct revocation endpoint.
+      - name: Verify Vault rendering
+        run: bash charts/af-mcp-platform/ci/check-vault-rendering.sh
+
+      # Content assertions for broker.sharedState.keyPrefix: the default is
+      # derived from the release name, an explicit value wins, and nothing is
+      # rendered without a store.
+      - name: Verify shared state key prefix rendering
+        run: bash charts/af-mcp-platform/ci/check-shared-state-rendering.sh
+
       - name: ct lint
         run: ct lint --target-branch "$DEFAULT_BRANCH" --check-version-increment=false
         env:

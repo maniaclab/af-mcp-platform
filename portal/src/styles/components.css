@@ -534,3 +534,68 @@
     display: none;
   }
 }
+
+/* Markdown from a backend description (ui/MarkdownText.vue). Tailwind
+ * typography's `prose` rules live in the utilities layer, so the overrides
+ * that retheme them must sit in that layer too (a components-layer rule loses
+ * to it whatever its specificity). Its palette variables are pointed at the AF
+ * tokens, which switch with the theme, so it needs no `dark:prose-invert`. */
+@layer utilities {
+  .af-markdown {
+    overflow-wrap: anywhere;
+  }
+  .af-markdown.prose {
+    max-width: none;
+    font-size: inherit;
+    line-height: inherit;
+    --tw-prose-body: var(--color-af-text-secondary);
+    --tw-prose-headings: var(--color-af-text);
+    --tw-prose-lead: var(--color-af-text-secondary);
+    --tw-prose-links: var(--color-af-text);
+    --tw-prose-bold: var(--color-af-text);
+    --tw-prose-counters: var(--color-af-text-secondary);
+    --tw-prose-bullets: var(--color-af-text-secondary);
+    --tw-prose-hr: var(--color-af-border);
+    --tw-prose-quotes: var(--color-af-text);
+    --tw-prose-quote-borders: var(--color-af-border-strong);
+    --tw-prose-captions: var(--color-af-text-secondary);
+    --tw-prose-code: var(--color-af-text);
+    --tw-prose-pre-code: var(--color-af-text);
+    --tw-prose-pre-bg: var(--color-af-bg-subtle);
+    --tw-prose-th-borders: var(--color-af-border-strong);
+    --tw-prose-td-borders: var(--color-af-border);
+  }
+  /* Descriptions sit in table cells and cards, so blocks stack tighter than
+   * article prose; the first and last block add no outer space. */
+  .af-markdown.prose :where(p, ul, ol, pre, blockquote, table) {
+    margin-block: var(--space-8);
+  }
+  .af-markdown.prose > :first-child {
+    margin-top: 0;
+  }
+  .af-markdown.prose > :last-child {
+    margin-bottom: 0;
+  }
+  .af-markdown.prose :where(h1, h2, h3, h4, h5, h6) {
+    margin-block: var(--space-12) var(--space-4);
+    font-size: inherit;
+    line-height: inherit;
+  }
+  .af-markdown code {
+    font-family: var(--font-mono);
+    font-size: var(--text-13);
+    font-weight: inherit;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-4);
+    background: var(--color-af-bg-subtle);
+  }
+  /* Typography wraps inline code in literal backticks; the box is enough. */
+  .af-markdown code::before,
+  .af-markdown code::after {
+    content: none;
+  }
+  .af-markdown pre code {
+    padding: 0;
+    background: none;
+  }
+}
