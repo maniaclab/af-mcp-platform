@@ -428,9 +428,11 @@ def test_client_factory_builds_streamable_http_transport(settings: Any) -> None:
     # deliberately avoids using). fastmcp v4 moved forward_incoming_headers
     # off the transport instance and onto the client's TransportOptions
     # bundle (client/transports/base.py); a plain Client never populates
-    # it, so it stays None here and TransportOptions()'s own default
-    # (False) applies -- only ProxyClient sets it True.
-    assert client._transport_options is None
+    # it to True -- only ProxyClient does; BackendClient's options carry only
+    # the relaying session class, so TransportOptions()'s own default (False)
+    # applies.
+    assert client._transport_options is not None
+    assert client._transport_options.forward_incoming_headers is False
 
 
 def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) -> None:
@@ -557,7 +559,8 @@ async def test_client_factory_bearer_injects_minted_token_not_inbound(
     )
     # See test_client_factory_builds_streamable_http_transport for why this is
     # _transport_options rather than a transport-level attribute in v4.
-    assert client._transport_options is None
+    assert client._transport_options is not None
+    assert client._transport_options.forward_incoming_headers is False
 
 
 def _status_transport(status_code: int) -> httpx2.MockTransport:

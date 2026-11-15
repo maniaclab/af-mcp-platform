@@ -89,8 +89,8 @@ def validate_user_facing_url(value: str, where: str) -> str:
 def identity_provider_url(settings: Settings, alias: str) -> str:
     """Build the portal Identities page's deep link for one identity-provider alias.
 
-    Shared by the not-linked ``ToolError`` aggregator.py's ``_bearer_factory``/
-    ``_x509_factory`` raise and ``af_link_identity`` (mcp/diagnostics.py) so
+    Shared by the not-linked ``ToolError`` aggregator.py's ``_bearer_call_client``/
+    ``_identity_token_call_client`` raise and ``af_link_identity`` (mcp/diagnostics.py) so
     the URL format can never drift between "here's why you're blocked" and
     "here's the link you asked for" (stage 1 of the elicitation/link-identity
     design -- see the af-mcp-platform issue tracker). Lives here rather than
