@@ -55,8 +55,7 @@ class BrokerState:
     """Every subsystem the request path reads, as built by the lifespan.
 
     *services* is the operator-configured services only (the registry also
-    carries the builtin gateway service); *services_loaded* means
-    ``services.yaml`` parsed without error. *dev_bypass_principal* is set only
+    carries the builtin gateway service). *dev_bypass_principal* is set only
     while the local-dev auth bypass is active. *metrics_port* is the port the
     metrics server bound, or None when it is disabled. *mcp_app* is the ASGI
     app serving *mcp_aggregator* at ``/mcp``.
@@ -66,7 +65,6 @@ class BrokerState:
     entitlement_policy: EntitlementPolicy
     service_registry: ServiceRegistry
     services: list[ServiceSpec]
-    services_loaded: bool
     credential_cache: CredentialCache
     credential_registry: CredentialRegistry
     x509_provider: X509Provider | None

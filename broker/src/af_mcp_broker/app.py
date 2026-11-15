@@ -178,8 +178,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         shared_state = open_shared_state(settings, stack)
 
         catalog = build_service_catalog(settings)
-        if not catalog.services:
-            logger.warning("no_services_configured")
         targets = build_identity_targets(settings, catalog.services)
 
         # Created ahead of the aggregator: the cache invalidator below reads

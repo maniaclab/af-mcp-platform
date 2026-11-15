@@ -65,7 +65,6 @@ def build_broker_state(
         entitlement_policy=catalog.entitlement_policy,
         service_registry=catalog.service_registry,
         services=catalog.services,
-        services_loaded=catalog.services_loaded,
         credential_cache=credential_cache,
         credential_registry=providers.registry,
         x509_provider=x509_provider,
