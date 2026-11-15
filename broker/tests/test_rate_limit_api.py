@@ -13,13 +13,12 @@ and a matching JSON body.
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException
+from x509_fakes import FakeVomsClient, seed_x509_proxy
 
-from af_mcp_broker.credentials.cache import ProxyMeta
+from af_mcp_broker.credentials.errors import VomsServiceBadPassphraseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,47 +29,27 @@ if TYPE_CHECKING:
 _AUTH = {"Authorization": "Bearer test"}
 
 
-class _FakeSucceedingBackend:
-    """Fake ``X509Backend`` that mints instantly, without touching k8s."""
-
-    async def available(self, principal) -> bool:
-        return True
-
-    async def mint(self, principal, passphrase, valid, voms, cache):
-
-        await cache.check_unlock_rate_limit(principal.uid)
-        return ProxyMeta(
-            dn="CN=Fake User",
-            voms_attributes=[],
-            not_after=time.time() + 3600,
-            proxy_path="/tmp/fake-proxy.pem",
-        )
+def _use_voms_outcome(client: TestClient, outcome: Exception | None = None) -> None:
+    """Point the app's X509Provider at a voms-token-service fake that mints (default) or raises *outcome*."""
+    client.app.state.x509_provider._voms_client = FakeVomsClient(outcome)
 
 
-class _FakeFailingBackend:
-    """Fake ``X509Backend`` that always fails the unlock (bad passphrase).
+def _bad_passphrase(client: TestClient) -> None:
+    """Make every mint fail the way voms-token-service answers a wrong Globus passphrase."""
+    _use_voms_outcome(client, VomsServiceBadPassphraseError())
 
-    Mirrors what ``HomeDirVomsBackend`` does on a real minting-backend
-    failure: call ``record_failed_unlock`` then surface the failure as a
-    4xx ``HTTPException`` (the API layer has no dedicated handler for a
-    bad-passphrase ``ValueError``, so a plain 422 stands in for it here).
-    """
 
-    async def available(self, principal) -> bool:
-        return True
-
-    async def mint(self, principal, passphrase, valid, voms, cache):
-        await cache.check_unlock_rate_limit(principal.uid)
-        await cache.record_failed_unlock(principal.uid)
-        raise HTTPException(status_code=422, detail="bad passphrase (fake)")
+def _seed_unrenewable_proxy(client: TestClient) -> None:
+    """Store a nearly-expired proxy and no passphrase: the principal is linked, but nothing can renew without a passphrase."""
+    seed_x509_proxy(client.app.state.x509_provider.vault_store, remaining=100.0)
 
 
 def _probe(client: TestClient):
     """POST /v1/credential for the x509 'ami' target with no passphrase.
 
-    Misses the (empty) cache and surfaces as 409 (NeedsUnlockError) -- the
-    ordinary "not cached yet" probe an MCP client makes before ever prompting
-    for a passphrase.
+    Misses the (empty) cache and surfaces as 409 (NeedsUnlockError) once
+    ``_seed_unrenewable_proxy`` has run -- the ordinary "not cached yet"
+    probe an MCP client makes before ever prompting for a passphrase.
     """
     return client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
 
@@ -89,6 +68,7 @@ def test_needs_unlock_probes_never_trip_rate_limit(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
 
     with app_client_factory() as (client, _state):
+        _seed_unrenewable_proxy(client)
         # Many more probes than max_failures -- none of them should count.
         for _ in range(10):
             resp = _probe(client)
@@ -106,7 +86,8 @@ def test_correct_passphrase_succeeds_after_probes(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
 
     with app_client_factory() as (client, _state):
-        client.app.state.x509_provider.backends = [_FakeSucceedingBackend()]
+        _seed_unrenewable_proxy(client)
+        _use_voms_outcome(client)
 
         for _ in range(5):
             assert _probe(client).status_code == 409
@@ -125,11 +106,11 @@ def test_genuinely_failed_unlocks_still_trip_the_limit(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
 
     with app_client_factory() as (client, _state):
-        client.app.state.x509_provider.backends = [_FakeFailingBackend()]
+        _bad_passphrase(client)
 
         for _ in range(2):
             resp = _unlock(client)
-            assert resp.status_code == 422, resp.text  # bad passphrase (fake)
+            assert resp.status_code == 400, resp.text  # bad passphrase
 
         resp = _unlock(client)
         assert resp.status_code == 429, resp.text
@@ -161,22 +142,22 @@ def test_rate_limit_resets_after_successful_unlock(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
 
     with app_client_factory() as (client, _state):
-        client.app.state.x509_provider.backends = [_FakeFailingBackend()]
+        _bad_passphrase(client)
         # One failure -- one short of the limit.
-        assert _unlock(client).status_code == 422
+        assert _unlock(client).status_code == 400
 
-        client.app.state.x509_provider.backends = [_FakeSucceedingBackend()]
+        _use_voms_outcome(client)
         assert _unlock(client).status_code == 201
 
         # Burn the freshly-cached proxy so the next unlock actually reaches
         # the (now failing again) backend instead of serving from cache.
         assert client.delete("/v1/credential", headers=_AUTH).status_code == 204
 
-        client.app.state.x509_provider.backends = [_FakeFailingBackend()]
+        _bad_passphrase(client)
         # If the counter hadn't reset, this single failure would trip the
         # limit (only one more was needed before the successful unlock).
-        assert _unlock(client).status_code == 422
-        assert _unlock(client).status_code == 422
+        assert _unlock(client).status_code == 400
+        assert _unlock(client).status_code == 400
         resp = _unlock(client)
         assert resp.status_code == 429, resp.text
 
@@ -188,9 +169,9 @@ def test_rate_limit_returns_429_with_retry_after(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
 
     with app_client_factory() as (client, _state):
-        client.app.state.x509_provider.backends = [_FakeFailingBackend()]
+        _bad_passphrase(client)
         for _ in range(2):
-            assert _unlock(client).status_code == 422
+            assert _unlock(client).status_code == 400
         resp = _unlock(client)
 
     assert resp.status_code == 429, resp.text
@@ -220,8 +201,8 @@ def test_retry_after_matches_configured_window(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "60")
 
     with app_client_factory() as (client, _state):
-        client.app.state.x509_provider.backends = [_FakeFailingBackend()]
-        assert _unlock(client).status_code == 422
+        _bad_passphrase(client)
+        assert _unlock(client).status_code == 400
         resp = _unlock(client)
 
     assert resp.status_code == 429, resp.text
@@ -240,6 +221,7 @@ def test_rate_limit_no_regression(
     monkeypatch.setenv("CREDENTIAL_UNLOCK_WINDOW_SECONDS", "900")
 
     with app_client_factory() as (client, _state):
+        _seed_unrenewable_proxy(client)
         for _ in range(5):
             resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
             assert resp.status_code == 409, resp.text

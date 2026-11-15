@@ -29,7 +29,6 @@ structlog = ">=24.4"
 fastmcp = ">=4.0.4,<5"
 # 7.x pins starlette<1.0.0, which conflicts with fastmcp's starlette>=1.0.1.
 prometheus-fastapi-instrumentator = ">=8.0"
-kubernetes_asyncio = ">=30.0"
 pyyaml = ">=6.0"
 tiktoken = ">=0.14.0"
 asyncpg = ">=0.31.0,<0.32"

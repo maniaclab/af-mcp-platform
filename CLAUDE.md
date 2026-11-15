@@ -41,7 +41,7 @@ Monorepo layout:
 - `broker/` — Python 3.12 FastAPI app (`af_mcp_broker`), the core service
 - `portal/` — Astro/Vue user-facing portal (catalog, identities, proxy status)
 - `charts/af-mcp-platform/` — Helm chart deploying broker + portal (Flux CD in production)
-- `spikes/` — validation experiments with their own tests (credential-isolation, nfs-subpath)
+- `spikes/` — validation experiments with their own tests (credential-isolation)
 - `docs/` — architecture.md, auth.md, adding-a-service.md; read these before touching auth or service wiring
 
 ### Broker structure
@@ -52,7 +52,7 @@ Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 
 1. **Identity** (`identity.py`) — the credential answers only "who is this?". Two kinds are accepted: a Keycloak JWT (`Authorization: Bearer`) and a broker-issued PAT (`mcp_pat_…`, `/mcp` only — `/v1` is JWT-only so a PAT cannot mint further PATs). Everything else about the principal — groups and POSIX uid/gid/unixname — is resolved from `PrincipalDirectory` via `PrincipalCache`, never from token claims. Broker is the sole token validator; no ForwardAuth proxy sits in front of the `/v1` or `/mcp` path, or the portal's HTML, on either host — the portal enforces its own client-side OIDC login (see `portal/src/lib/auth.ts`).
 2. **Authorization** (`authorization/`) — declarative `policy.yaml` maps groups to permissions; each service's required permission comes from `services.yaml` (the registry is authoritative — `policy.yaml` no longer duplicates it). Groups come from the directory-backed principal cache, so Keycloak group changes take effect within one refresh window without any token-side mapper.
-3. **Credentials** (`credentials/`) — provider classes (oidc, oauth21, x509, service) behind `CredentialProvider`; minted creds cached in-process by `(subject, target)` in `CredentialCache` with expiry sweeping. POSIX identity is optional and required only by x509.
+3. **Credentials** (`credentials/`) — provider classes (oidc, oauth21, x509, service) behind `CredentialProvider`; minted creds cached in-process by `(subject, target)` in `CredentialCache` with expiry sweeping. POSIX identity is optional and required only by x509. Every entry that needs broker-signed identity tokens (x509 included) requires the signing key at boot; x509 also requires Vault.
 4. **Audit** (`audit/`) — structlog JSON line per tool invocation + Prometheus metrics served on a dedicated port (9090, `METRICS_PORT`); the API port has no `/metrics`.
 
 Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into `app.state` (see `app.py` lifespan); missing files degrade gracefully for local dev. Settings are pydantic-settings env vars in `config.py`.
@@ -63,4 +63,4 @@ Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults 
 
 ### Critical auth constraint
 
-Keycloak Standard Token Exchange (V2) mints tokens **accepted only by AF-internal services** — `atlas-auth.cern.ch` rejects them. Any credential for external ATLAS services (Rucio, PanDA, AMI) must use Keycloak's stored brokered token: `GET /realms/<realm>/broker/atlas-oidc/token` (IdP alias `atlas-oidc`, configurable via the `alias` of the `keycloak-brokered` entry in `IDENTITY_PROVIDERS` env var / `broker.identityProviders` chart value), which requires the user to have linked their CERN account. x509/VOMS proxies are minted via ephemeral k8s Jobs that NFS-subPath-mount the user's `~/.globus`. Details in `docs/auth.md` — do not conflate these paths.
+Keycloak Standard Token Exchange (V2) mints tokens **accepted only by AF-internal services** — `atlas-auth.cern.ch` rejects them. Any credential for external ATLAS services (Rucio, PanDA, AMI) must use Keycloak's stored brokered token: `GET /realms/<realm>/broker/atlas-oidc/token` (IdP alias `atlas-oidc`, configurable via the `alias` of the `keycloak-brokered` entry in `IDENTITY_PROVIDERS` env var / `broker.identityProviders` chart value), which requires the user to have linked their CERN account. x509/VOMS proxies are minted by voms-token-service (the only component that mounts user homes; the broker sends it the user's POSIX identity and Globus passphrase) and persisted in Vault. Details in `docs/auth.md` — do not conflate these paths.

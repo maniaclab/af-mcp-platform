@@ -51,7 +51,8 @@ async def build_credmon_sync(
     supplies the provider whose ``is_linked`` the storer asks -- the same
     default the redeem endpoints map the credmon audience to. *store_prefixes*
     holds the Vault KV prefix of each kind's per-user store that is actually
-    wired (legacy-mode x509 has none and so is never enumerated).
+    wired (a kind with no identity_providers entry has none and so is never
+    enumerated).
 
     Raises RuntimeError on anything that would make every cycle fail, so the
     broker refuses to boot instead of reporting healthy with a dead sync.

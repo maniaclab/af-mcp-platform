@@ -92,7 +92,7 @@ tool_duration_seconds = Histogram(
     "success and error alike -- outcome is deliberately not a label; the "
     "audit log is the per-outcome source of truth. No identity label -- "
     "see module docstring. Buckets are sized for tool calls that can "
-    "include credential minting via ephemeral k8s Jobs (tens of seconds "
+    "include credential minting at voms-token-service (tens of seconds "
     "to minutes), not just fast HTTP proxying.",
     ["service", "tool", "action_type"],
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),

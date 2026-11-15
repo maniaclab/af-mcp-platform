@@ -50,7 +50,7 @@ _LINK_ENDPOINT = "/v1/servicex/link"
 class ServiceXProvider(CredentialProvider):
     """Issues delegated ServiceX access-token credentials, redeemed via servicex-token-service.
 
-    Unlike ``X509Provider``, there is no legacy/local mint path and no POSIX
+    Unlike ``X509Provider``, there is no POSIX
     identity requirement -- every instance of this provider redeems via a
     configured ``ServiceXTokenServiceClient`` against a Vault-stored refresh
     token (``VaultServiceXStore``). Backends fetch the access token via

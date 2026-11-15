@@ -7,8 +7,7 @@ Broker Identity Token with ``aud=voms-token-service``, JSON body
 ``{"pem", "dn", "voms_attributes", "expires_at"}``. A 400 is the service's
 "bad passphrase" signal (counts against the unlock rate limiter); anything
 else — 401/403/5xx, timeouts, connection failures — is an infra failure that
-must NOT count, the same distinction ``ProxyHarvestError`` draws for the
-legacy k8s-Job mint path.
+must NOT count.
 """
 
 from __future__ import annotations

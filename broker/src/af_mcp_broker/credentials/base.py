@@ -17,9 +17,6 @@ log = structlog.get_logger(__name__)
 
 class CredentialKind(StrEnum):
     BEARER = "bearer"
-    # A proxy on the broker's own filesystem, referenced by path (the legacy
-    # k8s-Job mint path).
-    X509_PROXY_REF = "x509_proxy_ref"
     # A deliverable proxy persisted in Vault (issue #112 roadmap step 2's
     # "deliverable proxy vs local file path" distinction): no local path —
     # the backend redeems the PEM via POST /v1/credentials/x509/redeem.
@@ -46,7 +43,7 @@ class IssuedCredential:
 
     Credentials NEVER transit to the LLM or client — they are injected
     server-side by the broker when forwarding requests to a target service.
-    The payload for x509 holds only a handle/path reference, never the
+    The payload for x509 holds only a handle reference, never the
     raw key material or passphrase.
     """
 
@@ -58,7 +55,6 @@ class IssuedCredential:
     expires_at: float | None
     # Illustrative payload shape per kind (documentation, not code):
     # bearer: {"access_token": ..., "token_type": "Bearer"}  # noqa: ERA001
-    # x509 (proxy_ref):    {"proxy_handle": ..., "proxy_path": ..., "delivery": "direct"}
     # x509 (proxy_redeem): {"proxy_handle": ..., "delivery": "redeem"}
     # service:{"access_token": ..., "on_behalf_of": ..., "token_type": "Bearer"}  # noqa: ERA001
     # krb5_ccache: {"ccache_b64": ..., "principal": ..., "realm": ..., "renew_until": float | None}  # noqa: ERA001

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from conftest import configure_keyless_env
 from test_broker_issued import (
     _make_rsa_key,
     _private_pem,
@@ -102,8 +103,11 @@ def test_jwks_includes_additional_rotation_keys(
 
 
 def test_jwks_degrades_to_503_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
+    configure_keyless_env(monkeypatch, tmp_path)
     with app_client_factory() as (client, _):
         resp: Any = client.get("/.well-known/jwks.json")
 

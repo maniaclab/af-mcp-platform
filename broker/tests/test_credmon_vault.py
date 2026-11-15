@@ -48,7 +48,7 @@ async def test_kind_with_no_records_lists_nothing(
 async def test_unconfigured_kind_lists_nothing(
     fake_vault: FakeVault, tmp_path: Path
 ) -> None:
-    """x509 in legacy (k8s-Job) mode has no Vault store -- nothing to enumerate."""
+    """A kind with no configured Vault store prefix has nothing to enumerate."""
     fake_vault.entries["mcp/krb5/sub-a/krb5"] = {"data": {}, "version": 1}
     source = VaultSubjectSource(
         make_vault_kv(fake_vault, tmp_path), prefixes={"krb5": "mcp/krb5"}

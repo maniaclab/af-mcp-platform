@@ -1,0 +1,35 @@
+# Exercises the "x509 identityProviders entry implies Vault" gating
+# (af-mcp-platform.identityProvidersNeedVault in _helpers.tpl) in isolation:
+# ONLY an x509 entry is configured, with none of
+# oauth21.tokenStore.backend/tokenRegistry.backend/principalCache.backend
+# set to "vault". test-values.yaml can't catch a regression of this gating
+# by itself -- it also sets those three backends to "vault" for their own
+# template-path coverage, so VAULT_ADDR would render there regardless of
+# whether the x509 gating is correct. The `helm template | grep` steps in
+# chart-lint.yaml assert that VAULT_ADDR actually appears, and that an x509
+# entry without serviceUrl is refused.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  # Two replicas (the chart default) need a shared state store or an explicit
+  # opt-in; this file is not about shared state, so it opts in.
+  sharedState:
+    allowPerReplicaState: true
+  identityProviders:
+    - type: x509
+      alias: x509-example
+      targets: ["ami-example"]
+      serviceUrl: "https://voms-token-service.example.com"
+      displayName: "Grid certificate (example)"
+      enables: "Example VOMS proxy minting for x509 services"
+  oauth21:
+    tokenStore:
+      vault:
+        addr: "https://vault.example.com"
+        authRole: "af-mcp-broker-example"

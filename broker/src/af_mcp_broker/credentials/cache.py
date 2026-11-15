@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import anyio
 import structlog
 
 if TYPE_CHECKING:
@@ -37,19 +34,13 @@ _DEFAULT_TTL_SECONDS = 3600
 class ProxyMeta:
     """Metadata for a live x509 proxy.
 
-    For the legacy mint path the proxy file itself is stored at
-    *proxy_path*; this struct carries the parsed attributes so callers can
-    check validity without reading the file. In voms-token-service mode the
-    PEM persists in Vault instead of any local file, so *proxy_path* is
-    None.
+    The PEM itself persists in Vault; this struct carries the parsed
+    attributes so callers can check validity without a Vault read.
     """
 
     dn: str
     voms_attributes: list[str]  # e.g. ["/atlas/Role=production", "/atlas"]
     not_after: float  # epoch seconds (UTC) — proxy expiry
-    # Absolute path inside broker's tmpfs, e.g.
-    # /run/broker/proxies/{uid}/proxy.pem; None when the PEM lives in Vault.
-    proxy_path: str | None = None
 
 
 @dataclass
@@ -286,7 +277,7 @@ class CredentialCache:
 
         Concurrent callers that each independently miss the cache for the
         same key would otherwise each repeat *mint* — an expensive, real
-        -resource operation (a Keycloak round-trip, or a k8s Job) — instead
+        -resource operation (a Keycloak round-trip, or a voms-token-service mint) — instead
         of the N-1 redundant callers reusing the one already in flight.
         Callers are expected to have already called ``get()`` and found a
         miss before calling this; it only serializes what happens *after*
@@ -322,7 +313,8 @@ class CredentialCache:
 
         *expires_at* is epoch seconds (UTC). When omitted a default TTL of
         ``_DEFAULT_TTL_SECONDS`` is applied.  Pass ``proxy_meta`` for x509
-        credentials so ``revoke()`` can zero-overwrite the proxy file.
+        credentials so ``get_proxy_meta()`` can serve their parsed
+        attributes.
 
         *uid*, when given, resets that uid's failed-unlock counter -- a
         successful put means a legitimate re-authentication (e.g. a correct
@@ -348,26 +340,6 @@ class CredentialCache:
             expires_at=expires_at,
         )
 
-    async def _pop_and_cleanup(self, subject: str, target: str) -> _CacheEntry | None:
-        """Remove and return the cache entry for *(subject, target)*, if any -- securely deleting its x509 proxy file first.
-
-        Shared body for ``revoke()`` and ``_expire()``: both need to drop the
-        entry and scrub any on-disk proxy material before it disappears from
-        the cache; they differ only in whether the identity-change signal
-        (``on_revoke``) follows.
-        """
-        key = (subject, target)
-        entry = self._entries.pop(key, None)
-        # proxy_path is None for Vault-persisted proxies (no local file to
-        # delete; X509Provider.revoke clears the Vault copy itself).
-        if (
-            entry is not None
-            and entry.proxy_meta is not None
-            and entry.proxy_meta.proxy_path is not None
-        ):
-            await _secure_delete_proxy(entry.proxy_meta.proxy_path)
-        return entry
-
     @staticmethod
     def _cred_class(entry: _CacheEntry) -> str:
         """Return a loggable class name for *entry*'s stored credential."""
@@ -380,17 +352,13 @@ class CredentialCache:
     async def revoke(self, subject: str, target: str) -> None:
         """Revoke a single cached credential -- an identity-affecting event, unlike plain expiry.
 
-        For x509 credentials, zero-overwrites and unlinks the proxy file on
-        the broker's tmpfs before removing the cache entry.  This prevents
-        the proxy from being read by another process even briefly after revoke.
-
         Calls ``on_revoke(subject, target)`` (if configured) regardless of
         whether anything was actually cached -- a subject's linked identity
         can change (issue #320) even when this cache holds nothing for it
         right now, and a stale aggregator tools/list cache entry from an
         earlier credential state must not survive that change either way.
         Contrast with ``_expire()``, called only by the janitor sweep: it
-        shares this method's cleanup but never calls ``on_revoke``, because a
+        shares this method's entry removal but never calls ``on_revoke``, because a
         credential merely expiring is bookkeeping, not an identity change.
 
         Always logs ``credential_cache.revoked``, with ``had_entry`` recording
@@ -398,7 +366,7 @@ class CredentialCache:
         way, so a revoke that finds nothing cached still invalidates
         downstream state and must still be visible in the logs.
         """
-        entry = await self._pop_and_cleanup(subject, target)
+        entry = self._entries.pop((subject, target), None)
         self._log.info(
             "credential_cache.revoked",
             subject=subject,
@@ -424,8 +392,8 @@ class CredentialCache:
         """Drop an expired cache entry -- bookkeeping, not an identity change.
 
         Called only by the janitor sweep (``_sweep_expired``). Shares
-        ``revoke()``'s cleanup (drops the entry, securely deletes an x509
-        proxy file) but deliberately does NOT call ``on_revoke``: a
+        ``revoke()``'s entry removal but deliberately does NOT call
+        ``on_revoke``: a
         credential merely expiring says nothing about whether the subject's
         linked identity changed, so it must not drop the aggregator's
         per-subject listing cache for that service the way an actual revoke
@@ -433,7 +401,7 @@ class CredentialCache:
         ``credential_cache.expired`` rather than ``credential_cache.revoked``
         so the two are distinguishable in the audit trail.
         """
-        entry = await self._pop_and_cleanup(subject, target)
+        entry = self._entries.pop((subject, target), None)
         if entry is not None:
             self._log.info(
                 "credential_cache.expired",
@@ -535,39 +503,3 @@ class CredentialCache:
     async def sweep_expired(self) -> None:
         """Public alias for the janitor sweep — useful in tests and admin tooling."""
         await self._sweep_expired()
-
-
-# ------------------------------------------------------------------
-# Internal helpers
-# ------------------------------------------------------------------
-
-
-async def _secure_delete_proxy(path: str) -> None:
-    """Zero-overwrite *path* then unlink it.
-
-    The goal is to make the proxy bytes unrecoverable from the tmpfs even if
-    another process has the path.  We overwrite with NUL bytes first so that
-    the file content is gone before the directory entry is removed.
-    """
-    try:
-        size = (await anyio.Path(path).stat()).st_size
-        # Run the blocking I/O on the default executor to avoid stalling the loop
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _overwrite_and_unlink, path, size)
-    except FileNotFoundError:
-        pass  # already gone — that is fine
-    except OSError as exc:
-        log.warning("credential_cache.proxy_delete_error", path=path, error=str(exc))
-
-
-def _overwrite_and_unlink(path: str, size: int) -> None:
-    """Blocking: overwrite *path* with zeros then unlink."""
-    try:
-        with Path(path).open("r+b") as fh:
-            fh.write(b"\x00" * size)
-            fh.flush()
-            os.fsync(fh.fileno())
-    except OSError:
-        pass  # best-effort
-    with contextlib.suppress(FileNotFoundError):
-        Path(path).unlink()

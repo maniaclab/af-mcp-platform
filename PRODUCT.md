@@ -95,8 +95,9 @@ URL without multiplying the number of places a client must trust with credential
   authoritative registry).
 - Credentials: provider classes behind `CredentialProvider` (oidc, oauth21, x509,
   service); minted credentials are cached in-process by `(subject, target)` with
-  expiry sweeping. x509 proxies are minted via ephemeral k8s Jobs that NFS-subPath-mount
-  the user's `~/.globus`; the passphrase is used once, never stored.
+  expiry sweeping. x509 proxies are minted by voms-token-service, which mounts
+  the user's `~/.globus`; the proxy and (unless the user declines) the passphrase
+  are stored in Vault for hands-free renewal.
 - Hard external constraint: Keycloak Standard Token Exchange (V2) tokens are accepted
   only by AF-internal services — `atlas-auth.cern.ch` rejects them. Any credential for
   external ATLAS services must instead use Keycloak's stored brokered token

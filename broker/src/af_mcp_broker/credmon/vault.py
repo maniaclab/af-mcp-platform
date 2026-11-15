@@ -20,8 +20,8 @@ class VaultSubjectSource(SubjectSource):
     Every per-user store keys its records at ``{prefix}/{subject}/{kind}``
     (credentials/x509_vault.py, krb5_vault.py, servicex_vault.py), so the
     folder children of ``{prefix}`` are exactly the subjects with a record.
-    A kind with no configured prefix (e.g. legacy-mode x509, which has no
-    Vault store) enumerates nothing.
+    A kind with no configured prefix (e.g. one with no identity_providers
+    entry, which has no Vault store) enumerates nothing.
     """
 
     def __init__(self, vault_kv: VaultKV, *, prefixes: Mapping[str, str]) -> None:

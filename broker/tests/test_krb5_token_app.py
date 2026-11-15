@@ -59,9 +59,8 @@ def krb5_token_env(
 ) -> Callable[..., None]:
     """Point the app at a krb5-token identity provider and (optionally) a real signing key on disk and a stubbed Vault connection.
 
-    A krb5-token entry always requires Vault to be configured -- unlike
-    x509 there is no legacy/service-mode split (service_url is mandatory on
-    every entry), and a given entry can't declare ahead of time whether any
+    A krb5-token entry always requires Vault to be configured
+    (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any
     caller will ever check "remember" (config.py's _validate_vault_config).
     Vault is therefore stubbed by default here the same way
     test_x509_service_mode.py's ``voms_service_env`` stubs it: VaultKV's
@@ -78,10 +77,15 @@ def krb5_token_env(
             key_file = tmp_path / "signing-key.pem"
             key_file.write_bytes(_private_pem(_make_rsa_key()))
             monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+        else:
+            monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
         if with_vault:
             monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
             monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
             monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
+        else:
+            monkeypatch.delenv("VAULT_ADDR", raising=False)
+            monkeypatch.delenv("VAULT_AUTH_ROLE", raising=False)
 
     return _apply
 

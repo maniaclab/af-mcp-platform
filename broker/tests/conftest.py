@@ -25,13 +25,20 @@ import jwt
 import pytest
 import structlog
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+)
 from fastapi.testclient import TestClient
 from fastmcp.utilities.asgi_transport import StreamingASGITransport, run_asgi_lifespan
 from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import ASGIServer, asgi_server
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
+from x509_fakes import FakeX509Store
 
+from af_mcp_broker import app as broker_app_module
 from af_mcp_broker import identity
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
@@ -52,6 +59,7 @@ from af_mcp_broker.principal_directory import (
     PrincipalDirectory,
     PrincipalDisabledError,
 )
+from af_mcp_broker.vault_kv import VaultKV
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
 # lets legacy reads like `tool.inputSchema`/`result.isError` keep working
@@ -76,11 +84,11 @@ SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 # targets, so `bearer`-auth backends (e.g. "rucio" in SHIPPED_SERVICES) still
 # resolve to an OIDCProvider instance the way they did before issue #66 PR4
 # replaced the single `oidc_idp_alias`-derived singleton with per-entry
-# `identity_providers` config; plus a legacy-mode x509 entry (no
-# `service_url`) covering SHIPPED_SERVICES' "ami" — every `auth_type: x509`
-# backend must be covered by an explicit entry or the broker refuses to
-# start (app.py's `_validate_x509_provider_targets`), so this fixture
-# supplies the minimal one the shipped services.yaml needs. Tests that care
+# `identity_providers` config; plus an x509 entry covering SHIPPED_SERVICES'
+# "ami" — every `auth_type: x509` backend must be covered by an explicit
+# entry or the broker refuses to start (app.py's
+# `_validate_x509_provider_targets`), so this fixture supplies the minimal
+# one the shipped services.yaml needs. Tests that care
 # about a specific `identity_providers` shape (test_identities.py,
 # test_oauth21*.py, test_wellknown_cimd.py) override IDENTITY_PROVIDERS
 # themselves.
@@ -101,6 +109,7 @@ _DEFAULT_IDENTITY_PROVIDERS = [
             "grid certificate"
         ),
         "targets": ["ami"],
+        "service_url": "http://voms-token-service.invalid:8000",
     },
 ]
 
@@ -222,6 +231,67 @@ def sig_key() -> RsaKey:
 @pytest.fixture(scope="session")
 def enc_key() -> RsaKey:
     return _make_key("enc-key")
+
+
+# Session-scoped for the same reason as sig_key/enc_key: the shipped
+# services need the broker to sign AF Broker Identity Tokens, and every
+# app_client_factory boot loads this one on-disk key.
+@pytest.fixture(scope="session")
+def broker_signing_key_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key_file = tmp_path_factory.mktemp("broker-signing-key") / "signing-key.pem"
+    key_file.write_bytes(
+        key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+    )
+    return key_file
+
+
+async def _fake_vault_authenticate(self: VaultKV) -> str:
+    return "vault-test-token"
+
+
+def configure_x509_service_env(
+    monkeypatch: pytest.MonkeyPatch, signing_key_file: Path
+) -> None:
+    """Give the broker what the shipped services (x509 "ami") need to boot.
+
+    x509 mints through voms-token-service with broker-signed identity tokens
+    and persists in Vault, so the broker refuses to boot without a signing
+    key or a Vault connection. VaultKV's startup trial auth is faked out
+    rather than requiring a real Vault, and the x509 link/proxy store is an
+    in-memory fake (no Vault KV traffic); tests that need a linked principal
+    seed it through ``client.app.state.x509_provider.vault_store``.
+    """
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(signing_key_file))
+    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
+    monkeypatch.setattr(VaultKV, "_authenticate", _fake_vault_authenticate)
+    monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+    monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
+    x509_store = FakeX509Store()
+    monkeypatch.setattr(broker_app_module, "VaultX509Store", lambda **_: x509_store)
+
+
+def configure_keyless_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Boot with no signing key and nothing that needs one.
+
+    Replaces ``app_client_factory``'s default services/identity wiring (whose
+    x509 "ami" requires the signing key) with a lone ``auth_type: none``
+    service and no ``identity_providers`` entries, for tests that exercise
+    behavior when the broker identity-token feature is entirely unconfigured.
+    """
+    services_file = tmp_path / "keyless-services.yaml"
+    services_file.write_text(
+        "services:\n"
+        "  - name: docs\n"
+        "    prefix: docs\n"
+        "    url: http://docs.invalid/mcp\n"
+        "    auth_type: none\n"
+        "    required_permission: __none__\n"
+    )
+    monkeypatch.setenv("SERVICES_FILE", str(services_file))
+    monkeypatch.setenv("IDENTITY_PROVIDERS", "[]")
+    monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
+    monkeypatch.delenv("BROKER_PUBLIC_ORIGIN", raising=False)
 
 
 @pytest.fixture(scope="session")
@@ -690,7 +760,7 @@ def make_principal() -> Callable[..., object]:
 def app_client_factory(
     monkeypatch: pytest.MonkeyPatch,
     make_principal: Callable[..., object],
-    tmp_path: Path,
+    broker_signing_key_file: Path,
 ) -> Callable[..., Any]:
     """Context manager that boots the real app against the shipped YAML.
 
@@ -713,17 +783,7 @@ def app_client_factory(
     # directory this stands up is never actually queried.
     monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_ID", "test-admin-client")
     monkeypatch.setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-admin-secret")
-
-    # X509Provider.is_linked() checks for a real usercert.pem/userkey.pem pair
-    # under HOME_ROOT/<unixname>/.globus/ — pre-create that pair for the
-    # default test principal's unixname ("tuser") so tests exercising the
-    # x509 "ami" target (cache-miss -> NeedsUnlockError -> 409) see a *linked*
-    # principal, same as before this pre-check existed.
-    globus_dir = tmp_path / "tuser" / ".globus"
-    globus_dir.mkdir(parents=True)
-    (globus_dir / "usercert.pem").write_text("fake-cert")
-    (globus_dir / "userkey.pem").write_text("fake-key")
-    monkeypatch.setenv("HOME_ROOT", str(tmp_path))
+    configure_x509_service_env(monkeypatch, broker_signing_key_file)
 
     @contextmanager
     def _factory() -> Iterator[tuple[TestClient, dict]]:

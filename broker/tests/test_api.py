@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 import structlog.testing
 from cryptography.fernet import Fernet
+from x509_fakes import seed_x509_link, seed_x509_proxy
 
 from af_mcp_broker.app import app
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -195,6 +196,7 @@ def test_catalog_reflects_permissions(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=[])
+    seed_x509_link(client.app.state.x509_provider.vault_store)
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     servers = {s["name"]: s for s in resp.json()["servers"]}
@@ -825,6 +827,7 @@ def test_catalog_credential_provider_oauth21_direct(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
@@ -848,10 +851,11 @@ def test_credential_unknown_target_404(app_client: tuple[TestClient, dict]) -> N
 
 def test_credential_x509_needs_unlock_409(app_client: tuple[TestClient, dict]) -> None:
     client, _ = app_client
-    # ami is x509; the app_client fixture pre-creates a fake usercert/userkey
-    # pair so is_linked() reports True. With an empty cache and no passphrase
-    # the provider then raises NeedsUnlockError, which the endpoint maps to 409 +
-    # unlock_endpoint.
+    # ami is x509. A stored proxy about to expire with no stored passphrase
+    # (a remember=false link) makes is_linked() report True, but nothing can
+    # renew it: with an empty cache and no passphrase the provider raises
+    # NeedsUnlockError, which the endpoint maps to 409 + unlock_endpoint.
+    seed_x509_proxy(client.app.state.x509_provider.vault_store, remaining=100.0)
     resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]

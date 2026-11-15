@@ -59,6 +59,8 @@ def condor_token_env(
             key_file = tmp_path / "signing-key.pem"
             key_file.write_bytes(_private_pem(_make_rsa_key()))
             monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+        else:
+            monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
 
     return _apply
 

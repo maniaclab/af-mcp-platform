@@ -7,11 +7,9 @@ the Identities row a synthetic entry. Normalizing it into an
 `X509ProviderConfig` entry (type "x509") removes those special cases while
 keeping the wire behavior — backend-side proxy redemption — unchanged.
 
-**Breaking change**: `VOMS_TOKEN_SERVICE_URL` (and its `_AUDIENCE`/`_VOMS`/
-`_VALID` companions) have been removed entirely, along with the synthesis
-that once covered an entry-less `auth_type: x509` backend. Every such
-backend now needs an explicit `identity_providers` entry, full stop — there
-is no fallback.
+Every `auth_type: x509` backend needs an explicit `identity_providers`
+entry carrying the voms-token-service `service_url`, full stop — there is no
+fallback.
 
 Covered here:
 
@@ -23,9 +21,8 @@ Covered here:
   required_permission consolidation.
 * Full-boot wiring — per-entry service_url/voms/valid/audience reaching
   VomsTokenServiceClient, multiple entries resolving to distinct providers,
-  the service-mode signing-key requirement (fail-closed, mirroring the
-  broker-issued/condor-token check), and the keyless-legacy-entry carve-out
-  (warning, not error).
+  and the signing-key requirement (fail-closed, mirroring the
+  broker-issued/condor-token check).
 """
 
 from __future__ import annotations
@@ -37,17 +34,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
-from test_x509_service_mode import _PEM, FakeVomsClient, FakeX509Store
+from x509_fakes import PEM as _PEM
+from x509_fakes import FakeVomsClient, FakeX509Store
 
-import af_mcp_broker.app as app_module
 from af_mcp_broker.app import _validate_x509_provider_targets
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
     X509ProviderConfig,
 )
 from af_mcp_broker.credentials import X509Provider
-from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -78,22 +73,6 @@ def _x509_entry(**overrides: Any) -> dict[str, Any]:
     return entry
 
 
-@pytest.fixture
-def warning_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
-    """Capture app_module.logger.warning events (configure_logging rewrites
-    root handlers during the lifespan, swallowing caplog — same pattern as
-    test_health.py's startup-warning test)."""
-    events: list[tuple[str, dict]] = []
-    original_warning = app_module.logger.warning
-
-    def _capture(event: str, **kwargs: Any) -> Any:
-        events.append((event, kwargs))
-        return original_warning(event, **kwargs)
-
-    monkeypatch.setattr(app_module.logger, "warning", _capture)
-    return events
-
-
 # ---------------------------------------------------------------------------
 # _validate_x509_provider_targets — fail-closed drift protection between
 # `auth_type: x509` backends and explicit entry targets. Universal: there is
@@ -104,14 +83,26 @@ def warning_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
 
 class TestValidateTargets:
     def test_exact_coverage_passes(self) -> None:
-        cfgs = [X509ProviderConfig(alias="x509", targets=["ami", "panda"])]
+        cfgs = [
+            X509ProviderConfig(
+                alias="x509",
+                targets=["ami", "panda"],
+                service_url="http://voms-token-service.invalid",
+            )
+        ]
 
         _validate_x509_provider_targets(cfgs, {"ami", "panda"})  # must not raise
 
     def test_uncovered_x509_backend_refuses_to_start(self) -> None:
         """An auth_type: x509 backend no explicit entry targets would have no
         provider (and no catalog alias) at all — refuse to boot naming it."""
-        cfgs = [X509ProviderConfig(alias="x509", targets=["ami"])]
+        cfgs = [
+            X509ProviderConfig(
+                alias="x509",
+                targets=["ami"],
+                service_url="http://voms-token-service.invalid",
+            )
+        ]
 
         with pytest.raises(RuntimeError, match="panda"):
             _validate_x509_provider_targets(cfgs, {"ami", "panda"})
@@ -121,7 +112,13 @@ class TestValidateTargets:
         typo or a stale services.yaml — the aggregator would never inject an
         identity JWT for it and the redeem endpoint would reject its
         audience, so the entry silently does nothing. Refuse to boot."""
-        cfgs = [X509ProviderConfig(alias="x509", targets=["ami", "rucio"])]
+        cfgs = [
+            X509ProviderConfig(
+                alias="x509",
+                targets=["ami", "rucio"],
+                service_url="http://voms-token-service.invalid",
+            )
+        ]
 
         with pytest.raises(RuntimeError, match="rucio"):
             _validate_x509_provider_targets(cfgs, {"ami"})
@@ -141,7 +138,11 @@ class TestValidateTargets:
         a bearer backend is the pre-existing, valid shape."""
         cfgs = [
             KeycloakBrokeredProviderConfig(alias="atlas-oidc", targets=["rucio"]),
-            X509ProviderConfig(alias="x509", targets=["ami"]),
+            X509ProviderConfig(
+                alias="x509",
+                targets=["ami"],
+                service_url="http://voms-token-service.invalid",
+            ),
         ]
 
         _validate_x509_provider_targets(cfgs, {"ami"})  # must not raise
@@ -150,28 +151,6 @@ class TestValidateTargets:
 # ---------------------------------------------------------------------------
 # Full-boot wiring
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def signing_key_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
-    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
-
-
-@pytest.fixture
-def vault_stub_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Vault connection settings + a stubbed startup trial auth, so a
-    service-mode entry can boot without a Vault deployment (same stub as
-    test_x509_service_mode's TestAppWiring)."""
-
-    async def _fake_authenticate(self: VaultKV) -> str:
-        return "vault-test-token"
-
-    monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
-    monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
-    monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
 
 def _set_backends(
@@ -192,8 +171,6 @@ def _set_identity_providers(
 class TestBootWiring:
     def test_explicit_service_entry_wires_per_entry_settings(
         self,
-        signing_key_env: None,
-        vault_stub_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
@@ -209,7 +186,6 @@ class TestBootWiring:
         with app_client_factory() as (client, _):
             provider = client.app.state.x509_provider
             assert isinstance(provider, X509Provider)
-            assert provider.uses_voms_service is True
             voms_client = provider._voms_client
             assert voms_client._mint_endpoint == f"{_SERVICE_URL}/v1/mint"
             assert voms_client._voms == "dune"
@@ -218,31 +194,24 @@ class TestBootWiring:
             # The catalog join uses the real entry alias.
             assert client.app.state.target_to_alias["ami"] == "x509"
 
-    def test_explicit_legacy_entry_boots_and_registers_targets(
+    def test_explicit_entry_registers_targets_under_its_alias(
         self,
-        signing_key_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
     ) -> None:
-        """An entry without service_url selects the legacy mint path — under
-        an operator-chosen alias."""
+        """An entry registers its targets under an operator-chosen alias."""
         _set_backends(monkeypatch, tmp_path)
-        _set_identity_providers(
-            monkeypatch, [_x509_entry(alias="grid-cert", service_url=None)]
-        )
+        _set_identity_providers(monkeypatch, [_x509_entry(alias="grid-cert")])
 
         with app_client_factory() as (client, _):
             provider = client.app.state.x509_provider
             assert isinstance(provider, X509Provider)
-            assert provider.uses_voms_service is False
             assert client.app.state.target_to_alias["ami"] == "grid-cert"
             assert "grid-cert" in client.app.state.identity_providers
 
     def test_multiple_entries_resolve_to_distinct_providers(
         self,
-        signing_key_env: None,
-        vault_stub_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
@@ -293,8 +262,6 @@ class TestBootWiring:
 class TestBootValidation:
     def test_uncovered_x509_backend_refuses_to_start(
         self,
-        signing_key_env: None,
-        vault_stub_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
@@ -318,8 +285,6 @@ class TestBootValidation:
 
     def test_entry_targeting_non_x509_backend_refuses_to_start(
         self,
-        signing_key_env: None,
-        vault_stub_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
@@ -334,18 +299,15 @@ class TestBootValidation:
 
     def test_explicit_service_entry_without_signing_key_refuses_to_start(
         self,
-        vault_stub_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
     ) -> None:
         """The aggregator injects broker-signed identity JWTs for x509
         targets and the redeem endpoint verifies them, and in service mode
-        voms-token-service mint calls are authenticated the same way -- so a
-        service-mode entry (``service_url`` set) requires the signing key —
-        fail-closed, mirroring the broker-issued/condor-token check. (A
-        keyless LEGACY entry — ``service_url`` None — keeps the pre-existing
-        loud warning instead of failing; see the test below.)"""
+        voms-token-service mint calls are authenticated the same way -- so an
+        x509 entry requires the signing key — fail-closed, mirroring the
+        broker-issued/condor-token check."""
         monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
         _set_backends(monkeypatch, tmp_path)
         _set_identity_providers(monkeypatch, [_x509_entry()])
@@ -364,35 +326,12 @@ class TestBootValidation:
     ) -> None:
         """There is no synthesized fallback: an entry-less deployment with an
         ``auth_type: x509`` backend refuses to boot naming it -- an operator
-        must declare an explicit entry, even a bare legacy one, for every
-        such backend."""
+        must declare an explicit entry for every such backend."""
         _set_backends(monkeypatch, tmp_path)
         _set_identity_providers(monkeypatch, [])
 
         with pytest.raises(RuntimeError, match="ami"), app_client_factory():
             pass  # pragma: no cover - boot must fail before yielding
-
-    def test_explicit_legacy_entry_without_signing_key_warns_instead_of_failing(
-        self,
-        warning_events: list[tuple[str, dict]],
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        app_client_factory: Callable[..., Any],
-    ) -> None:
-        """A keyless legacy entry (``service_url`` None) still boots -- it
-        mints via the k8s-Job/local-dev path, which needs no broker-signed
-        token -- with a loud warning that x509 backends can't be called over
-        /mcp until the signing key is mounted."""
-        monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
-        _set_backends(monkeypatch, tmp_path)
-        _set_identity_providers(monkeypatch, [_x509_entry(service_url=None)])
-
-        with app_client_factory():
-            pass
-
-        assert any(
-            event == "x509_services_without_signing_key" for event, _ in warning_events
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -415,22 +354,21 @@ class TestPerTargetResolution:
     @pytest.fixture
     def two_entry_app(
         self,
-        signing_key_env: None,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
     ):
-        """Boot with two legacy-mode x509 entries (no Vault needed at boot),
-        then flip the SECOND entry's provider into service mode with fakes —
-        the first stays legacy, so any endpoint that wrongly falls back to
-        the default provider takes the wrong mint/redeem path."""
+        """Boot with two x509 entries, then give the SECOND entry's provider
+        its own fakes — the first keeps the default ones, so any endpoint that
+        wrongly falls back to the default provider consults the wrong store
+        and voms client."""
 
         _set_backends(monkeypatch, tmp_path, _TWO_ENTRY_BACKENDS_YAML)
         _set_identity_providers(
             monkeypatch,
             [
-                _x509_entry(service_url=None),
-                _x509_entry(alias="x509-dune", targets=["dune-mcp"], service_url=None),
+                _x509_entry(),
+                _x509_entry(alias="x509-dune", targets=["dune-mcp"]),
             ],
         )
         with app_client_factory() as (client, state):
@@ -439,14 +377,13 @@ class TestPerTargetResolution:
             store = FakeX509Store()
             dune_provider._vault_store = store
             dune_provider._voms_client = FakeVomsClient()
-            assert dune_provider.uses_voms_service is True
-            # The default provider (first x509 target, "ami") stays legacy.
-            assert client.app.state.x509_provider.uses_voms_service is False
+            # The default provider (first x509 target, "ami") keeps its own.
+            assert client.app.state.x509_provider is not dune_provider
             yield client, store, state
 
     def test_redeem_resolves_the_target_entry_provider(self, two_entry_app) -> None:
         """Redeeming aud=dune-mcp must consult the dune entry's Vault store,
-        not the default (legacy) provider's tmpfs path."""
+        not the default provider's."""
 
         client, store, _state = two_entry_app
         subject = "sub-abc"

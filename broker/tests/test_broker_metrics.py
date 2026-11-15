@@ -129,8 +129,8 @@ def test_tool_duration_seconds_labeled_by_service_tool_action_type():
         "action_type",
     }
     assert not _FORBIDDEN_LABEL_NAMES & set(metrics.tool_duration_seconds._labelnames)
-    # Buckets sized for tool calls that can include credential minting via
-    # ephemeral k8s Jobs (tens of seconds to minutes), plus the implicit +Inf.
+    # Buckets sized for tool calls that can include credential minting at
+    # voms-token-service (tens of seconds to minutes), plus the implicit +Inf.
     assert metrics.tool_duration_seconds._upper_bounds == [
         0.05,
         0.1,

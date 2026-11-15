@@ -8,16 +8,13 @@ The route is a thin authenticated proxy: it resolves the caller's x509
 — the checklist shape is voms-token-service's contract, not the broker's.
 
 Status mapping: 404 when no x509 target is configured (or the caller has no
-POSIX identity to preflight for), 501 for a legacy entry (no service_url —
-there is no service to ask), 502 when the service is unreachable/timing
+POSIX identity to preflight for), 502 when the service is unreachable/timing
 out/erroring.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-
-from test_x509_service_mode import FakeX509Store
 
 from af_mcp_broker.credentials.errors import VomsServicePreflightError
 
@@ -76,15 +73,12 @@ class FakePreflightClient:
         return self.outcome
 
 
-def _enable_service_mode(
+def _use_preflight_client(
     client: TestClient, outcome: dict[str, Any] | Exception | None = None
 ) -> FakePreflightClient:
-    """Flip the app's default legacy x509 provider into service mode with a scriptable fake client (same pattern as test_identities' service-mode test)."""
+    """Point the app's default x509 provider at a scriptable fake voms-token-service client."""
     fake = FakePreflightClient(outcome)
-    provider = client.app.state.x509_provider
-    provider._voms_client = fake
-    provider._vault_store = FakeX509Store()
-    assert provider.uses_voms_service is True
+    client.app.state.x509_provider._voms_client = fake
     return fake
 
 
@@ -93,7 +87,7 @@ class TestPreflightRoute:
         self, app_client: tuple[TestClient, dict]
     ) -> None:
         client, _ = app_client
-        _enable_service_mode(client)
+        _use_preflight_client(client)
 
         resp = client.get("/v1/x509/preflight", headers=_AUTH)
 
@@ -104,7 +98,7 @@ class TestPreflightRoute:
         self, app_client: tuple[TestClient, dict]
     ) -> None:
         client, _ = app_client
-        fake = _enable_service_mode(client)
+        fake = _use_preflight_client(client)
 
         client.get("/v1/x509/preflight", headers=_AUTH)
 
@@ -118,7 +112,7 @@ class TestPreflightRoute:
         """No unixname means there is nothing to preflight — same actionable
         message as the mint path's PosixIdentityRequiredError."""
         client, state = app_client
-        fake = _enable_service_mode(client)
+        fake = _use_preflight_client(client)
         state["principal"] = make_principal(uid=None, gid=None, unixname=None)
 
         resp = client.get("/v1/x509/preflight", headers=_AUTH)
@@ -127,21 +121,11 @@ class TestPreflightRoute:
         assert "POSIX" in resp.json()["detail"]
         assert fake.calls == []
 
-    def test_501_for_a_legacy_entry(self, app_client: tuple[TestClient, dict]) -> None:
-        """conftest's default x509 entry has no service_url — there is no
-        voms-token-service to ask, so the checklist cannot exist."""
-        client, _ = app_client
-
-        resp = client.get("/v1/x509/preflight", headers=_AUTH)
-
-        assert resp.status_code == 501, resp.text
-        assert "voms-token-service" in resp.json()["detail"]
-
     def test_502_when_the_service_is_unreachable(
         self, app_client: tuple[TestClient, dict]
     ) -> None:
         client, _ = app_client
-        _enable_service_mode(
+        _use_preflight_client(
             client, VomsServicePreflightError("voms-token-service unreachable")
         )
 
@@ -153,7 +137,7 @@ class TestPreflightRoute:
         self, app_client: tuple[TestClient, dict]
     ) -> None:
         client, _ = app_client
-        _enable_service_mode(client)
+        _use_preflight_client(client)
 
         resp = client.get(
             "/v1/x509/preflight", params={"target": "nope"}, headers=_AUTH

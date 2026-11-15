@@ -87,8 +87,8 @@ class AuditRecord:
     # grepping the audit trail during an incident (nickname-resolution bug,
     # VOMS AC parsing regression, a user who changed their Globus identity)
     # needs to query which account a released proxy was good for. Null for
-    # every non-x509 record, and for the legacy redeem path whose ProxyMeta
-    # cache carries no nickname.
+    # every non-x509 record, and for a proxy whose VOMS attributes carry no
+    # nickname.
     nickname: str | None = None
     # Failure classification, observability only (issue #216 A.3): on an
     # outcome="error" record, "transient_connection" when the backend call

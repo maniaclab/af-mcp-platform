@@ -447,7 +447,7 @@ class TestRedeem:
         self, krb5_redeem_env, app_client_factory, captured_audits
     ) -> None:
         """Mirrors x509's success-path audit (_release_audit's
-        outcome="success" record on redeem_x509_proxy's legacy path): the
+        outcome="success" record on redeem_x509_proxy): the
         ccache material itself must never appear in the record, only
         subject/target/outcome and the resolved principal metadata."""
         krb5_redeem_env()
@@ -706,7 +706,7 @@ class TestKeylessBoot:
     ) -> None:
         """Mirrors test_x509_redeem.py's
         test_x509_backend_without_signing_key_boots_and_503s_redeem, adapted
-        for krb5: unlike x509 there is no legacy/service-mode split -- ANY
+        for krb5: ANY
         krb5-token identity_providers entry always implies the signing key
         requirement (app.py's fail-closed check groups krb5-token in with
         broker-issued/condor-token), so the only way to reach a booted app

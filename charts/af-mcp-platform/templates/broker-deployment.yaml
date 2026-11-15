@@ -166,15 +166,6 @@ spec:
               mountPath: /etc/af-mcp/services.yaml
               subPath: services.yaml
               readOnly: true
-            {{- if .Values.broker.homeDir.enabled }}
-            - name: home-dir
-              mountPath: {{ .Values.broker.homeDir.mountPath | quote }}
-              readOnly: {{ .Values.broker.homeDir.readOnly }}
-            {{- end }}
-            {{- if .Values.broker.tmpfsProxy.enabled }}
-            - name: proxy-tmpfs
-              mountPath: {{ .Values.broker.tmpfsProxy.mountPath | quote }}
-            {{- end }}
             {{- if .Values.broker.identityToken.existingSigningKeySecret }}
             - name: identity-token-signing-key
               mountPath: /etc/af-mcp/identity-token
@@ -197,32 +188,6 @@ spec:
         - name: services
           configMap:
             name: {{ include "af-mcp-platform.fullname" . }}-services
-        {{- if .Values.broker.homeDir.enabled }}
-        - name: home-dir
-          {{- if eq .Values.broker.homeDir.mode "pvc" }}
-          persistentVolumeClaim:
-            claimName: {{ .Values.broker.homeDir.claimName | quote }}
-            readOnly: {{ .Values.broker.homeDir.readOnly }}
-          {{- else if eq .Values.broker.homeDir.mode "csi" }}
-          csi:
-            driver: {{ .Values.broker.homeDir.csi.driver | quote }}
-            {{- with .Values.broker.homeDir.csi.volumeAttributes }}
-            volumeAttributes:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
-          {{- else if eq .Values.broker.homeDir.mode "hostPath" }}
-          # WARNING: hostPath is for local development only. Never use in production.
-          hostPath:
-            path: {{ .Values.broker.homeDir.hostPath | quote }}
-            type: Directory
-          {{- end }}
-        {{- end }}
-        {{- if .Values.broker.tmpfsProxy.enabled }}
-        - name: proxy-tmpfs
-          emptyDir:
-            medium: Memory
-            sizeLimit: {{ .Values.broker.tmpfsProxy.sizeLimit | quote }}
-        {{- end }}
         {{- if .Values.broker.identityToken.existingSigningKeySecret }}
         - name: identity-token-signing-key
           secret:

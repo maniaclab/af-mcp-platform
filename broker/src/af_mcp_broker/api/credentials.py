@@ -4,7 +4,6 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
-import anyio
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
@@ -78,10 +77,9 @@ class IssuedCredential(BaseModel):
     expires_at: str | None
     remaining_seconds: int | None
     # bearer credentials carry a token the aggregator injects server-side.
-    # x509 credentials return only handle/path metadata — never the PEM.
+    # x509 credentials return only handle metadata — never the PEM.
     token: str | None = None
     proxy_handle: str | None = None
-    proxy_path: str | None = None
 
 
 class ProxyRequest(BaseModel):
@@ -93,11 +91,10 @@ class ProxyRequest(BaseModel):
     voms: str = "atlas"
     # Which x509 target to mint for; defaults to the first configured x509 target.
     target: str | None = None
-    # Custody consent (service mode): True — store the passphrase in Vault
-    # for hands-free renewal (the pre-toggle behavior, and the default so
-    # existing callers are unchanged); False — mint and store the proxy but
-    # never persist the passphrase, so the link lasts exactly the proxy's
-    # validity window. Legacy mode never persists a passphrase either way.
+    # Custody consent: True — store the passphrase in Vault for hands-free
+    # renewal (the default); False — mint and store the proxy but never
+    # persist the passphrase, so the link lasts exactly the proxy's validity
+    # window.
     remember: bool = True
 
 
@@ -197,11 +194,9 @@ class ProxyCacheStatus(BaseModel):
     voms_attributes: list[str] = []
     expires_at: str | None = None
     remaining_seconds: int | None = None
-    # VOMS nickname attribute (issue #191) — same field/gap as
-    # ProxyRedeemResponse.nickname -- populated in voms-token-service
-    # (Vault-backed) mode, None on the legacy cache path (ProxyMeta has no
-    # such field). Lets the portal show the resolved CERN/Rucio account for
-    # the user to visually confirm.
+    # VOMS nickname attribute (issue #191) — same field as
+    # ProxyRedeemResponse.nickname. Lets the portal show the resolved
+    # CERN/Rucio account for the user to visually confirm.
     nickname: str | None = None
 
 
@@ -225,8 +220,8 @@ class ProxyRedeemResponse(BaseModel):
     # VOMS nickname attribute (issue #191) — the subject's CERN/Rucio
     # account, which AF unixnames do not match; consumed by
     # af_credentials.proxy.ProxyClient so backends (e.g. rucio-mcp) have a
-    # source of truth other than account=None. None on the legacy
-    # (non-Vault) redeem path, which has no such field to plumb it through.
+    # source of truth other than account=None. None when the VOMS attribute
+    # extraction found no nickname.
     nickname: str | None = None
 
 
@@ -448,12 +443,11 @@ def _to_response(cred: _IssuedCredential) -> IssuedCredential:
     }
     if cred.kind == CredentialKind.BEARER:
         return IssuedCredential(token=cred.payload.get("access_token"), **common)
-    if cred.kind in (CredentialKind.X509_PROXY_REF, CredentialKind.X509_PROXY_REDEEM):
-        # proxy_path is absent for the redeem kind — the PEM lives in Vault
-        # and backends fetch it via POST /v1/credentials/x509/redeem.
+    if cred.kind == CredentialKind.X509_PROXY_REDEEM:
+        # The PEM lives in Vault and backends fetch it via
+        # POST /v1/credentials/x509/redeem.
         return IssuedCredential(
             proxy_handle=cred.payload.get("proxy_handle"),
-            proxy_path=cred.payload.get("proxy_path"),
             **common,
         )
     return IssuedCredential(**common)
@@ -575,9 +569,7 @@ async def create_proxy(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    # voms-token-service mode only (the legacy path raises plain ValueError,
-    # deliberately left to the generic handler so its behavior is unchanged):
-    # a bad passphrase is the caller's 400 to fix; a service infra failure is
+    # A bad passphrase is the caller's 400 to fix; a service infra failure is
     # a 502 that must not read as "wrong passphrase".
     except VomsServiceBadPassphraseError as exc:
         raise HTTPException(
@@ -842,9 +834,8 @@ async def x509_preflight(
     shape is voms-token-service's contract, not the broker's.
 
     Resolved per target like every other /v1/x509 route, since each x509
-    ``identity_providers`` entry may point at its own service. A legacy
-    entry (no ``service_url``) has no service to ask — 501; an unreachable
-    or erroring service is a 502.
+    ``identity_providers`` entry may point at its own service. An
+    unreachable or erroring service is a 502.
     """
     resolved = _resolve_x509_target(request, target)
     provider = await _x509_provider(request, resolved)
@@ -855,19 +846,8 @@ async def x509_preflight(
                 PosixIdentityRequiredError(resolved, settings=provider.settings)
             ),
         )
-    voms_client = provider.voms_client
-    if voms_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=(
-                f"The x509 entry servicing {resolved!r} mints via the legacy "
-                "in-cluster Job path (no service_url configured), so there "
-                "is no voms-token-service to ask for a credential-readiness "
-                "checklist."
-            ),
-        )
     try:
-        return await voms_client.preflight(
+        return await provider.voms_client.preflight(
             subject=principal.subject, unixname=principal.unixname
         )
     except VomsServicePreflightError as exc:
@@ -892,43 +872,27 @@ async def proxy_status(
 ) -> ProxyCacheStatus:
     """Report whether the caller holds a live VOMS proxy for *target*.
 
-    In voms-token-service mode Vault is authoritative — the same rule the
-    redeem path and ``/v1/identities``' ``proxy_expires_at`` already follow:
-    the in-memory ProxyMeta only exists on the replica that minted, so
-    answering from it made this endpoint's answer vary per replica behind
-    round-robin (the portal's active/no-proxy ping-pong). An expired Vault
-    proxy reads as absent (``get_proxy`` is expiry-aware). Legacy mode keeps
-    the in-memory answer — the tmpfs proxy file is per-replica by design
-    there.
+    Vault is authoritative — the same rule the redeem path and
+    ``/v1/identities``' ``proxy_expires_at`` follow: the in-memory ProxyMeta
+    only exists on the replica that minted, so answering from it would make
+    this endpoint's answer vary per replica behind round-robin (the portal's
+    active/no-proxy ping-pong). An expired Vault proxy reads as absent
+    (``get_proxy`` is expiry-aware).
     """
     resolved = _resolve_x509_target(request, target)
     provider = await _x509_provider(request, resolved)
-    if provider.uses_voms_service:
-        store = provider.vault_store
-        # uses_voms_service checked
-        assert store is not None  # noqa: S101
-        record = await store.get_proxy(principal.subject)
-        if record is None:
-            return ProxyCacheStatus(cached=False)
-        # get_proxy only returns records with a proxy; narrow for mypy.
-        assert record.not_after is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
-        return ProxyCacheStatus(
-            cached=True,
-            dn=record.dn,
-            voms_attributes=list(record.voms_attributes),
-            expires_at=_iso(record.not_after),
-            remaining_seconds=max(0, int(record.not_after - time.time())),
-            nickname=record.nickname,
-        )
-    meta = _cache(request).get_proxy_meta(principal.subject, resolved)
-    if meta is None:
+    record = await provider.vault_store.get_proxy(principal.subject)
+    if record is None:
         return ProxyCacheStatus(cached=False)
+    # get_proxy only returns records with a proxy; narrow for mypy.
+    assert record.not_after is not None  # noqa: S101 -- mypy narrowing of an invariant validated upstream
     return ProxyCacheStatus(
         cached=True,
-        dn=meta.dn,
-        voms_attributes=meta.voms_attributes,
-        expires_at=_iso(meta.not_after),
-        remaining_seconds=max(0, int(meta.not_after - time.time())),
+        dn=record.dn,
+        voms_attributes=list(record.voms_attributes),
+        expires_at=_iso(record.not_after),
+        remaining_seconds=max(0, int(record.not_after - time.time())),
+        nickname=record.nickname,
     )
 
 
@@ -990,12 +954,11 @@ def _release_audit(
     error: str | None = None,
     nickname: str | None = None,
 ) -> AuditRecord:
-    """One ``x509_proxy_release`` audit record — shared by the legacy and Vault redeem paths so every release (and every failed renewal) is shaped identically.
+    """One ``x509_proxy_release`` audit record — shared by every release and every failed renewal so they are shaped identically.
 
     ``nickname`` is the resolved VOMS nickname of the released proxy (issue
-    #199) — supplied only on the Vault success path, where the store record
-    carries it; the legacy path (ProxyMeta has no nickname) and every failure
-    path (no proxy resolved) leave it null.
+    #199) — supplied only on the success path, where the store record
+    carries it; every failure path (no proxy resolved) leaves it null.
     """
     return AuditRecord(
         principal_sub=subject,
@@ -1023,26 +986,22 @@ async def _redeem_from_vault(
 ) -> ProxyRedeemResponse:
     """Serve the Vault-stored proxy, renewing hands-free when it has expired.
 
-    The voms-token-service-mode half of ``redeem_x509_proxy``: Vault is
-    authoritative (a leftover tmpfs-cached proxy from before the feature
-    flip is never consulted). An expired proxy with a stored passphrase is
-    re-minted via ``X509Provider.renew_from_stored_link``; a bad-passphrase
+    The body of ``redeem_x509_proxy``: Vault is authoritative. An expired
+    proxy with a stored passphrase is re-minted via
+    ``X509Provider.renew_from_stored_link``; a bad-passphrase
     failure there has already UNLINKED the identity, so the 404 tells the
     user to re-link rather than merely re-mint. Failed renewals write
     ``outcome="error"`` audit records; infra failures keep the link and
     surface as 502.
     """
-    store = provider.vault_store
-    # uses_voms_service checked by the caller
-    assert store is not None  # noqa: S101
-    record = await store.get_proxy(subject)
+    record = await provider.vault_store.get_proxy(subject)
     renewed = False
     if record is None:
         try:
             record = await provider.renew_from_stored_link(subject, audience)
         except NeedsUnlockError as exc:
             if exc.reason == "not_linked":
-                # Same actionable 404 as "nothing cached" on the legacy path.
+                # Same actionable 404 as "nothing cached".
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
                 ) from exc
@@ -1198,64 +1157,19 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
             detail=f"Audience {token_aud!r} is not a configured x509 target",
         )
 
-    # voms-token-service mode: Vault is authoritative — serve the stored
-    # proxy, renewing hands-free with the stored passphrase when it has
-    # expired (issue #112's Vault-backed linking). Resolved per audience:
-    # each x509 identity_providers entry has its own provider (and possibly
-    # its own voms-token-service), so the redeeming backend's target picks
-    # the mode and the mint path.
+    # Vault is authoritative — serve the stored proxy, renewing hands-free
+    # with the stored passphrase when it has expired (issue #112's
+    # Vault-backed linking). Resolved per audience: each x509
+    # identity_providers entry has its own provider (and possibly its own
+    # voms-token-service), so the redeeming backend's target picks the mint
+    # path.
     provider = await _x509_provider(request, audience)
-    if provider.uses_voms_service:
-        return await _redeem_from_vault(
-            provider,
-            subject=subject,
-            audience=audience,
-            uid=claims.get("uid"),
-            request_id=request_id,
-        )
-
-    cache: CredentialCache = _cache(request)
-    meta = cache.get_proxy_meta(subject, audience)
-    now = time.time()
-    # proxy_path is None for Vault-persisted proxies (voms-token-service
-    # mode), which have no local file to read — treat as absent here.
-    if meta is None or meta.not_after <= now or meta.proxy_path is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
-        )
-
-    try:
-        pem = await anyio.Path(meta.proxy_path).read_text()
-    except OSError:
-        # Cached metadata without its file is an inconsistency (e.g. tmpfs
-        # cleared); from the caller's perspective the proxy is simply gone.
-        log.warning(
-            "x509_redeem.proxy_file_missing",
-            subject=subject,
-            target=audience,
-            proxy_path=meta.proxy_path,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_REDEEM_MINT_HINT
-        ) from None
-
-    await write_audit(
-        _release_audit(
-            subject=subject,
-            uid=claims.get("uid"),
-            audience=audience,
-            request_id=request_id,
-            outcome="success",
-            args_summary=f"proxy released to backend {audience!r}",
-        )
-    )
-
-    return ProxyRedeemResponse(
-        pem=pem,
-        dn=meta.dn,
-        voms_attributes=list(meta.voms_attributes),
-        expires_at=_iso(meta.not_after),
-        remaining_seconds=max(0, int(meta.not_after - now)),
+    return await _redeem_from_vault(
+        provider,
+        subject=subject,
+        audience=audience,
+        uid=claims.get("uid"),
+        request_id=request_id,
     )
 
 

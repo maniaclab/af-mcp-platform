@@ -104,6 +104,7 @@ def test_cimd_redirect_uris_use_public_origin(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
@@ -201,6 +202,7 @@ def test_cimd_redirect_uris_exclude_providers_with_own_client_id(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
                 },
