@@ -35,7 +35,6 @@ import {
   type ProxyMetadata,
 } from '../lib/api';
 import {
-  formatProxyExpiry,
   preflightCheckLabel,
   preflightModeMismatch,
   preflightRequiredModeLabel,
@@ -177,16 +176,12 @@ function remainingText(seconds?: number | null): string {
     :status-tone="linked ? 'ok' : 'off'"
     :status-label="linked ? 'Linked' : 'Not linked'"
   >
-    <!-- Custody line: which mode the link is in. Falls back to the plain
-         expiry line for a legacy-mode link, which has no custody concept. -->
+    <!-- Custody line: which mode the link is in. -->
     <p
       v-if="linked && x509LinkModeLabel(props.x509_link_mode, props.proxy_expires_at)"
       class="xc__expiry"
     >
       {{ x509LinkModeLabel(props.x509_link_mode, props.proxy_expires_at) }}
-    </p>
-    <p v-else-if="linked && formatProxyExpiry(props.proxy_expires_at)" class="xc__expiry">
-      Proxy expires {{ formatProxyExpiry(props.proxy_expires_at) }}
     </p>
 
     <!-- Grid Certificates preflight — is the ~/.globus credential in a state

@@ -126,7 +126,7 @@ describe('x509LinkModeLabel', () => {
     }
   });
 
-  it('returns null when there is no mode (unlinked, legacy, non-x509)', () => {
+  it('returns null when there is no mode (unlinked, non-x509)', () => {
     expect(x509LinkModeLabel(null, null)).toBeNull();
     expect(x509LinkModeLabel(undefined, '2026-08-18T21:30:00+00:00')).toBeNull();
   });
@@ -198,11 +198,6 @@ describe('x509PreflightErrorMessage', () => {
     expect(x509PreflightErrorMessage(new SessionExpiredError())).toMatch(/session/i);
   });
 
-  it('maps 501 (legacy entry) to a not-available-here message', () => {
-    const err = new APIError(501, 'Not Implemented', '');
-    expect(x509PreflightErrorMessage(err)).toMatch(/not available/i);
-  });
-
   it('maps 502 to a retry-later message', () => {
     const err = new APIError(502, 'Bad Gateway', '');
     expect(x509PreflightErrorMessage(err)).toMatch(/temporarily unavailable/i);
@@ -210,11 +205,11 @@ describe('x509PreflightErrorMessage', () => {
 
   it('prefers the broker detail when present', () => {
     const err = new APIError(
-      501,
-      'Not Implemented',
-      JSON.stringify({ detail: 'The x509 entry mints via the legacy path.' }),
+      502,
+      'Bad Gateway',
+      JSON.stringify({ detail: 'voms-token-service is unreachable.' }),
     );
-    expect(x509PreflightErrorMessage(err)).toContain('legacy path');
+    expect(x509PreflightErrorMessage(err)).toContain('voms-token-service is unreachable');
   });
 
   it('falls back to a generic message for anything else', () => {

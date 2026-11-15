@@ -67,7 +67,7 @@ export function formatProxyExpiry(iso: string | null | undefined): string | null
  * response's `x509_link_mode` (+ `proxy_expires_at`): "auto-renew" links
  * renew hands-free from the vault-stored passphrase; "until-expiry" links
  * (the user declined passphrase custody) last exactly as long as the proxy.
- * Null when there is no mode — unlinked, a legacy entry, or a non-x509 row —
+ * Null when there is no mode — unlinked or a non-x509 row —
  * so the card simply omits the line.
  */
 export function x509LinkModeLabel(
@@ -114,17 +114,14 @@ export function preflightModeMismatch(check: X509PreflightCheck): boolean {
 /**
  * User-facing message for a failed GET /v1/x509/preflight fetch.
  *
- * The endpoint's contract (broker api/credentials.py::x509_preflight): 501 —
- * the facility's x509 entry mints via the legacy path, so there is no
- * voms-token-service to ask (a permanent state, not a retryable one); 502 —
- * the service is unreachable right now. The broker's own `detail` is
+ * The endpoint's contract (broker api/credentials.py::x509_preflight): 502 —
+ * voms-token-service is unreachable right now. The broker's own `detail` is
  * preferred when present.
  */
 export function x509PreflightErrorMessage(err: unknown): string {
   return describeApiError(err, {
     sessionExpired: 'Session expired — reload the page to re-authenticate.',
     byStatus: {
-      501: 'The certificate checklist is not available on this facility.',
       502: 'The certificate checklist is temporarily unavailable — try again later.',
     },
     fallback: 'Could not load the certificate checklist. Try again.',
