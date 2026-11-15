@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 import mcp.types as mt
@@ -140,15 +139,23 @@ async def test_upstream_mcp_level_error_passes_through_unchanged(
     assert result.content[0].text == "boom from backend"
 
 
-def _toy_backend_with_slow_tool() -> FastMCP:
+def _toy_backend_with_slow_tool(entered: asyncio.Event) -> FastMCP:
     mcp = FastMCP(name="slow-backend")
 
     @mcp.tool
     async def slow() -> str:
-        await asyncio.sleep(2)
-        return "eventually done"
+        entered.set()
+        # Never completes on its own: the only way the caller's call can
+        # return is the aggregator's timeout, whatever the machine's speed.
+        await asyncio.Event().wait()
+        return "unreachable"
 
     return mcp
+
+
+# Upper bound on how long the whole call may take. It only guards against a
+# hang; the assertion that matters is that the call fails with a timeout.
+_HANG_GUARD_SECONDS = 10.0
 
 
 async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
@@ -157,24 +164,32 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
     """ServiceSpec.timeout_seconds must actually be enforced on the wire, not
     just recorded on the Client -- a backend that never responds within that
     window must fail the call quickly with a clean ToolError, rather than
-    the aggregator hanging on it indefinitely."""
+    the aggregator hanging on it indefinitely.
+
+    ServiceSpec.timeout_seconds also bounds the tools/list and initialize
+    round trips (backend_client.build_client), and a failed listing makes the
+    tool "Unknown" rather than slow. The tool is therefore listed under the
+    default timeout first, and the spec's timeout is lowered only for the
+    call, so the timeout under test can only fire inside the tool call. The
+    backend signals when the call reaches it, which proves that."""
     principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
+    entered = asyncio.Event()
 
-    async with run_inprocess_server(_toy_backend_with_slow_tool(), path="/mcp") as url:
-        registry = ServiceRegistry()
-        registry.register(
-            ServiceSpec(
-                name="slow",
-                prefix="slow",
-                url=url,
-                transport="http",
-                required_permission="__none__",
-                auth_type="none",
-                timeout_seconds=0.2,
-            )
+    async with run_inprocess_server(
+        _toy_backend_with_slow_tool(entered), path="/mcp"
+    ) as url:
+        spec = ServiceSpec(
+            name="slow",
+            prefix="slow",
+            url=url,
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
         )
+        registry = ServiceRegistry()
+        registry.register(spec)
         policy = EntitlementPolicy()
         mcp = build_aggregator(
             registry, settings, policy, CredentialRegistry(), **aggregator_inputs()
@@ -186,16 +201,19 @@ async def test_slow_backend_call_times_out_cleanly_instead_of_hanging(
             ) as server,
             server.client(headers={"Authorization": f"Bearer {token}"}) as client,
         ):
-            started = time.monotonic()
+            listed = {tool.name for tool in await client.list_tools()}
+            assert "slow_slow" in listed
+
+            # Each backend connection reads spec.timeout_seconds when it is
+            # built, so this applies to the call's connection only.
+            spec.timeout_seconds = 0.5
             # fastmcp v4 normalizes a proxy transport timeout to its own
             # "Upstream request timed out" message (raised via
             # _proxy_upstream_error), replacing mcp v1's raw "Timed out
             # while waiting for response to..." text -- match
             # case-insensitively on the substring both wordings share.
-            with pytest.raises(ToolError, match=r"(?i)timed out"):
-                await client.call_tool("slow_slow", {})
-            elapsed = time.monotonic() - started
+            async with asyncio.timeout(_HANG_GUARD_SECONDS):
+                with pytest.raises(ToolError, match=r"(?i)timed out"):
+                    await client.call_tool("slow_slow", {})
 
-    # Well under the backend's 2s sleep -- proves the call actually failed
-    # on the configured 0.2s timeout rather than eventually completing.
-    assert elapsed < 1.5
+    assert entered.is_set(), "timeout fired before the call reached the backend"
