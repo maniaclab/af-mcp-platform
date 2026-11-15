@@ -35,7 +35,7 @@ Mirrors ``identity.get_principal``'s error shape so ``AsgiAuthMiddleware``
 structure unchanged: ``identity.TokenExpiredError`` for an expired PAT (same
 class a JWT's expiry raises, so the existing actionable "mint a new one at
 .../tokens" message applies to a stale PAT too), and a plain
-``HTTPException(401)`` -- deliberately as vague as every JWT-path failure --
+``identity.InvalidTokenError`` -- deliberately as vague as every JWT-path failure --
 for everything else: malformed token, unknown lookup_id, wrong secret,
 revoked, or a principal_cache resolution failure. Not distinguishing "no
 such lookup_id" from "wrong secret" prevents an attacker from using response
@@ -43,8 +43,8 @@ shape to enumerate valid lookup_ids; not distinguishing "revoked" or "cache
 unavailable" from those matches the same "reveal nothing about why" posture
 ``identity.get_principal``'s JWT path already takes (see its module
 docstring) -- and matches existing precedent one layer up:
-``AsgiAuthMiddleware`` already collapses *any* ``HTTPException`` raised
-during JWT validation (including a 502 from an unreachable JWKS endpoint)
+``AsgiAuthMiddleware`` already collapses *any* ``IdentityError`` raised
+during JWT validation (including a ``JwksUnavailableError`` from an unreachable JWKS endpoint)
 into the same blanket "Invalid bearer token" 401, so a principal_cache
 outage surfacing the same way here is consistent, not a new carve-out.
 """
@@ -55,10 +55,9 @@ import time
 from typing import TYPE_CHECKING
 
 import structlog
-from fastapi import HTTPException, status
 from pydantic import SecretStr
 
-from af_mcp_broker.identity import TokenExpiredError
+from af_mcp_broker.identity import InvalidTokenError, TokenExpiredError
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.pat import parse_pat, verify_secret
 from af_mcp_broker.principal import Principal
@@ -82,12 +81,8 @@ _LAST_USED_THROTTLE_SECONDS = 5 * 60
 _VAGUE_DETAIL = "Invalid bearer token"
 
 
-def _vague_401() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=_VAGUE_DETAIL,
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def _vague_401() -> InvalidTokenError:
+    return InvalidTokenError(_VAGUE_DETAIL)
 
 
 class LastUsedTracker:
@@ -123,7 +118,7 @@ async def resolve_pat_principal(
 
     See this module's docstring for the two-question split this
     implements. Raises ``TokenExpiredError`` when the PAT's own
-    ``expires_at`` has passed; ``HTTPException(401)`` for every other
+    ``expires_at`` has passed; ``InvalidTokenError`` for every other
     failure.
     """
     # --- Question 1: who does this token represent? ------------------------

@@ -17,28 +17,41 @@ from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from af_mcp_broker._version import version as __version__
+from af_mcp_broker.api.errors import CorrelatedHTTPException
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.wellknown import router as wellknown_router
 from af_mcp_broker.broker_state import broker_state_of
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.credentials.errors import UnlockRateLimitError
+from af_mcp_broker.credentials.errors import (
+    CredentialError,
+    CredentialForbiddenError,
+    CredentialNotFoundError,
+    CredentialRateLimitedError,
+    CredentialReauthRequiredError,
+    CredentialServiceError,
+    UnlockRateLimitError,
+)
 from af_mcp_broker.credentials.stores import VaultLinkStores, build_vault_link_stores
 from af_mcp_broker.http import aclose_http_client
 from af_mcp_broker.identity import (
+    AdminRequiredError,
     IdentityError,
+    InvalidTokenError,
+    JwksUnavailableError,
+    NotAuthenticatedError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
 )
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.logging import (
-    CorrelatedHTTPException,
     bind_new_correlation_id,
     close_audit_logging,
     configure_logging,
     log_request_finished,
     log_request_received,
 )
+from af_mcp_broker.maintenance import MaintenanceModeError
 from af_mcp_broker.mcp.aggregator import BackendProviders
 from af_mcp_broker.otel_metrics import init_otel_metrics, shutdown_otel_metrics
 from af_mcp_broker.tracing import init_tracing, instrument_fastapi, shutdown_tracing
@@ -498,17 +511,33 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     return await http_exception_handler(request, exc)
 
 
-# identity.py raises domain exceptions (it is also reached from /mcp, which
-# translates them itself in mcp/middleware/identity_mw.py); /v1 maps each onto
-# the HTTPException the caller has always received, routed through
-# _http_exception_handler so logging and 5xx correlation_id folding are
-# unchanged. The status code and headers live here, not on the domain classes.
+# Everything below the edge raises domain exceptions rather than
+# HTTPException. identity.py's are also reached from /mcp, which translates
+# them itself in mcp/middleware/identity_mw.py; /v1 maps each onto an
+# HTTPException, routed through _http_exception_handler so logging and 5xx
+# correlation_id folding apply to it like to any other. The status code and
+# headers live here, not on the domain classes.
 _IDENTITY_ERROR_RESPONSES: dict[
     type[IdentityError], tuple[int, dict[str, str] | None]
 ] = {
     TokenExpiredError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
     TokenAudienceError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
     PrincipalDirectoryUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, None),
+    InvalidTokenError: (status.HTTP_401_UNAUTHORIZED, {"WWW-Authenticate": "Bearer"}),
+    NotAuthenticatedError: (
+        status.HTTP_401_UNAUTHORIZED,
+        {"WWW-Authenticate": "Bearer"},
+    ),
+    JwksUnavailableError: (status.HTTP_502_BAD_GATEWAY, None),
+    AdminRequiredError: (status.HTTP_403_FORBIDDEN, None),
+}
+
+_CREDENTIAL_ERROR_STATUS: dict[type[CredentialError], int] = {
+    CredentialNotFoundError: status.HTTP_404_NOT_FOUND,
+    CredentialReauthRequiredError: status.HTTP_401_UNAUTHORIZED,
+    CredentialForbiddenError: status.HTTP_403_FORBIDDEN,
+    CredentialServiceError: status.HTTP_502_BAD_GATEWAY,
+    CredentialRateLimitedError: status.HTTP_429_TOO_MANY_REQUESTS,
 }
 
 
@@ -518,6 +547,35 @@ async def _identity_error_handler(request: Request, exc: IdentityError) -> Respo
     return await _http_exception_handler(
         request,
         HTTPException(status_code=status_code, detail=exc.detail, headers=headers),
+    )
+
+
+@app.exception_handler(CredentialError)
+async def _credential_error_handler(request: Request, exc: CredentialError) -> Response:
+    headers = (
+        {"Retry-After": exc.retry_after}
+        if isinstance(exc, CredentialRateLimitedError) and exc.retry_after is not None
+        else None
+    )
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=_CREDENTIAL_ERROR_STATUS[type(exc)],
+            detail=exc.detail,
+            headers=headers,
+        ),
+    )
+
+
+@app.exception_handler(MaintenanceModeError)
+async def _maintenance_mode_error_handler(
+    request: Request, exc: MaintenanceModeError
+) -> Response:
+    return await _http_exception_handler(
+        request,
+        HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
+        ),
     )
 
 

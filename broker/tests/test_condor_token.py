@@ -20,7 +20,6 @@ import httpx2
 import jwt
 import pytest
 import structlog
-from fastapi import HTTPException
 from test_broker_issued import (
     ISSUER_URL,
     _make_rsa_key,
@@ -34,12 +33,17 @@ from af_mcp_broker.credentials import condor as condor_module
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.condor import CondorTokenProvider
+from af_mcp_broker.credentials.errors import (
+    CredentialNotFoundError,
+    CredentialRateLimitedError,
+    CredentialServiceError,
+)
 
 SERVICE_URL = "http://condor-token-service.test"
 IDTOKEN = "fake-htcondor-idtoken"
 
 # Internals the service must never leak to the broker's callers -- assertions
-# check these strings are absent from client-visible HTTPException detail.
+# check these strings are absent from client-visible credential error detail.
 _UPSTREAM_DETAIL = "condor_token_create exploded: /etc/condor/passwords.d/POOL"
 
 
@@ -315,15 +319,14 @@ async def test_issue_without_posix_identity_raises_404(
     provider_factory, make_principal, fake_client
 ) -> None:
     """Same point-of-use shape as BrokerIssuedProvider's requires_posix check
-    (and x509's PosixIdentityRequiredError): an HTTPException(404) naming
+    (and x509's PosixIdentityRequiredError): a CredentialNotFoundError naming
     the target, raised before any token is minted or any HTTP happens."""
     provider, _ = provider_factory()
     principal = make_principal(uid=None, gid=None, unixname=None)
 
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(CredentialNotFoundError) as excinfo:
         await provider.issue(principal, "condor-mcp")
 
-    assert excinfo.value.status_code == 404
     assert "condor-mcp" in str(excinfo.value.detail)
     assert "POSIX" in str(excinfo.value.detail)
     assert fake_client.calls == []
@@ -347,10 +350,9 @@ async def test_issue_maps_service_failures_to_502_with_generic_detail(
     )
     provider, _ = provider_factory()
 
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(CredentialServiceError) as excinfo:
         await provider.issue(make_principal(), "condor-mcp")
 
-    assert excinfo.value.status_code == 502
     assert _UPSTREAM_DETAIL not in str(excinfo.value.detail)
 
 
@@ -369,11 +371,10 @@ async def test_issue_passes_through_429_with_retry_after(
     )
     provider, _ = provider_factory()
 
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(CredentialRateLimitedError) as excinfo:
         await provider.issue(make_principal(), "condor-mcp")
 
-    assert excinfo.value.status_code == 429
-    assert excinfo.value.headers == {"Retry-After": "17"}
+    assert excinfo.value.retry_after == "17"
 
 
 async def test_issue_maps_network_errors_to_502(
@@ -386,10 +387,8 @@ async def test_issue_maps_network_errors_to_502(
     monkeypatch.setattr(condor_module, "get_http_client", _FailingClient)
     provider, _ = provider_factory()
 
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(CredentialServiceError):
         await provider.issue(make_principal(), "condor-mcp")
-
-    assert excinfo.value.status_code == 502
 
 
 async def test_issue_failure_does_not_cache(
@@ -406,7 +405,7 @@ async def test_issue_failure_does_not_cache(
     provider, _ = provider_factory()
     principal = make_principal(subject="sub-abc")
 
-    with pytest.raises(HTTPException):
+    with pytest.raises(CredentialServiceError):
         await provider.issue(principal, "condor-mcp")
     cred = await provider.issue(principal, "condor-mcp")
 

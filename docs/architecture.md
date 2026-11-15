@@ -468,6 +468,15 @@ What the layering means in practice:
   settings and stores, passed as constructor arguments, and published on the
   state as `mcp_aggregator` and `mcp_app`; `app.py` mounts a thin ASGI
   callable that serves `mcp_app` from the state.
+- Only `api`, `mcp` and `app.py` speak HTTP errors. Everything below raises a
+  `BrokerError` subclass from its subsystem (`credentials/errors.py`'s
+  `CredentialError` family, `identity.py`'s `IdentityError` family,
+  `maintenance.MaintenanceModeError`); the status code and headers live in
+  `app.py`'s exception handlers for `/v1`, and `/mcp` turns the same errors
+  into a tool error (`mcp.aggregator`) or an ASGI error response
+  (`mcp.middleware`). Ruff's banned-api rule (`TID251` in
+  `broker/pyproject.toml`) rejects an import of `HTTPException` outside those
+  packages.
 - By convention a module does not import another module's `_private` name;
   anything shared is public in the module that owns it.
 

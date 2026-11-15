@@ -14,7 +14,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_context
@@ -46,7 +45,7 @@ from af_mcp_broker.backend_errors import (
     NotEntitledForListingError,
     NotLinkedForListingError,
 )
-from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.credentials.errors import CredentialError, NeedsUnlockError
 from af_mcp_broker.errors import require
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
@@ -744,11 +743,11 @@ def _make_client_factory(
                 f"Credential unlock required. Visit the portal: "
                 f"{portal}{exc.unlock_endpoint}"
             ) from exc
-        except HTTPException as exc:
-            # OIDCProvider.issue() raises HTTPException directly (401 session
-            # expired, 404 no stored token) rather than NeedsUnlockError -- surface
-            # its detail the same way FastAPI's own handler would at /v1.
-            raise ToolError(str(exc.detail)) from exc
+        except CredentialError as exc:
+            # Providers raise CredentialError (401 session expired, 404 no
+            # stored token, ...) rather than NeedsUnlockError -- surface its
+            # detail as the tool error, the text /v1 sends as the body.
+            raise ToolError(exc.detail) from exc
 
         call_headers, on_unauthorized = bearer_injection(provider, principal, cred)
         return build_client(spec, headers=call_headers, on_unauthorized=on_unauthorized)

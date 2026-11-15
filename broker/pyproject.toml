@@ -123,11 +123,21 @@ ignore = [
 # spikes/ are exploratory validation scripts, not production code — allow
 # prints, broad excepts, and other conveniences useful in scratch work.
 "spikes/**" = ["ARG", "BLE", "EM", "PLR", "PTH", "T20", "TRY"]
+# The /v1 and /mcp edges (and the app that wires /v1's exception handlers) are
+# the only code that speaks HTTP errors; everything below raises domain errors.
+"src/af_mcp_broker/app.py" = ["TID251"]
+"src/af_mcp_broker/api/**" = ["TID251"]
+"src/af_mcp_broker/mcp/**" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # One HTTP client stack: fastmcp and the mcp SDK are httpx2-only, so the broker
 # shares httpx2's connection pooling, timeouts and exception hierarchy.
 "httpx".msg = "use httpx2"
+# Domain errors (BrokerError subclasses) are raised below the edges and
+# translated to HTTP responses in app.py and the /mcp middleware.
+"fastapi.HTTPException".msg = "raise a BrokerError subclass; only the api/ and mcp/ edges and app.py speak HTTP errors"
+"fastapi.exceptions.HTTPException".msg = "raise a BrokerError subclass; only the api/ and mcp/ edges and app.py speak HTTP errors"
+"starlette.exceptions.HTTPException".msg = "raise a BrokerError subclass; only the api/ and mcp/ edges and app.py speak HTTP errors"
 
 [tool.ruff.lint.flake8-type-checking]
 # FastAPI resolves route-handler annotations (``Annotated[Principal,

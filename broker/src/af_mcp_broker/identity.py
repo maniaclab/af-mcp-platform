@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import jwt
 import structlog
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
 
@@ -68,7 +68,7 @@ def _get_jwks_lock(uri: str) -> asyncio.Lock:
 async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
     """Fetch JWKS from upstream, bypassing the TTL cache.
 
-    Raises HTTPException(502) when the upstream is unreachable so callers
+    Raises ``JwksUnavailableError`` when the upstream is unreachable so callers
     higher up the stack can surface a useful error rather than a raw 500.
     """
     try:
@@ -77,9 +77,8 @@ async def _fetch_jwks(jwks_uri: str) -> list[dict[str, Any]]:
         return resp.json()["keys"]
     except Exception as exc:
         logger.exception("jwks_fetch_failed", uri=jwks_uri, error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach JWKS endpoint: {jwks_uri}",
+        raise JwksUnavailableError(
+            f"Unable to reach JWKS endpoint: {jwks_uri}"
         ) from exc
 
 
@@ -106,7 +105,7 @@ async def get_jwks(settings: Settings) -> list[dict[str, Any]]:
 
         try:
             keys = await _fetch_jwks(uri)
-        except HTTPException:
+        except JwksUnavailableError:
             if entry is not None:
                 logger.warning("jwks_refresh_failed_serving_stale", uri=uri)
                 return entry.keys
@@ -216,7 +215,7 @@ class TokenAudienceError(IdentityError):
 
     Raised when the token's signature, issuer, and expiry all check out but
     it lacks the audience ``settings.oidc_audience`` expects. Distinct from
-    the plain ``HTTPException(401)`` this module otherwise raises for every
+    the plain ``InvalidTokenError`` this module otherwise raises for every
     other JWT-validation failure, for the same reason ``TokenExpiredError``
     is distinct (see that class's docstring): a missing audience reveals
     nothing about why any *other* token would be rejected, so it's safe to
@@ -234,10 +233,31 @@ class TokenAudienceError(IdentityError):
     """
 
 
+class InvalidTokenError(IdentityError):
+    """Raised for every credential-validation failure that is not an expiry, a missing audience or an unavailable directory.
+
+    Deliberately vague: the *detail* never says which claim failed or why a
+    token was rejected (see this module's docstring), and /v1 answers it with
+    a ``WWW-Authenticate: Bearer`` challenge.
+    """
+
+
+class JwksUnavailableError(IdentityError):
+    """Raised when the issuer's JWKS cannot be fetched and no cached copy can stand in for it."""
+
+
+class NotAuthenticatedError(IdentityError):
+    """Raised by ``keycloak_dependency`` when a /v1 request carries no bearer credential at all."""
+
+
+class AdminRequiredError(IdentityError):
+    """Raised by ``require_admin`` when the caller is not a member of the admin group."""
+
+
 class PrincipalDirectoryUnavailableError(IdentityError):
     """Raised by ``get_principal`` (issue #144 steps 3 and 3b) when a validated JWT's current groups/POSIX identity cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
 
-    Deliberately distinct from the plain ``HTTPException(401)`` this module
+    Deliberately distinct from the plain ``InvalidTokenError`` this module
     otherwise raises for every JWT-validation failure. Those mean "these
     credentials are invalid" -- something re-authenticating fixes. This means
     the opposite: the token's signature, issuer, audience, and expiry all
@@ -313,7 +333,7 @@ async def get_principal(
 ) -> Principal:
     """Validate a Bearer token and return the extracted Principal.
 
-    Raises HTTPException(401) on any validation failure so FastAPI can return
+    Raises ``InvalidTokenError`` on any validation failure so /v1 can return
     a proper WWW-Authenticate response. Raises ``TokenExpiredError``
     specifically when the signature has expired -- ``app.py``'s exception
     handler turns it into the same status_code/detail/headers, so `/v1` sees
@@ -403,11 +423,7 @@ async def get_principal(
         )
     if expired:
         raise TokenExpiredError(_INVALID_TOKEN_DETAIL)
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=_INVALID_TOKEN_DETAIL,
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    raise InvalidTokenError(_INVALID_TOKEN_DETAIL)
 
 
 def _select_jwk(keys: list[dict[str, Any]], kid: str | None) -> dict[str, Any] | None:
@@ -484,11 +500,7 @@ async def keycloak_dependency(
         return dev_principal
 
     if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise NotAuthenticatedError("Not authenticated")
     # None only when the deployment has no PrincipalDirectory: app.py's
     # lifespan refuses to start without either one or the dev bypass (issue
     # #144 step 3), and the bypass check above already returned.
@@ -519,10 +531,7 @@ async def require_admin(
             ...
     """
     if not is_admin(principal, settings):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This action requires membership in the admin group.",
-        )
+        raise AdminRequiredError("This action requires membership in the admin group.")
     return principal
 
 

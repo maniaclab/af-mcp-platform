@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import asyncpg  # type: ignore[import-untyped]
 import structlog
-from fastapi import HTTPException, status
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import is_admin
@@ -47,6 +46,17 @@ logger = structlog.get_logger(__name__)
 
 class MaintenanceStateConflictError(BrokerError):
     """Raised by ``MaintenanceModeStore.set`` when a concurrent writer already changed the state."""
+
+
+class MaintenanceModeError(BrokerError):
+    """Raised by ``check_not_maintenance`` when maintenance mode blocks the caller.
+
+    *detail* is the client-visible message, including the operator's reason.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -324,7 +334,7 @@ async def check_not_maintenance(
     settings: Settings,
     store: MaintenanceModeStore,
 ) -> None:
-    """Raise HTTPException(503) when maintenance mode is on and *principal* is not an admin.
+    """Raise ``MaintenanceModeError`` when maintenance mode is on and *principal* is not an admin.
 
     Called from /v1 (``api.maintenance_gate.require_not_in_maintenance``) and
     /mcp (``mcp.middleware.maintenance_mw.AsgiMaintenanceMiddleware``) right
@@ -358,14 +368,14 @@ async def check_not_maintenance(
     detail = "The broker is in maintenance mode."
     if state.reason:
         detail = f"{detail} Reason: {state.reason}"
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+    raise MaintenanceModeError(detail)
 
 
 async def check_not_maintenance_or_fail_open(
     principal: Principal,
     settings: Settings,
     store: MaintenanceModeStore,
-) -> HTTPException | None:
+) -> MaintenanceModeError | None:
     """Run ``check_not_maintenance``, converting its store-unavailability fail-open behavior into a return value instead of a raise.
 
     Both call sites (/v1's ``api.maintenance_gate.require_not_in_maintenance``, a FastAPI
@@ -375,7 +385,7 @@ async def check_not_maintenance_or_fail_open(
     unreachable" observability -- log at ERROR with a traceback and increment
     ``metrics.maintenance_store_unavailable_total`` -- but differ in how they
     actually deliver a block to the caller, which is why this returns the
-    ``HTTPException`` to raise/send rather than raising or sending it
+    ``MaintenanceModeError`` to raise/send rather than raising or sending it
     directly. Returns ``None`` when the caller is not blocked, whether
     because maintenance mode is off, the caller is an admin, or the store
     was unreachable (fail open -- see ``check_not_maintenance``'s docstring
@@ -383,7 +393,7 @@ async def check_not_maintenance_or_fail_open(
     """
     try:
         await check_not_maintenance(principal, settings, store)
-    except HTTPException as exc:
+    except MaintenanceModeError as exc:
         return exc
     except Exception as exc:
         # .exception(), not .warning(): this is silently overriding an

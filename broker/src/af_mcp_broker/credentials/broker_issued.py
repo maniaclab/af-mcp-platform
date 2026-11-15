@@ -38,7 +38,6 @@ import jwt
 import structlog
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import HTTPException, status
 from jwt.algorithms import RSAAlgorithm
 
 from af_mcp_broker import metrics
@@ -48,6 +47,7 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.credentials.errors import CredentialNotFoundError
 from af_mcp_broker.principal import PosixPrincipal
 
 if TYPE_CHECKING:
@@ -324,11 +324,11 @@ class BrokerIssuedProvider(CredentialProvider):
 
     A target whose service sets ``requires_posix`` (via ``token_options``,
     issue #257) requires the principal to actually carry a POSIX identity; a
-    principal without one gets an ``HTTPException(404)`` naming the target -- the same
-    point-of-use requirement as x509's ``PosixIdentityRequiredError``,
-    raised as HTTPException because this provider is delivered over the
-    aggregator's ``bearer`` branch, which already surfaces HTTPException
-    detail cleanly (the OIDCProvider precedent) with no aggregator changes.
+    principal without one gets a ``CredentialNotFoundError`` naming the target --
+    the same point-of-use requirement as x509's ``PosixIdentityRequiredError``,
+    raised as a ``CredentialError`` because this provider is delivered over the
+    aggregator's ``bearer`` branch, which surfaces a ``CredentialError``'s
+    detail cleanly (the OIDCProvider precedent).
     """
 
     cred_class: ClassVar[str] = "broker_issued"
@@ -365,7 +365,7 @@ class BrokerIssuedProvider(CredentialProvider):
         """Return a bearer credential carrying a freshly-minted (or still-valid cached) AF Broker Identity Token for *(principal, target)*.
 
         Raises:
-            HTTPException(404): when this target's service declares
+            CredentialNotFoundError: when this target's service declares
                 ``requires_posix`` but the principal has no POSIX identity —
                 see the class docstring.
 
@@ -376,8 +376,7 @@ class BrokerIssuedProvider(CredentialProvider):
         if requires_posix:
             posix_principal = PosixPrincipal.from_principal(principal)
             if posix_principal is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                raise CredentialNotFoundError(
                     detail=(
                         f"Service {target!r} requires POSIX identity claims "
                         "(uid/gid/unixname) in its AF Broker Identity Token, "

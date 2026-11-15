@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
-from fastapi import HTTPException
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.maintenance import (
     InMemoryMaintenanceModeStore,
+    MaintenanceModeError,
     MaintenanceModeStore,
     MaintenanceState,
     MaintenanceStateConflictError,
@@ -245,9 +245,8 @@ async def test_non_admin_blocked_with_reason(make_principal: Callable[..., objec
         )
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(MaintenanceModeError) as exc_info:
         await check_not_maintenance(principal, settings, store)
-    assert exc_info.value.status_code == 503
     assert "upgrading" in str(exc_info.value.detail)
 
 
@@ -269,7 +268,7 @@ async def test_reason_none_produces_clean_detail_with_no_suffix(
         MaintenanceState(enabled=True, reason=None, enabled_by="x", enabled_at=1.0)
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(MaintenanceModeError) as exc_info:
         await check_not_maintenance(principal, settings, store)
     assert exc_info.value.detail == "The broker is in maintenance mode."
 

@@ -26,7 +26,6 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
-from fastapi import HTTPException
 from jwt.algorithms import RSAAlgorithm
 
 from af_mcp_broker import metrics
@@ -39,6 +38,7 @@ from af_mcp_broker.credentials.broker_issued import (
     load_broker_token_issuer,
 )
 from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.errors import CredentialNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -526,8 +526,8 @@ async def test_provider_requires_posix_without_posix_identity_raises_404(
     provider_factory, make_principal
 ) -> None:
     """Same point-of-use shape as x509's PosixIdentityRequiredError, raised
-    as HTTPException(404) because BrokerIssuedProvider is delivered over the
-    aggregator's bearer branch, which surfaces HTTPException detail cleanly
+    as CredentialNotFoundError because BrokerIssuedProvider is delivered over the
+    aggregator's bearer branch, which surfaces CredentialError detail cleanly
     (the OIDCProvider precedent) -- see the provider docstring."""
     provider, _ = provider_factory(
         {
@@ -538,10 +538,9 @@ async def test_provider_requires_posix_without_posix_identity_raises_404(
     )
     principal = make_principal(uid=None, gid=None, unixname=None)
 
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(CredentialNotFoundError) as excinfo:
         await provider.issue(principal, "condor-token-service")
 
-    assert excinfo.value.status_code == 404
     assert "condor-token-service" in str(excinfo.value.detail)
     assert "POSIX" in str(excinfo.value.detail)
 

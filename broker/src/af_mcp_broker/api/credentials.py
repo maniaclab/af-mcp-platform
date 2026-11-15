@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, SecretBytes, SecretStr
 
+from af_mcp_broker.api.errors import CorrelatedHTTPException
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.credentials import (
@@ -33,7 +34,6 @@ from af_mcp_broker.credentials.errors import (
 )
 from af_mcp_broker.errors import require
 from af_mcp_broker.identity import keycloak_dependency
-from af_mcp_broker.logging import CorrelatedHTTPException
 from af_mcp_broker.principal import PosixPrincipal, Principal
 
 if TYPE_CHECKING:

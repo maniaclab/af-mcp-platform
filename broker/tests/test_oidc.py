@@ -5,12 +5,12 @@ from typing import Any, ClassVar
 
 import httpx2
 import pytest
-from fastapi import HTTPException
 from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import oidc
 from af_mcp_broker.credentials.cache import CredentialCache
+from af_mcp_broker.credentials.errors import CredentialForbiddenError
 from af_mcp_broker.principal import Principal
 
 REAL_TOKEN = "real-af-access-token-value"
@@ -91,10 +91,8 @@ async def test_fetch_brokered_token_raises_403_with_actionable_detail(monkeypatc
         alias="atlas-oidc",
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(CredentialForbiddenError):
         await provider._fetch_brokered_token(_principal())
-
-    assert exc_info.value.status_code == 403
 
 
 async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):

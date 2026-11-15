@@ -21,7 +21,6 @@ import pytest
 import structlog
 from conftest import configure_x509_service_env
 from cryptography.fernet import Fernet
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
@@ -29,7 +28,11 @@ from af_mcp_broker.api import oauth21 as oauth21_module
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials import CredentialRegistry
-from af_mcp_broker.credentials.errors import VersionConflictError
+from af_mcp_broker.credentials.errors import (
+    CredentialNotFoundError,
+    CredentialReauthRequiredError,
+    VersionConflictError,
+)
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -614,10 +617,8 @@ async def test_issue_refreshes_when_within_window(
 async def test_issue_raises_404_when_missing() -> None:
     provider = _make_provider(InMemoryTokenStore())
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(CredentialNotFoundError):
         await provider.issue(_principal(), ALIAS)
-
-    assert exc_info.value.status_code == 404
 
 
 async def test_issue_raises_401_when_refresh_fails(
@@ -639,10 +640,8 @@ async def test_issue_raises_401_when_refresh_fails(
         "af_mcp_broker.credentials.oauth21.get_http_client", lambda: fake_client
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(CredentialReauthRequiredError):
         await provider.issue(_principal(), ALIAS)
-
-    assert exc_info.value.status_code == 401
 
 
 async def test_issue_raises_401_when_no_refresh_token() -> None:
@@ -657,10 +656,8 @@ async def test_issue_raises_401_when_no_refresh_token() -> None:
     )
     provider = _make_provider(store)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(CredentialReauthRequiredError):
         await provider.issue(_principal(), ALIAS)
-
-    assert exc_info.value.status_code == 401
 
 
 async def test_issue_returns_token_without_refresh_token_inside_refresh_window() -> (
@@ -761,10 +758,9 @@ async def test_issue_raises_401_with_relink_hint_when_rejected() -> None:
     )
     provider = _make_provider(store)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(CredentialReauthRequiredError) as exc_info:
         await provider.issue(_principal(), ALIAS)
 
-    assert exc_info.value.status_code == 401
     assert "rejected" in exc_info.value.detail
     assert "re-link" in exc_info.value.detail
 

@@ -7,13 +7,17 @@ from typing import TYPE_CHECKING, ClassVar
 
 import httpx2
 import structlog
-from fastapi import HTTPException
 
 from af_mcp_broker.credentials.base import (
     CredentialKind,
     CredentialProvider,
     ExecutionModel,
     IssuedCredential,
+)
+from af_mcp_broker.credentials.errors import (
+    CredentialForbiddenError,
+    CredentialNotFoundError,
+    CredentialReauthRequiredError,
 )
 from af_mcp_broker.http import get_http_client
 
@@ -176,9 +180,9 @@ class OIDCProvider(CredentialProvider):
         the narrower failure modes of the fetch itself.
 
         Raises:
-            HTTPException(401): if the Keycloak brokered-token endpoint rejects
-                the principal's token (session expired — user must re-link).
-            HTTPException(404): if no brokered token is stored yet (user must
+            CredentialReauthRequiredError: if the Keycloak brokered-token endpoint
+                rejects the principal's token (session expired — user must re-link).
+            CredentialNotFoundError: if no brokered token is stored yet (user must
                 link their ATLAS account from the portal's Identities page).
 
         """
@@ -238,7 +242,7 @@ class OIDCProvider(CredentialProvider):
 
         Returns ``(iam_access_token, expires_at_epoch)``.
 
-        Raises HTTPException on 401 (session expired), 403 (caller's token
+        Raises a ``CredentialError`` on 401 (session expired), 403 (caller's token
         lacks the `read-token` client role — see ``OIDCLinkStatus``), and
         404 (no stored token — user must re-link).
         """
@@ -253,8 +257,7 @@ class OIDCProvider(CredentialProvider):
         )
 
         if resp.status_code == 401:
-            raise HTTPException(
-                status_code=401,
+            raise CredentialReauthRequiredError(
                 detail=(
                     "Your Keycloak session has expired or the ATLAS IAM "
                     "identity link is invalid. Please re-authenticate and "
@@ -263,8 +266,7 @@ class OIDCProvider(CredentialProvider):
                 ),
             )
         if resp.status_code == 403:
-            raise HTTPException(
-                status_code=403,
+            raise CredentialForbiddenError(
                 detail=(
                     "Your account isn't authorized to retrieve a stored "
                     "ATLAS IAM token. Contact the platform team to be "
@@ -273,8 +275,7 @@ class OIDCProvider(CredentialProvider):
                 ),
             )
         if resp.status_code == 404:
-            raise HTTPException(
-                status_code=404,
+            raise CredentialNotFoundError(
                 detail=(
                     "No ATLAS IAM token stored for your account. "
                     "Link your ATLAS account from the portal's Identities page."

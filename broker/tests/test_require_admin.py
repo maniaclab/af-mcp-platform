@@ -9,14 +9,16 @@ from broker_state_helpers import make_broker_state
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from af_mcp_broker.app import _identity_error_handler
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.identity import keycloak_dependency, require_admin
+from af_mcp_broker.identity import IdentityError, keycloak_dependency, require_admin
 from af_mcp_broker.principal import Principal
 
 
 @pytest.fixture
 def admin_test_app(make_principal):
     app = FastAPI()
+    app.add_exception_handler(IdentityError, _identity_error_handler)
     app.state.broker = make_broker_state(settings=Settings(admin_group="af-admins"))
 
     @app.get("/probe")

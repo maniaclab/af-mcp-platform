@@ -14,7 +14,6 @@ from conftest import (
     run_inprocess_asgi_app,
     run_inprocess_server,
 )
-from fastapi import HTTPException
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
@@ -30,7 +29,10 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.credentials.errors import (
+    CredentialReauthRequiredError,
+    NeedsUnlockError,
+)
 from af_mcp_broker.credentials.oauth21 import (
     InMemoryTokenStore,
     OAuth21Provider,
@@ -453,7 +455,7 @@ async def test_backend_401_marks_the_oauth21_credential_rejected(
 
     principal = make_principal(subject="user-123")
     assert await provider.is_linked(principal) is False
-    with pytest.raises(HTTPException, match="rejected"):
+    with pytest.raises(CredentialReauthRequiredError, match="rejected"):
         await provider.issue(principal, "toy")
     assert verifying_backend.refresh_grants == 0
 

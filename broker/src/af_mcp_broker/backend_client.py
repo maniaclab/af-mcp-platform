@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import httpx2
 import structlog
-from fastapi import HTTPException
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.providers.proxy import (
@@ -25,7 +24,7 @@ from af_mcp_broker.backend_errors import (
     NotLinkedForListingError,
 )
 from af_mcp_broker.credentials import CredentialKind
-from af_mcp_broker.credentials.errors import NeedsUnlockError
+from af_mcp_broker.credentials.errors import CredentialError, NeedsUnlockError
 from af_mcp_broker.service_registry import namespaced_tool_name
 
 if TYPE_CHECKING:
@@ -342,7 +341,7 @@ async def resolve_list_time_headers(
 
     try:
         cred = await provider.issue(principal, spec.name)
-    except (NeedsUnlockError, HTTPException):
+    except (NeedsUnlockError, CredentialError):
         return ListTimeCredential(None, "unavailable")
 
     headers, on_unauthorized = bearer_injection(provider, principal, cred)

@@ -9,11 +9,11 @@ import pytest
 import structlog
 from broker_state_helpers import make_broker_state
 from conftest import AUDIENCE, RaisingTokenRegistryBackend, make_claims
-from fastapi import HTTPException
 
 from af_mcp_broker import identity as identity_module
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
+    InvalidTokenError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
@@ -145,9 +145,8 @@ async def test_no_matching_kid_raises_401(
     prime_jwks([enc_key.jwk])  # signing key not published
     token = sig_key.sign(make_claims())
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError):
         await get_principal(token, settings, cache)
-    assert exc.value.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -288,11 +287,10 @@ async def test_get_principal_rejects_jwt_of_user_disabled_after_cache_warmed(
     directory.disabled_subjects.add("user-123")
     real_monotonic = time.monotonic
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError) as exc:
         await get_principal(token, settings, cache)
 
     assert not isinstance(exc.value, PrincipalDirectoryUnavailableError)
-    assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid or expired token"
 
 
@@ -322,10 +320,9 @@ async def test_resolve_pat_principal_rejects_pat_of_user_disabled_after_cache_wa
     directory.disabled_subjects.add("user-123")
     real_monotonic = time.monotonic
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(InvalidTokenError) as exc:
         await resolve_pat_principal(plaintext, settings, backend, cache, tracker)
 
-    assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid bearer token"
 
 
