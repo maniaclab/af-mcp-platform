@@ -5,8 +5,7 @@ The broker itself is the metering system: the metering pipeline
 to a ``UsageStore``, which accumulates per-(day, service, method, outcome)
 aggregates that ``GET /v1/usage`` serves back to the calling user. Usage is
 best-effort by the same contract as metering -- the audit log stays
-authoritative -- and dollars are NEVER stored: only tokens; cost is derived
-at read time from a price table (see ``api/usage.py``).
+authoritative.
 
 ``InMemoryUsageStore`` here is the dev/small-facility default -- lost on
 restart; ``usage/postgres.py`` is the durable backend, selected by

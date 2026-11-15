@@ -977,6 +977,15 @@ def test_shared_state_env_vars(monkeypatch):
     assert settings.allow_per_replica_state is True
 
 
+def test_shared_state_key_prefix_defaults_to_the_historical_namespace():
+    assert Settings().shared_state_key_prefix == "af-mcp:"
+
+
+def test_shared_state_key_prefix_env_var(monkeypatch):
+    monkeypatch.setenv("SHARED_STATE_KEY_PREFIX", "release-a:")
+    assert Settings().shared_state_key_prefix == "release-a:"
+
+
 def test_multiple_replicas_without_shared_state_refuse_to_start(monkeypatch):
     monkeypatch.setenv("MCP_REPLICA_COUNT", "2")
     with pytest.raises(ValueError, match="SHARED_STATE_URL"):

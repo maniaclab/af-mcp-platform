@@ -282,6 +282,9 @@ broker:
   #   targets: ["rucio-mcp-atlas"]
   #   authorizationEndpoint: "https://rucio-mcp.example/authorize"
   #   tokenEndpoint: "https://rucio-mcp.example/token"
+  #   # Optional RFC 7009 revocation endpoint; unset skips the upstream call
+  #   # on unlink and only deletes the locally stored token.
+  #   revocationEndpoint: "https://rucio-mcp.example/revoke"
   #   issuer: "https://rucio-mcp.example"
   #   scope: "openid profile email"
   #   displayName: "Rucio (ATLAS)"
@@ -437,6 +440,22 @@ broker:
       # Extra labels so your Prometheus' ruleSelector picks the rule up.
       labels: {}
 
+  # KV-v2 path prefixes (under oauth21.tokenStore.vault.kvMount) of the
+  # Vault-backed stores that have no backend selector: they are used whenever
+  # a matching identityProviders entry (x509 with serviceUrl, krb5-token,
+  # servicex-token) or credmon is configured. Rendered whenever any
+  # Vault-backed store is in use. Two releases sharing one Vault KV mount
+  # must set different prefixes here and on the stores' own kvPathPrefix
+  # (oauth21.tokenStore.vault, tokenRegistry, principalCache, maintenanceMode)
+  # or they read and write each other's per-user records; the Vault policy
+  # must grant each release its prefixes. Changing a prefix on an existing
+  # release orphans the records stored under the old one.
+  vault:
+    x509KvPathPrefix: "mcp/x509"
+    krb5KvPathPrefix: "mcp/krb5"
+    servicexKvPathPrefix: "mcp/servicex"
+    credmonKvPathPrefix: "mcp/credmon"
+
   # OAuth 2.1 credential-brokering infrastructure shared by every
   # oauth21-direct entry in identityProviders above.
   oauth21:
@@ -574,6 +593,14 @@ broker:
     existingSecret:
       name: ""
       key: "url"
+    # Prefix on every key and pub/sub channel the broker uses on the store,
+    # rendered as SHARED_STATE_KEY_PREFIX. Empty means "<release name>:".
+    # Releases sharing one store MUST differ here: pub/sub is not scoped by
+    # the redis database number, so a shared prefix makes each release receive
+    # the other's cache invalidations. Changing it orphans the keys written
+    # under the old prefix (rate-limit windows, PAT mint windows, auth codes,
+    # lint tables); they are short-lived and rebuild on use.
+    keyPrefix: ""
     # Explicit opt-in to replicaCount > 1 with no shared store. Consequences:
     # the unlock brute-force budget (5 failures / 15 min per uid) is
     # multiplied by the replica count, and replica-local caches (the per-user

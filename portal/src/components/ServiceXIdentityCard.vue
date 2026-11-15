@@ -30,6 +30,7 @@
  * success or failure. It is never stored anywhere beyond the controlled
  * ref() within this component's lifecycle.
  */
+import { errorMessage } from '../lib/apiError';
 import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Cable, ExternalLink } from '@lucide/vue';
 import { nextTick, ref } from 'vue';
@@ -129,7 +130,7 @@ async function handleForget() {
     result.value = null;
     emit('revoked');
   } catch (err) {
-    forgetError.value = err instanceof Error ? err.message : 'Forget failed. Try again.';
+    forgetError.value = errorMessage(err, 'Forget failed. Try again.');
   } finally {
     busy.value = false;
   }

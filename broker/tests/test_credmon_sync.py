@@ -14,9 +14,9 @@ import asyncio
 from typing import Any
 
 import pytest
+from conftest import InMemoryCredmonSyncState
 from prometheus_client import REGISTRY
 
-from af_mcp_broker.credmon.state import InMemoryCredmonSyncState
 from af_mcp_broker.credmon.storer import SyncReport
 from af_mcp_broker.credmon.sync import CredmonSyncService
 

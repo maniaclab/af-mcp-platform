@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
@@ -34,7 +33,6 @@ class CredentialKind(StrEnum):
     # file, redeemed by the backend via POST /v1/credentials/servicex/redeem
     # -- same "deliverable, not local" shape as X509_PROXY_REDEEM.
     SERVICEX_ACCESS_TOKEN_REDEEM = "servicex_access_token_redeem"  # noqa: S105 -- credential-kind identifier, not a secret
-    NONE = "none"
 
 
 class ExecutionModel(StrEnum):
@@ -143,11 +141,6 @@ class CredentialProvider(ABC):
         reading as linked until the user re-links; it must never re-link on
         the user's behalf.
         """
-
-
-def _new_audit_id() -> str:
-    """Generate a short, collision-resistant audit correlation ID."""
-    return uuid.uuid4().hex
 
 
 class CredentialRegistry:
