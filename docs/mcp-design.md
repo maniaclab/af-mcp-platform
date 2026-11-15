@@ -42,6 +42,8 @@ Each item has an ID, a level, and four parts.
   weakens the credential boundary.
 - **SHOULD** items are expected. A deviation needs a stated reason in the
   server's own documentation.
+- **MAY** items are optional. They say what a server can do where it helps, and
+  a server that does not is not deviating.
 - **Rule** is the requirement. **Why** is the agent-facing cost of skipping it.
   **Verify** is how to check it, mechanically where possible. **Spec** links the
   specification section, or says the item is platform-specific. **In this
@@ -81,6 +83,11 @@ Each item has an ID, a level, and four parts.
 | [U4](#u4-redeem-credentials-through-the-broker) | MUST | Fetch x509/krb5 credentials from the broker's redeem routes |
 | [U5](#u5-take-no-authorization-decision-from-the-token) | MUST | Read no permissions or groups from the token |
 | [U6](#u6-identity-is-ambient-never-an-argument) | MUST | No tool takes a username or owner; derive it from the verified identity |
+| [U7](#u7-cache-the-broker-jwks) | SHOULD | Cache the broker JWKS with a TTL; refetch early only on an unknown `kid` |
+| [L1](#l1-log-the-brokers-request-id) | SHOULD | Log `X-Request-ID` as `request_id` on every line of the request |
+| [L2](#l2-write-structured-json-logs-with-the-standard-fields) | SHOULD | One JSON object per line with `timestamp`, `level`, `logger`, `event`, `request_id`, `subject`, `tool`, `duration_ms`, `outcome` |
+| [L3](#l3-write-no-access-log-line-for-health-probes) | SHOULD | No access-log line for a successful health or readiness probe; failures stay |
+| [L4](#l4-emit-opentelemetry-spans-where-they-help) | MAY | OpenTelemetry spans, honouring the inbound trace context, configured by `OTEL_*` |
 | [P1](#p1-the-prefix-rule) | MUST | Tool names carry the service prefix the registry routes on |
 | [P2](#p2-write-an-agent_policy-for-the-service) | SHOULD | A service entry carries an `agent_policy` |
 | [P3](#p3-declare-a-trust_tier) | MUST | A service entry declares `trust_tier` |
@@ -810,6 +817,149 @@ is this and did the broker send them", and nothing else. The full design is in
   `account` on a read) is a case for the reader to confirm, not an automatic
   pass.
 
+### U7: Cache the broker JWKS
+
+**SHOULD.**
+
+- **Rule.** Fetch the broker's JWKS (`GET /.well-known/jwks.json`) once and
+  verify tokens from memory. Refetch when a TTL lapses (an hour is a sound
+  default), and early only when a token names a `kid` the cache does not hold,
+  which is what a key rotation looks like. Rate-limit that early refetch (once
+  per 30 seconds is enough) so a forged `kid` cannot turn every request into a
+  fetch, and keep serving the keys already held when a refetch fails.
+- **Why.** A verifier that fetches the key set per request adds a round trip to
+  every call and makes verification depend on the broker's public endpoint being
+  up. Production showed one backend fetching the JWKS about 8,700 times a day.
+  The `kid` is the RFC 7638 thumbprint of the key, stable across replicas and
+  restarts, so a cache entry stays right until the broker rotates its key.
+- **Verify.** Send several valid requests and count the fetches of the JWKS URL
+  (the broker's access log, or a stub endpoint): one. Send a token with an
+  unknown `kid` repeatedly and check the fetches stay bounded.
+- **Spec.** Platform-specific. The authorization spec leaves key retrieval to
+  the implementation.
+- **In this repo.** `JwksCache` in the skill's reference server
+  (`skills/af-mcp-builder/references/example-server/shelf_mcp/auth.py`). The
+  token format is in `docs/auth.md`.
+
+---
+
+## Observability
+
+What a backend writes to its own log so that one tool call can be followed from
+the client through the broker to the backend. The requirement differs by who
+operates the component:
+
+| Component | Requirement |
+|-----------|-------------|
+| The broker | Emits OpenTelemetry spans. This is the broker's own behaviour, not a backend rule. |
+| A backend operated with the platform | Logs `X-Request-ID` (L1, L2, L3). May emit OpenTelemetry spans (L4). |
+| A backend operated by someone else | No instrumentation requirement. The broker measures the outbound call (`duration_ms` and the outcome on its audit line). |
+| An upstream service behind a backend | Integrate with its tracing only if it supports tracing independently. |
+
+Distributed tracing is never a deployment requirement for a backend.
+
+### L1: Log the broker's request id
+
+**SHOULD.**
+
+- **Rule.** Read the `X-Request-ID` header of every request and put its value in
+  a `request_id` field on every log line written while serving that request.
+  Bind it once at the HTTP edge (a context variable set by middleware) so tool
+  and library code carry it without passing it around. The header is
+  authoritative: the broker sends its own correlation id there on every request
+  to a backend. Treat the value as an opaque string of at most 128 characters,
+  never as an authentication or authorization input, and forward it only on
+  calls made on behalf of the same request. Generate an id only when the header
+  is absent, so that no line is without one. The broker identity token may carry
+  a private `rid` claim naming the call that minted it; a backend does not need
+  to read it, and it is not a substitute for the header.
+- **Why.** The broker's audit line, its request lines and its usage row for a
+  call all carry that id. A backend line that carries it too lets an operator go
+  from a user's failed call to the backend's side with one query. Without it the
+  join is a guess on timestamps.
+- **Verify.** Send a request with `X-Request-ID: abc` and check that every JSON
+  line written for it has `"request_id": "abc"`, including the tool-call line
+  and the access line.
+- **Spec.** Platform-specific. `X-Request-ID` is a widely used HTTP header
+  convention, and the MCP specification does not define it.
+- **In this repo.** [Observability](observability.md), "Following one call end
+  to end", lists where the id appears and how to follow a call. The broker sets
+  the header in `broker/src/af_mcp_broker/backend_client.py`.
+  `RequestLogMiddleware` in the skill's reference server binds it.
+
+### L2: Write structured JSON logs with the standard fields
+
+**SHOULD.**
+
+- **Rule.** Write one JSON object per line to stdout. Use these field names so
+  that queries port across backends: `timestamp` (ISO 8601, UTC), `level`,
+  `logger`, `event` (a short stable name such as `tool.call`, with data in
+  fields rather than interpolated into the string), `request_id` (L1), `subject`
+  (the verified token's `sub`, when known, never an argument), `tool`,
+  `duration_ms` and `outcome` (`ok` or `error`). Write one `tool.call` line per
+  tool invocation carrying `tool`, `duration_ms`, `outcome` and `subject`, and
+  put an error's category and detail in fields on that line. Never log a token,
+  a credential, or a tool's arguments or results (U3).
+- **Why.** The platform's logs are queried by field. A free-text line cannot be
+  filtered on `outcome=error` or summed by `duration_ms`, and a field named
+  differently in each backend needs a per-backend query. Server-side detail kept
+  out of the tool's error text (E2) belongs on this line.
+- **Verify.** Run a tool call, then check that every stdout line parses as JSON
+  and that the `tool.call` line has all the fields above.
+- **Spec.** Platform-specific. The MCP specification's logging utility is
+  server-to-client notifications and is a different thing.
+- **In this repo.** [Observability](observability.md), "Audit log line shape",
+  describes the broker's own line, which shares `timestamp`, `level`, `logger`,
+  `request_id`, `subject` and `outcome` with this convention. `JsonFormatter`
+  and `ToolCallMiddleware` in the reference server write it.
+
+### L3: Write no access-log line for health probes
+
+**SHOULD.**
+
+- **Rule.** A request to the health or readiness path that answers with a 2xx or
+  3xx status writes no access-log line. One that answers with a 4xx or 5xx
+  status is logged, because a failing probe is signal. Every other request keeps
+  its access line. Where the HTTP server's own access log cannot filter by path,
+  switch it off and write the access line from middleware.
+- **Why.** The orchestrator probes every replica every few seconds, all day. A
+  line per probe dominates the log's volume and hides the lines that matter,
+  while a failed probe is exactly the line an operator wants.
+- **Verify.** Send several `GET /healthz` requests and check that no line names
+  that path. Make the probe fail and check that a line appears. Send a `/mcp`
+  request and check that its access line is still there.
+- **Spec.** Platform-specific.
+- **In this repo.** The portal's nginx omits a successful `kube-probe` line and
+  keeps a failing one ([Observability](observability.md), "Process and portal
+  log lines"). `RequestLogMiddleware` does the same for the reference server.
+
+### L4: Emit OpenTelemetry spans where they help
+
+**MAY.**
+
+- **Rule.** A backend operated with the platform can emit a span per tool call.
+  Continue the caller's trace: when the request's `_meta` carries a W3C
+  `traceparent` (the broker puts it there, not in an HTTP header, when it
+  traces), use it as the remote parent. Configure export with the standard
+  `OTEL_*` variables (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`) and
+  leave tracing off when they are unset. Do not put tool arguments or results in
+  span attributes. A backend that does none of this is conformant.
+- **Why.** A span shows where the time inside a backend went, under the broker's
+  `tools/call` span. The broker already measures the call from the outside, so
+  this is for backends where the inside matters, not a requirement. Distributed
+  tracing is never a deployment requirement, a backend the platform does not
+  operate owes it no instrumentation, and an upstream service's tracing is
+  joined only where that service supports it on its own.
+- **Verify.** Reading, plus a run with `OTEL_EXPORTER_OTLP_ENDPOINT` pointing at
+  a local collector: a `tools/call` span arrives with the broker's trace id when
+  the request carried a `traceparent`. With the variable unset, nothing is
+  exported and nothing fails.
+- **Spec.** Platform-specific. Trace context in `_meta` follows SEP-414 (see
+  [Observability](observability.md), "Users: joining your own traces").
+- **In this repo.** `configure_tracing` and `ToolCallMiddleware` in the
+  reference server. The broker's own spans and the join to audit lines are in
+  [Architecture](architecture.md#distributed-tracing-opentelemetry).
+
 ---
 
 ## Platform integration
@@ -999,7 +1149,18 @@ names), and with `--call` E1, E2, O1, O2, O3, U3 (results) and the output size.
 `--check-401` checks X2 and `--check-stateless` checks X1; with `--url` it also
 flags a legacy HTTP+SSE-only endpoint as X1. The remaining items
 need the source and the deployment and are checked by reading, following the
-skill's procedure. The skill reports findings as a table of ID, level, location
+skill's procedure. That includes U7 and L1 to L4: a JWKS cache, a log field and
+a missing access-log line are not visible on the wire, so the script does not
+check them.
+
+### A reference server
+
+`skills/af-mcp-builder/references/example-server/` is a small runnable fastmcp
+server over a fake in-memory data source that follows every MUST and SHOULD
+here that applies to a read-only server. Its `ARCHITECTURE.md` maps each part
+of the code to the item it implements. The skill's tests start it, run
+`audit_tools.py` against it, and check its logs and its JWKS fetches, so it
+cannot drift from this page unnoticed. The skill reports findings as a table of ID, level, location
 (`file:line`), and suggested change.
 
 ### Where the skill reads the guide
