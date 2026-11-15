@@ -321,25 +321,38 @@ below its own, and `if TYPE_CHECKING:` imports count the same as runtime ones.
 exhaustive, so a new top-level module fails the check until it is placed in a
 layer on purpose.
 
-Highest layer first. Modules joined by `|` are independent siblings and may not
-import each other, directly or transitively.
+Highest layer first. Each box is a layer and may import only from the layers
+below it. `api` and `mcp` are independent siblings: neither imports the other,
+directly or transitively.
 
-| Layer | Modules | Role |
-| --- | --- | --- |
-| Wiring | `app`, `token_sweep`, `__main__` | `app` builds the FastAPI app and the lifespan; the others are entry points |
-| Edges | `api` \| `mcp` | `/v1` routers and the `/mcp` aggregator with its ASGI and FastMCP middleware; neither imports the other |
-| Token identity | `pat_auth` | resolves a broker-issued PAT to a `Principal` |
-| Identity | `identity` | validates a Keycloak JWT; the FastAPI auth dependency |
-| Features | `credmon`, `backend_client`, `service_status`, `lint_observations`, `maintenance` | services the edges share, built on the layers below |
-| Providers | `credentials`, `service_registry` | credential providers; the registry of backend services |
-| Metering | `metering` | tool-call audit, usage and metrics pipeline |
-| OTel metrics | `otel_metrics` | OpenTelemetry meters |
-| Usage | `usage` | usage store |
-| Audit | `audit` | audit record, writer, result measurement |
-| Platform | `tracing`, `principal_cache`, `mcp_auth_codes`, `authorization` | caches, the entitlement policy, tracing |
-| Stores | `principal_directory`, `token_registry` | the directory client and the PAT registry |
-| Settings | `config`, `otel_resource`, `vault_kv`, `shared_state`, `oauth_state`, `cimd_client`, `backend_errors` | settings and infrastructure clients |
-| Leaf | `errors`, `constants`, `principal`, `http`, `logging`, `metrics`, `_version`, `pat` | no first-party imports |
+```mermaid
+flowchart TB
+    wiring["<b>Wiring</b>: builds the FastAPI app and lifespan; entry points<br/><code>app</code> · <code>token_sweep</code> · <code>__main__</code>"]
+    subgraph edges["Edges: /v1 routers and the /mcp aggregator (independent)"]
+        direction LR
+        api["<code>api</code>"]
+        mcp["<code>mcp</code>"]
+    end
+    pat_auth["<b>Token identity</b>: resolves a broker-issued PAT to a Principal<br/><code>pat_auth</code>"]
+    identity["<b>Identity</b>: validates a Keycloak JWT; the FastAPI auth dependency<br/><code>identity</code>"]
+    features["<b>Features</b>: services the edges share<br/><code>credmon</code> · <code>backend_client</code> · <code>service_status</code> · <code>lint_observations</code> · <code>maintenance</code>"]
+    providers["<b>Providers</b>: credential providers; the backend service registry<br/><code>credentials</code> · <code>service_registry</code>"]
+    metering["<b>Metering</b>: tool-call audit, usage and metrics pipeline<br/><code>metering</code>"]
+    otel["<b>OTel metrics</b>: OpenTelemetry meters<br/><code>otel_metrics</code>"]
+    usage["<b>Usage</b>: usage store<br/><code>usage</code>"]
+    audit["<b>Audit</b>: audit record, writer, result measurement<br/><code>audit</code>"]
+    platform["<b>Platform</b>: caches, the entitlement policy, tracing<br/><code>tracing</code> · <code>principal_cache</code> · <code>mcp_auth_codes</code> · <code>authorization</code>"]
+    stores["<b>Stores</b>: the directory client and the PAT registry<br/><code>principal_directory</code> · <code>token_registry</code>"]
+    settings["<b>Settings</b>: settings and infrastructure clients<br/><code>config</code> · <code>otel_resource</code> · <code>vault_kv</code> · <code>shared_state</code> · <code>oauth_state</code> · <code>cimd_client</code> · <code>backend_errors</code>"]
+    leaf["<b>Leaf</b>: no first-party imports<br/><code>errors</code> · <code>constants</code> · <code>principal</code> · <code>http</code> · <code>logging</code> · <code>metrics</code> · <code>_version</code> · <code>pat</code>"]
+
+    wiring --> api & mcp
+    api & mcp --> pat_auth
+    pat_auth --> identity --> features --> providers --> metering --> otel --> usage --> audit --> platform --> stores --> settings --> leaf
+```
+
+An arrow means "may import from". Imports may skip layers downward; they may
+never point up.
 
 What the layering means in practice:
 
