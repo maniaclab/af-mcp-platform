@@ -321,34 +321,103 @@ below its own, and `if TYPE_CHECKING:` imports count the same as runtime ones.
 exhaustive, so a new top-level module fails the check until it is placed in a
 layer on purpose.
 
-Highest layer first. Each box is a layer and may import only from the layers
-below it. `api` and `mcp` are independent siblings: neither imports the other,
-directly or transitively.
+Highest layer first. Each band is a layer and each box in it is a module; a
+module may import only from the layers below its own. Modules in the same band
+are independent: none imports another from its own band, directly or
+transitively (so, for example, `api` and `mcp` never import each other).
 
 ```mermaid
 flowchart TB
-    wiring["<b>Wiring</b>: builds the FastAPI app and lifespan; entry points<br/><code>app</code> · <code>token_sweep</code> · <code>__main__</code>"]
-    subgraph edges["Edges: /v1 routers and the /mcp aggregator (independent)"]
+    subgraph wiring["Wiring: the FastAPI app, lifespan and entry points"]
         direction LR
-        api["<code>api</code>"]
-        mcp["<code>mcp</code>"]
+        m_app["app"]
+        m_token_sweep["token_sweep"]
+        m_main["__main__"]
+        m_app ~~~ m_token_sweep ~~~ m_main
     end
-    pat_auth["<b>Token identity</b>: resolves a broker-issued PAT to a Principal<br/><code>pat_auth</code>"]
-    identity["<b>Identity</b>: validates a Keycloak JWT; the FastAPI auth dependency<br/><code>identity</code>"]
-    features["<b>Features</b>: services the edges share<br/><code>credmon</code> · <code>backend_client</code> · <code>service_status</code> · <code>lint_observations</code> · <code>maintenance</code>"]
-    providers["<b>Providers</b>: credential providers; the backend service registry<br/><code>credentials</code> · <code>service_registry</code>"]
-    metering["<b>Metering</b>: tool-call audit, usage and metrics pipeline<br/><code>metering</code>"]
-    otel["<b>OTel metrics</b>: OpenTelemetry meters<br/><code>otel_metrics</code>"]
-    usage["<b>Usage</b>: usage store<br/><code>usage</code>"]
-    audit["<b>Audit</b>: audit record, writer, result measurement<br/><code>audit</code>"]
-    platform["<b>Platform</b>: caches, the entitlement policy, tracing<br/><code>tracing</code> · <code>principal_cache</code> · <code>mcp_auth_codes</code> · <code>authorization</code>"]
-    stores["<b>Stores</b>: the directory client and the PAT registry<br/><code>principal_directory</code> · <code>token_registry</code>"]
-    settings["<b>Settings</b>: settings and infrastructure clients<br/><code>config</code> · <code>otel_resource</code> · <code>vault_kv</code> · <code>shared_state</code> · <code>oauth_state</code> · <code>cimd_client</code> · <code>backend_errors</code>"]
-    leaf["<b>Leaf</b>: no first-party imports<br/><code>errors</code> · <code>constants</code> · <code>principal</code> · <code>http</code> · <code>logging</code> · <code>metrics</code> · <code>_version</code> · <code>pat</code>"]
-
-    wiring --> api & mcp
-    api & mcp --> pat_auth
-    pat_auth --> identity --> features --> providers --> metering --> otel --> usage --> audit --> platform --> stores --> settings --> leaf
+    subgraph edges["Edges: /v1 routers and the /mcp aggregator, independent of each other"]
+        direction LR
+        m_api["api"]
+        m_mcp["mcp"]
+        m_api ~~~ m_mcp
+    end
+    subgraph tokenid["Token identity: PAT to Principal"]
+        direction LR
+        m_pat_auth["pat_auth"]
+    end
+    subgraph ident["Identity: Keycloak JWT validation, the FastAPI auth dependency"]
+        direction LR
+        m_identity["identity"]
+    end
+    subgraph features["Features: services the edges share"]
+        direction LR
+        m_credmon["credmon"]
+        m_backend_client["backend_client"]
+        m_service_status["service_status"]
+        m_lint_observations["lint_observations"]
+        m_maintenance["maintenance"]
+        m_credmon ~~~ m_backend_client ~~~ m_service_status ~~~ m_lint_observations ~~~ m_maintenance
+    end
+    subgraph providers["Providers: credential providers and the service registry"]
+        direction LR
+        m_credentials["credentials"]
+        m_service_registry["service_registry"]
+        m_credentials ~~~ m_service_registry
+    end
+    subgraph meteringL["Metering: tool-call audit, usage and metrics pipeline"]
+        direction LR
+        m_metering["metering"]
+    end
+    subgraph otelL["OTel metrics"]
+        direction LR
+        m_otel_metrics["otel_metrics"]
+    end
+    subgraph usageL["Usage store"]
+        direction LR
+        m_usage["usage"]
+    end
+    subgraph auditL["Audit: record, writer, result measurement"]
+        direction LR
+        m_audit["audit"]
+    end
+    subgraph platform["Platform: caches, entitlement policy, tracing"]
+        direction LR
+        m_tracing["tracing"]
+        m_principal_cache["principal_cache"]
+        m_mcp_auth_codes["mcp_auth_codes"]
+        m_authorization["authorization"]
+        m_tracing ~~~ m_principal_cache ~~~ m_mcp_auth_codes ~~~ m_authorization
+    end
+    subgraph stores["Stores: directory client and PAT registry"]
+        direction LR
+        m_principal_directory["principal_directory"]
+        m_token_registry["token_registry"]
+        m_principal_directory ~~~ m_token_registry
+    end
+    subgraph settings["Settings and infrastructure clients"]
+        direction LR
+        m_config["config"]
+        m_otel_resource["otel_resource"]
+        m_vault_kv["vault_kv"]
+        m_shared_state["shared_state"]
+        m_oauth_state["oauth_state"]
+        m_cimd_client["cimd_client"]
+        m_backend_errors["backend_errors"]
+        m_config ~~~ m_otel_resource ~~~ m_vault_kv ~~~ m_shared_state ~~~ m_oauth_state ~~~ m_cimd_client ~~~ m_backend_errors
+    end
+    subgraph leaf["Leaf: no first-party imports"]
+        direction LR
+        m_errors["errors"]
+        m_constants["constants"]
+        m_principal["principal"]
+        m_http["http"]
+        m_logging["logging"]
+        m_metrics["metrics"]
+        m_version["_version"]
+        m_pat["pat"]
+        m_errors ~~~ m_constants ~~~ m_principal ~~~ m_http ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
+    end
+    wiring --> edges --> tokenid --> ident --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
 ```
 
 An arrow means "may import from". Imports may skip layers downward; they may
