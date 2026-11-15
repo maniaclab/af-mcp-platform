@@ -301,7 +301,8 @@ from `prometheus-fastapi-instrumentator`, the broker defines these
 |---|---|---|---|
 | `af_mcp_tool_invocations_total` | counter | `service`, `tool`, `action_type` | Tool invocations attempted via `/mcp`, once per call regardless of outcome. |
 | `af_mcp_tool_invocations_denied_total` | counter | `service`, `action_type` | Invocations denied by authorization for a known service. |
-| `af_mcp_tool_duration_seconds` | histogram | `service`, `tool`, `action_type` | Wall time of the downstream call (credential resolution + backend call); buckets sized up to 300 s for calls that mint credentials via ephemeral k8s Jobs. |
+| `af_mcp_tool_duration_seconds` | histogram | `service`, `tool`, `action_type`, `outcome` | Wall time of the downstream call (credential resolution + backend call); buckets sized up to 300 s for calls that mint credentials via ephemeral k8s Jobs. `outcome` is the audit record's value, `success` or `error`; denied and rate-limited calls never execute, so they are not observed (see their own counters). |
+| `af_mcp_tool_invocation_errors_total` | counter | `service`, `error_class` | Calls whose audit record has `outcome=error`, by the audit record's `error_class` (`transient_connection`, `backend_error`, `tool_reported`). Error rate per service: `sum by (service) (rate(af_mcp_tool_invocation_errors_total[5m])) / sum by (service) (rate(af_mcp_tool_invocations_total[5m]))`. |
 | `af_mcp_tool_invocations_rate_limited_total` | counter | `service`, `action_type` | Tool calls refused by a `rate_limits` rule in `policy.yaml` (see [auth](auth.md#tool-rate-limits)). Also counted in `tool_invocations_total`. |
 | `af_mcp_tool_invocations_unmapped_total` | counter | *(none)* | Tool names matching no registered service prefix (client-supplied, so never a label). |
 | `af_mcp_metering_queue_overflow_total` | counter | *(none)* | Records that found the metering queue full and were written inline without measurement — nothing dropped, but tool calls are paying for audit I/O again. |
@@ -345,7 +346,7 @@ signal is access-controlled and unbounded by design:
 
 | Signal | Carries identity | Attributes | Cardinality |
 |---|---|---|---|
-| Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
+| Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `outcome`, `error_class`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
 | OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome` | Same bound |
 | Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
 | OTel usage events (OTLP logs, opt-in) | Yes: `principal_sub`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`; never arguments or results | One per tool call; access control is the log backend's |
@@ -630,6 +631,26 @@ neither logs the other's requests.
 | `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
 | `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`null` when the request raised or the client disconnected first), wall time since `received`, and the exception class if one escaped. |
 | `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
+
+## Process and portal log lines
+
+Every line a broker pod writes is a JSON object. That includes uvicorn's own
+lifecycle lines (`Started server process`, `Waiting for application startup.`,
+`Application startup complete.`, `Uvicorn running on ...`, and the shutdown
+counterparts), which are `event` lines on logger `uvicorn.error` at `info`.
+uvicorn configures its loggers before the broker's code is imported, so the
+image starts it with `--log-config
+broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`);
+`pixi run -e dev broker` does not pass it and keeps uvicorn's plain-text lines.
+`uvicorn.access` stays at `warning`: the `http.request.received` /
+`http.request.finished` lines carry the method, path, status and duration of
+every request, with the correlation id.
+
+The portal's nginx writes its standard access log. Two sources of lines with
+no signal are left out of it: a successful kubelet probe (user agent
+`kube-probe/*` answered 2xx or 3xx; a failing probe is still logged), and the
+`[error] open() failed` line for the favicon the portal does not ship (the
+request still answers 404 and is access-logged).
 
 ## Correlation ids on calls to token services
 

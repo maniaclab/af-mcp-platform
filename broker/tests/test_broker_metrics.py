@@ -46,6 +46,7 @@ def _all_counters() -> list:
         metrics.tool_invocations_total,
         metrics.tool_invocations_denied_total,
         metrics.tool_invocations_unmapped_total,
+        metrics.tool_invocation_errors_total,
         metrics.credential_cache_hits_total,
         metrics.credential_cache_misses_total,
         metrics.x509_proxy_mints_total,
@@ -105,6 +106,17 @@ def test_tool_invocations_unmapped_total_has_no_labels():
     assert metrics.tool_invocations_unmapped_total._labelnames == ()
 
 
+def test_tool_invocation_errors_total_labeled_by_service_error_class():
+    assert (
+        _full_name(metrics.tool_invocation_errors_total)
+        == "af_mcp_tool_invocation_errors_total"
+    )
+    assert set(metrics.tool_invocation_errors_total._labelnames) == {
+        "service",
+        "error_class",
+    }
+
+
 def test_credential_cache_counters_labeled_by_target():
     assert (
         _full_name(metrics.credential_cache_hits_total)
@@ -118,15 +130,16 @@ def test_credential_cache_counters_labeled_by_target():
     assert metrics.credential_cache_misses_total._labelnames == ("target",)
 
 
-def test_tool_duration_seconds_labeled_by_service_tool_action_type():
-    """Same label set as tool_invocations_total -- and deliberately NOT
-    outcome (the audit log is the per-outcome source of truth) and never an
-    identity label; see the module docstring's cardinality policy."""
+def test_tool_duration_seconds_labeled_by_service_tool_action_type_outcome():
+    """tool_invocations_total's label set plus the audit record's bounded
+    outcome vocabulary, and never an identity label; see the module
+    docstring's cardinality policy."""
     assert metrics.tool_duration_seconds._name == "af_mcp_tool_duration_seconds"
     assert set(metrics.tool_duration_seconds._labelnames) == {
         "service",
         "tool",
         "action_type",
+        "outcome",
     }
     assert not _FORBIDDEN_LABEL_NAMES & set(metrics.tool_duration_seconds._labelnames)
     # Buckets sized for tool calls that can include credential minting at
