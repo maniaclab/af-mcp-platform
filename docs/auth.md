@@ -1051,7 +1051,7 @@ krb5-token-service.
 the same `backend_router` as `POST /v1/credentials/x509/redeem` (not the
 Keycloak-gated router), authenticated by an AF Broker Identity Token in
 the `Authorization` header rather than a Keycloak JWT, and requiring its
-`aud` to map to a configured krb5 target via `app.state.krb5_audiences`
+`aud` to map to a configured krb5 target via `BrokerState.krb5_audiences`
 — an `effective_audience -> target` reverse map, the same shape as
 `x509_audiences` (issue #257's audience/target split applies here too,
 since the token's `aud` is the service's `effective_audience`, which can
