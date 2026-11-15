@@ -26,7 +26,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2
 import pytest
 import structlog
 from cryptography.fernet import Fernet
@@ -64,7 +64,7 @@ GATEWAY_AUDIENCE = "mcp-gateway"
 
 
 class _FakeMcpOAuthHttpClient:
-    """Fake httpx client serving the MCP client's CIMD document and Keycloak's token endpoint, for monkeypatching ``af_mcp_broker.api.mcp_oauth.get_http_client``."""
+    """Fake httpx2 client serving the MCP client's CIMD document and Keycloak's token endpoint, for monkeypatching ``af_mcp_broker.api.mcp_oauth.get_http_client``."""
 
     def __init__(
         self,
@@ -80,20 +80,20 @@ class _FakeMcpOAuthHttpClient:
         self.token_calls: list[dict[str, Any]] = []
         self.token_status_code = 200
 
-    async def get(self, url: str, **_: Any) -> httpx.Response:
-        return httpx.Response(
-            200, json=self.cimd_doc, request=httpx.Request("GET", url)
+    async def get(self, url: str, **_: Any) -> httpx2.Response:
+        return httpx2.Response(
+            200, json=self.cimd_doc, request=httpx2.Request("GET", url)
         )
 
-    async def post(self, url: str, data: dict[str, Any], **_: Any) -> httpx.Response:
+    async def post(self, url: str, data: dict[str, Any], **_: Any) -> httpx2.Response:
         self.token_calls.append({"url": url, "data": data})
         body: dict[str, Any] = {"id_token": self.id_token}
         if self.access_token is not None:
             body["access_token"] = self.access_token
-        return httpx.Response(
+        return httpx2.Response(
             self.token_status_code,
             json=body,
-            request=httpx.Request("POST", url),
+            request=httpx2.Request("POST", url),
         )
 
 

@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
@@ -1007,7 +1007,7 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
     class _RejectingClient:
         async def post(self, *args, **kwargs):
 
-            return httpx.Response(500, request=httpx.Request("POST", args[0]))
+            return httpx2.Response(500, request=httpx2.Request("POST", args[0]))
 
     monkeypatch.setattr(
         "af_mcp_broker.credentials.oauth21.get_http_client",

@@ -8,8 +8,7 @@
  * /v1/krb5/keytab via api.ts's linkKrb5Keytab) — this module only turns
  * either flow's outcome into user-facing strings.
  */
-import { APIError, SessionExpiredError } from './api';
-import { apiErrorDetail } from './x509Identity';
+import { describeApiError } from './apiError';
 
 /**
  * User-facing message for a failed POST /v1/krb5/ticket or POST
@@ -26,27 +25,18 @@ import { apiErrorDetail } from './x509Identity';
  * status readable when it isn't.
  */
 export function krb5LinkErrorMessage(err: unknown): string {
-  if (err instanceof SessionExpiredError) {
-    return 'Your session expired — reload the page and try again.';
-  }
-  if (err instanceof APIError) {
-    const detail = apiErrorDetail(err);
-    if (detail) return detail;
-    if (err.status === 400) {
-      return 'Incorrect CERN username/password, or the keytab does not match that username.';
-    }
-    if (err.status === 403) {
-      return 'This CERN account is revoked or its password has expired. Contact CERN account support.';
-    }
-    if (err.status === 422) return 'The given username or ticket lifetime was invalid.';
-    if (err.status === 429) return 'Too many attempts — wait a moment and try again.';
-    if (err.status === 502) {
-      return 'The Kerberos ticket service is temporarily unavailable — retry later.';
-    }
-    return `Request failed (${err.status}).`;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Could not create a Kerberos ticket.';
+  return describeApiError(err, {
+    sessionExpired: 'Your session expired — reload the page and try again.',
+    byStatus: {
+      400: 'Incorrect CERN username/password, or the keytab does not match that username.',
+      403: 'This CERN account is revoked or its password has expired. Contact CERN account support.',
+      422: 'The given username or ticket lifetime was invalid.',
+      429: 'Too many attempts — wait a moment and try again.',
+      502: 'The Kerberos ticket service is temporarily unavailable — retry later.',
+    },
+    unmapped: (apiErr) => `Request failed (${apiErr.status}).`,
+    fallback: 'Could not create a Kerberos ticket.',
+  });
 }
 
 /**

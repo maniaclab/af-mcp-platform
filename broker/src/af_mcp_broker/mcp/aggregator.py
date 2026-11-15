@@ -1838,10 +1838,54 @@ class _ObservableProxyProvider(ProxyProvider):
             self._warned_missing_exclude_tools = True
 
 
+class BackendProviders:
+    """The ``_ObservableProxyProvider`` of every proxied backend, by service name.
+
+    fastmcp wraps a namespaced provider in a private ``_WrappedProvider`` when
+    it is added, so ``mcp.providers`` never holds our providers directly.
+    ``_register_services`` records them here instead, and the invalidation
+    helpers below reach the real objects through this holder. One instance is
+    shared by ``build_aggregator`` and every later ``populate_aggregator`` on
+    the same aggregator, which refresh its contents in place.
+    """
+
+    def __init__(self) -> None:
+        self._by_service: dict[str, _ObservableProxyProvider] = {}
+
+    def replace(self, providers: dict[str, _ObservableProxyProvider]) -> None:
+        """Make *providers* (keyed by ``ServiceSpec.name``) the recorded set."""
+        self._by_service = providers
+
+    def get(self, service_name: str) -> _ObservableProxyProvider:
+        """Return the provider for *service_name*; ``KeyError`` if none is registered."""
+        return self._by_service[service_name]
+
+    def items(self) -> list[tuple[str, _ObservableProxyProvider]]:
+        """Return every ``(service name, provider)`` pair."""
+        return list(self._by_service.items())
+
+    def values(self) -> list[_ObservableProxyProvider]:
+        """Return every recorded provider."""
+        return list(self._by_service.values())
+
+
+class Aggregator(FastMCP):
+    """The aggregator FastMCP instance, owning the ``BackendProviders`` its backends are recorded in.
+
+    Owning the holder makes one holder per aggregator structural:
+    ``_register_services`` refreshes it on every build and populate, and
+    callers read it from here rather than being handed a copy.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.backend_providers = BackendProviders()
+
+
 def invalidate_subject_cache(
-    mcp: FastMCP, subject: str, target: str | None = None
+    backend_providers: BackendProviders, subject: str, target: str | None = None
 ) -> None:
-    """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across ``mcp``'s providers -- one service (*target*) or every service.
+    """Drop *subject*'s cached listing entries (every kind: tools, resources, resource templates, prompts) across *backend_providers* -- one service (*target*) or every service.
 
     Called wherever a subject's linked identity changes (unlink, credential
     revocation, or a completed link -- see app.py's ``CredentialCache``
@@ -1851,18 +1895,15 @@ def invalidate_subject_cache(
     ``ServiceSpec.name`` affected; omitted, every service's cache entry for
     *subject* is dropped.
     """
-    for provider in mcp.providers:
-        if isinstance(provider, _ObservableProxyProvider) and (
-            target is None or provider._service_name == target
-        ):
+    for service_name, provider in backend_providers.items():
+        if target is None or service_name == target:
             provider.invalidate_subject(subject)
 
 
-def invalidate_all_subject_caches(mcp: FastMCP) -> None:
-    """Drop every subject's cached listing entries across all of ``mcp``'s providers (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
-    for provider in mcp.providers:
-        if isinstance(provider, _ObservableProxyProvider):
-            provider.invalidate_all_subjects()
+def invalidate_all_subject_caches(backend_providers: BackendProviders) -> None:
+    """Drop every subject's cached listing entries across all of *backend_providers* (see ``_ObservableProxyProvider.invalidate_all_subjects``)."""
+    for provider in backend_providers.values():
+        provider.invalidate_all_subjects()
 
 
 def build_aggregator(
@@ -1879,7 +1920,7 @@ def build_aggregator(
     maintenance_mode_store: MaintenanceModeStore | None = None,
     job_credentials: JobCredentialGuide | None = None,
     shared_state: SharedState | None = None,
-) -> FastMCP:
+) -> Aggregator:
     """Construct a fully-wired aggregator FastMCP instance.
 
     Registers IdentityMiddleware first (so it runs outermost among these
@@ -1933,7 +1974,7 @@ def build_aggregator(
     # available at construction -- the eager module-scope build starts with an
     # empty registry (see app.py), so populate_aggregator recomposes below once
     # the real registry is loaded, mirroring how settings/policy get pushed in.
-    mcp = FastMCP(
+    mcp = Aggregator(
         name="af-mcp-aggregator",
         instructions=compose_agent_instructions(registry, job_credentials),
     )
@@ -1993,7 +2034,7 @@ def build_asgi_auth_middleware(mcp: FastMCP) -> Middleware:
 
 
 def populate_aggregator(
-    mcp: FastMCP,
+    mcp: Aggregator,
     registry: ServiceRegistry,
     settings: Settings,
     policy: EntitlementPolicy,
@@ -2064,7 +2105,7 @@ def populate_aggregator(
 
 
 def _register_services(
-    mcp: FastMCP,
+    mcp: Aggregator,
     registry: ServiceRegistry,
     credential_registry: CredentialRegistry,
     settings: Settings,
@@ -2085,6 +2126,8 @@ def _register_services(
     # every call: it carries no per-call state of its own, and the list was
     # just cleared, so this never produces a duplicate entry.
     mcp.add_provider(mcp.local_provider)
+    providers: dict[str, _ObservableProxyProvider] = {}
+    mcp.backend_providers.replace(providers)
     for spec in registry.all_services():
         if spec.builtin:
             # The builtin gateway service (issue #240) has no backend to
@@ -2112,6 +2155,7 @@ def _register_services(
         )
         namespace = spec.prefix if spec.apply_namespace else ""
         mcp.add_provider(provider, namespace=namespace)
+        providers[spec.name] = provider
 
 
 def _find_middleware(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
@@ -17,6 +16,7 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.identity import Principal, keycloak_dependency
+from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.mcp.registry import (
     BUILTIN_SERVICE_NAME,
     LIST_IDENTITIES_TOOL_NAME,
@@ -387,7 +387,7 @@ async def _service_status(
     all-or-nothing gate on a single value.
     """
     if not _holds_any_required_permission(spec, caps):
-        correlation_id = uuid.uuid4().hex
+        correlation_id = current_correlation_id()
         logger.info(
             "catalog.service_status_flagged",
             subject=principal.subject,
@@ -409,7 +409,7 @@ async def _service_status(
     # before the credential like the missing-provider case below.
     routing = registry.tool_routing(spec.name)
     if routing is not None and routing.advertised > 0 and routing.routable == 0:
-        correlation_id = uuid.uuid4().hex
+        correlation_id = current_correlation_id()
         logger.info(
             "catalog.service_status_flagged",
             subject=principal.subject,
@@ -440,7 +440,7 @@ async def _service_status(
         # auth_type is "bearer"/"x509" (a credential IS expected) but no
         # provider resolves for this target -- a platform misconfiguration,
         # not something the caller can fix themselves.
-        correlation_id = uuid.uuid4().hex
+        correlation_id = current_correlation_id()
         logger.info(
             "catalog.service_status_flagged",
             subject=principal.subject,

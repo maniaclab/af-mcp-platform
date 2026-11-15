@@ -14,10 +14,9 @@ export interface ToolArg {
 }
 
 export interface ParsedToolDescription {
-  /** Free-form prose before any recognized section header, rendered with
-   * `white-space: pre-wrap` by the caller to preserve authored paragraph
-   * breaks and indented example blocks (e.g. a "Common command patterns:"
-   * list) as written, rather than re-flowing them. */
+  /** Free-form prose before any recognized section header, left as authored
+   * (paragraph breaks and indented example blocks intact) for the caller to
+   * render as Markdown. */
   summary: string;
   args: ToolArg[];
   returns: string | null;

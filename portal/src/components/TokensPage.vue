@@ -41,6 +41,7 @@ import {
   curlMintSnippet,
   pythonMintAndConnectSnippet,
 } from '../lib/tokenCliSnippets';
+import { errorMessage } from '../lib/apiError';
 import { getBrokerOrigin } from '../lib/auth';
 import { copyText } from '../lib/clipboard';
 import { formatDateTime, formatRelative } from '../lib/relativeTime';
@@ -199,7 +200,7 @@ async function handleMint(evt: Event) {
   } catch (err) {
     // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
     // -- APIError's message already carries the broker's `detail` text.
-    mintError.value = err instanceof Error ? err.message : 'Could not create the token. Try again.';
+    mintError.value = errorMessage(err, 'Could not create the token. Try again.');
   } finally {
     minting.value = false;
   }
@@ -276,7 +277,7 @@ async function handleRevoke() {
     const row = tokens.value.find((t) => t.lookup_id === lookupId);
     if (row) row.revoked_at = new Date().toISOString();
   } catch (err) {
-    revokeError.value = err instanceof Error ? err.message : 'Could not revoke the token.';
+    revokeError.value = errorMessage(err, 'Could not revoke the token.');
   } finally {
     revokingLookupId.value = null;
   }
@@ -301,7 +302,7 @@ async function handleDelete(lookupId: string) {
     await deleteTokenRecord(lookupId);
     tokens.value = tokens.value.filter((t) => t.lookup_id !== lookupId);
   } catch (err) {
-    deleteError.value = err instanceof Error ? err.message : 'Could not delete the token.';
+    deleteError.value = errorMessage(err, 'Could not delete the token.');
   } finally {
     deletingLookupId.value = null;
   }
@@ -316,7 +317,7 @@ async function handleClear() {
     tokens.value = tokens.value.filter((t) => tokenStatus(t) === 'active');
   } catch (err) {
     clearConfirmOpen.value = false;
-    deleteError.value = err instanceof Error ? err.message : 'Could not clear the tokens.';
+    deleteError.value = errorMessage(err, 'Could not clear the tokens.');
   } finally {
     clearing.value = false;
   }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, ClassVar
 
-import httpx
+import httpx2
 import pytest
 from fastapi import HTTPException
 from pydantic import SecretStr
@@ -81,7 +81,7 @@ async def test_fetch_brokered_token_raises_403_with_actionable_detail(monkeypatc
 
     class _ForbiddenClient:
         async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
-            return httpx.Response(403)
+            return httpx2.Response(403)
 
     monkeypatch.setattr(oidc, "get_http_client", _ForbiddenClient)
 
@@ -131,7 +131,7 @@ async def test_fetch_brokered_token_uses_internal_url_when_set(monkeypatch):
 
 
 class _FakeLinkClient:
-    """Fake httpx client for is_linked() probing.
+    """Fake httpx2 client for is_linked() probing.
 
     Counts HEAD/GET calls separately so tests can assert both the TTL cache
     (no repeat network calls within the window) and the HEAD-unsupported
@@ -146,11 +146,11 @@ class _FakeLinkClient:
 
     async def head(self, url: str, headers: dict[str, str], **kwargs: Any):
         self.head_calls += 1
-        return httpx.Response(self.head_status)
+        return httpx2.Response(self.head_status)
 
     async def get(self, url: str, headers: dict[str, str], **kwargs: Any):
         self.get_calls += 1
-        return httpx.Response(self.status_code)
+        return httpx2.Response(self.status_code)
 
 
 def _make_provider() -> oidc.OIDCProvider:
@@ -206,7 +206,7 @@ async def test_link_status_not_permission_denied_on_404(monkeypatch):
 async def test_link_status_not_permission_denied_on_network_error(monkeypatch):
     class _FailingClient:
         async def head(self, *args: Any, **kwargs: Any):
-            raise httpx.ConnectError("boom")
+            raise httpx2.ConnectError("boom")
 
     monkeypatch.setattr(oidc, "get_http_client", _FailingClient)
 
@@ -228,7 +228,7 @@ async def test_is_linked_falls_back_to_get_when_head_unsupported(monkeypatch):
 async def test_is_linked_false_on_network_error(monkeypatch):
     class _FailingClient:
         async def head(self, *args: Any, **kwargs: Any):
-            raise httpx.ConnectError("boom")
+            raise httpx2.ConnectError("boom")
 
     monkeypatch.setattr(oidc, "get_http_client", _FailingClient)
 
@@ -270,7 +270,7 @@ async def test_is_linked_reprobes_after_ttl_expires(monkeypatch):
 
 
 class _CountingTokenClient:
-    """Fake httpx client for the brokered-token fetch; counts calls and
+    """Fake httpx2 client for the brokered-token fetch; counts calls and
     forces a real suspension so concurrent callers actually overlap instead
     of each running to completion before the next one starts."""
 
@@ -339,7 +339,7 @@ async def test_issue_different_targets_do_not_serialize(monkeypatch):
 
 
 class _PerCallTokenClient:
-    """Fake httpx client returning a distinct access_token per call, so a
+    """Fake httpx2 client returning a distinct access_token per call, so a
     cache-key collision (two principals sharing one cached credential) shows
     up as an assertion failure rather than silently passing."""
 

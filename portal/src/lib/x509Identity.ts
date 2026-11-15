@@ -8,38 +8,8 @@
  * /v1/x509/proxy (via api.ts's requestProxy); this module only turns its
  * outcomes into user-facing strings.
  */
-import { APIError, SessionExpiredError, type X509PreflightCheck } from './api';
-
-/**
- * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
- * the body isn't that shape (e.g. an HTML error page from a proxy hop).
- *
- * Generic APIError-detail parsing with nothing x509-specific in it — exported
- * so krb5Identity.ts's krb5LinkErrorMessage can reuse it rather than
- * duplicating it.
- *
- * af-mcp-platform#288: a 5xx response now also carries a `correlation_id`
- * alongside `detail` (app.py's `_http_exception_handler`) — appended here so
- * every caller of this function gets it for free, as something a user can
- * quote back to AF support, rather than every per-status branch needing its
- * own copy of this formatting. A detail that already quotes the id (the
- * ServiceX link rejection, #342) is returned as-is rather than repeating it.
- */
-export function apiErrorDetail(err: APIError): string | null {
-  try {
-    const parsed = JSON.parse(err.body) as { detail?: unknown; correlation_id?: unknown };
-    if (typeof parsed.detail !== 'string') return null;
-    if (
-      typeof parsed.correlation_id === 'string' &&
-      !parsed.detail.includes(parsed.correlation_id)
-    ) {
-      return `${parsed.detail} (reference: ${parsed.correlation_id})`;
-    }
-    return parsed.detail;
-  } catch {
-    return null;
-  }
-}
+import type { X509PreflightCheck } from './api';
+import { describeApiError } from './apiError';
 
 /**
  * User-facing message for a failed POST /v1/x509/proxy link attempt.
@@ -52,24 +22,15 @@ export function apiErrorDetail(err: APIError): string | null {
  * when present; the fallbacks keep each status readable when it isn't.
  */
 export function x509LinkErrorMessage(err: unknown): string {
-  if (err instanceof SessionExpiredError) {
-    return 'Session expired — reload the page to re-authenticate.';
-  }
-  if (err instanceof APIError) {
-    const detail = apiErrorDetail(err);
-    if (detail) return detail;
-    if (err.status === 400) {
-      return 'Passphrase rejected — check your grid certificate passphrase and try again.';
-    }
-    if (err.status === 429) {
-      return 'Too many failed attempts — wait a few minutes and try again.';
-    }
-    if (err.status === 502) {
-      return 'Creating a proxy is temporarily unavailable — try again later.';
-    }
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return 'Linking failed. Try again.';
+  return describeApiError(err, {
+    sessionExpired: 'Session expired — reload the page to re-authenticate.',
+    byStatus: {
+      400: 'Passphrase rejected — check your grid certificate passphrase and try again.',
+      429: 'Too many failed attempts — wait a few minutes and try again.',
+      502: 'Creating a proxy is temporarily unavailable — try again later.',
+    },
+    fallback: 'Linking failed. Try again.',
+  });
 }
 
 /**
@@ -77,8 +38,7 @@ export function x509LinkErrorMessage(err: unknown): string {
  *
  * Generic date formatting with nothing x509-specific about it — exported so
  * krb5Identity's Krb5IdentityCard.vue can reuse it rather than duplicating
- * the toLocaleString options, following apiErrorDetail's cross-import
- * precedent above.
+ * the toLocaleString options.
  */
 export function formatShortDateTime(date: Date): string {
   return date.toLocaleString('en-US', {
@@ -161,21 +121,14 @@ export function preflightModeMismatch(check: X509PreflightCheck): boolean {
  * preferred when present.
  */
 export function x509PreflightErrorMessage(err: unknown): string {
-  if (err instanceof SessionExpiredError) {
-    return 'Session expired — reload the page to re-authenticate.';
-  }
-  if (err instanceof APIError) {
-    const detail = apiErrorDetail(err);
-    if (detail) return detail;
-    if (err.status === 501) {
-      return 'The certificate checklist is not available on this facility.';
-    }
-    if (err.status === 502) {
-      return 'The certificate checklist is temporarily unavailable — try again later.';
-    }
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return 'Could not load the certificate checklist. Try again.';
+  return describeApiError(err, {
+    sessionExpired: 'Session expired — reload the page to re-authenticate.',
+    byStatus: {
+      501: 'The certificate checklist is not available on this facility.',
+      502: 'The certificate checklist is temporarily unavailable — try again later.',
+    },
+    fallback: 'Could not load the certificate checklist. Try again.',
+  });
 }
 
 /** A grid proxy with less than this left, and no way to renew itself, is worth a warning. */

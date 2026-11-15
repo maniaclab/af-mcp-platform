@@ -586,7 +586,7 @@ def _status_transport(status_code: int) -> httpx2.MockTransport:
 
 
 async def _send_through(client: Client, status_code: int) -> None:
-    """Send one request through *client*'s own httpx client factory, against a
+    """Send one request through *client*'s own httpx2 client factory, against a
     backend that answers *status_code* -- the path every MCP request takes."""
     http_client = client.transport.httpx_client_factory(
         transport=_status_transport(status_code)
@@ -596,7 +596,7 @@ async def _send_through(client: Client, status_code: int) -> None:
 
 
 class TestUnauthorizedHook:
-    """The httpx response hook that reports a backend's 401 for an injected
+    """The httpx2 response hook that reports a backend's 401 for an injected
     credential (issue #344), ahead of _raise_for_401."""
 
     async def test_401_reports_and_still_raises(self) -> None:
@@ -1958,99 +1958,89 @@ async def test_invalidate_subject_drops_only_that_subject(
     assert client.call_count == 3  # alice's entry was dropped, refetched
 
 
-async def test_invalidate_subject_cache_helper_targets_one_service(
-    monkeypatch: pytest.MonkeyPatch, make_principal
-) -> None:
+def _build_namespaced_aggregator(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Any,
+    clients: dict[str, _CountingListClient],
+) -> tuple[FastMCP, aggregator.BackendProviders]:
+    """Build an aggregator through ``build_aggregator`` so every backend is registered namespaced, exactly as in production.
+
+    ``clients`` maps a service name to the double its backend connection
+    resolves to; the service's prefix is derived from the name.
+    """
     registry = ServiceRegistry()
-    registry.register(_spec(name="svc-a", prefix="a"))
-    registry.register(_spec(name="svc-b", prefix="b"))
-    client_a = _CountingListClient(tools=[_tool("a_widget")])
-    client_b = _CountingListClient(tools=[_tool("b_widget")])
-    provider_a = aggregator._ObservableProxyProvider(
-        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    for name in clients:
+        registry.register(_spec(name=name, prefix=name))
+    monkeypatch.setattr(
+        aggregator,
+        "_make_client_factory",
+        lambda spec, *_args, **_kwargs: lambda: clients[spec.name],
     )
-    provider_b = aggregator._ObservableProxyProvider(
-        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
+    mcp = build_aggregator(
+        registry, settings, EntitlementPolicy(), CredentialRegistry()
     )
-    mcp = FastMCP(name="test")
-    mcp.add_provider(provider_a)
-    mcp.add_provider(provider_b)
+    return mcp, mcp.backend_providers
+
+
+async def test_invalidate_subject_cache_helper_targets_one_service(
+    monkeypatch: pytest.MonkeyPatch, make_principal, settings: Any
+) -> None:
+    client_a = _CountingListClient(tools=[_tool("widget")])
+    client_b = _CountingListClient(tools=[_tool("widget")])
+    mcp, backend_providers = _build_namespaced_aggregator(
+        monkeypatch, settings, {"svc-a": client_a, "svc-b": client_b}
+    )
     _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
-    await provider_a._list_tools()
-    await provider_b._list_tools()
+    await mcp._list_tools()
+    assert (client_a.call_count, client_b.call_count) == (1, 1)
 
-    aggregator.invalidate_subject_cache(mcp, "alice", target="svc-a")
-
-    await provider_a._list_tools()
-    await provider_b._list_tools()
+    aggregator.invalidate_subject_cache(backend_providers, "alice", target="svc-a")
+    await mcp._list_tools()
 
     assert client_a.call_count == 2  # svc-a's cache was dropped
     assert client_b.call_count == 1  # svc-b untouched
 
 
 async def test_invalidate_subject_cache_helper_targets_all_services_when_none(
-    monkeypatch: pytest.MonkeyPatch, make_principal
+    monkeypatch: pytest.MonkeyPatch, make_principal, settings: Any
 ) -> None:
-    registry = ServiceRegistry()
-    registry.register(_spec(name="svc-a", prefix="a"))
-    registry.register(_spec(name="svc-b", prefix="b"))
-    client_a = _CountingListClient(tools=[_tool("a_widget")])
-    client_b = _CountingListClient(tools=[_tool("b_widget")])
-    provider_a = aggregator._ObservableProxyProvider(
-        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    client_a = _CountingListClient(tools=[_tool("widget")])
+    client_b = _CountingListClient(tools=[_tool("widget")])
+    mcp, backend_providers = _build_namespaced_aggregator(
+        monkeypatch, settings, {"svc-a": client_a, "svc-b": client_b}
     )
-    provider_b = aggregator._ObservableProxyProvider(
-        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
-    )
-    mcp = FastMCP(name="test")
-    mcp.add_provider(provider_a)
-    mcp.add_provider(provider_b)
     _patch_context(monkeypatch, make_principal(subject="alice"), active_backend=None)
-    await provider_a._list_tools()
-    await provider_b._list_tools()
+    await mcp._list_tools()
 
-    aggregator.invalidate_subject_cache(mcp, "alice")
-
-    await provider_a._list_tools()
-    await provider_b._list_tools()
+    aggregator.invalidate_subject_cache(backend_providers, "alice")
+    await mcp._list_tools()
 
     assert client_a.call_count == 2
     assert client_b.call_count == 2
 
 
 async def test_invalidate_all_subject_caches_drops_every_subject_on_every_service(
-    monkeypatch: pytest.MonkeyPatch, make_principal
+    monkeypatch: pytest.MonkeyPatch, make_principal, settings: Any
 ) -> None:
-    registry = ServiceRegistry()
-    registry.register(_spec(name="svc-a", prefix="a"))
-    registry.register(_spec(name="svc-b", prefix="b"))
-    client_a = _CountingListClient(tools=[_tool("a_widget")])
-    client_b = _CountingListClient(tools=[_tool("b_widget")])
-    provider_a = aggregator._ObservableProxyProvider(
-        "svc-a", lambda: client_a, registry=registry, cache_ttl=300.0
+    client_a = _CountingListClient(tools=[_tool("widget")])
+    client_b = _CountingListClient(tools=[_tool("widget")])
+    mcp, backend_providers = _build_namespaced_aggregator(
+        monkeypatch, settings, {"svc-a": client_a, "svc-b": client_b}
     )
-    provider_b = aggregator._ObservableProxyProvider(
-        "svc-b", lambda: client_b, registry=registry, cache_ttl=300.0
-    )
-    mcp = FastMCP(name="test")
-    mcp.add_provider(provider_a)
-    mcp.add_provider(provider_b)
     for subject in ("alice", "bob"):
         _patch_context(
             monkeypatch, make_principal(subject=subject), active_backend=None
         )
-        await provider_a._list_tools()
-        await provider_b._list_tools()
+        await mcp._list_tools()
     assert (client_a.call_count, client_b.call_count) == (2, 2)
 
-    aggregator.invalidate_all_subject_caches(mcp)
+    aggregator.invalidate_all_subject_caches(backend_providers)
 
     for subject in ("alice", "bob"):
         _patch_context(
             monkeypatch, make_principal(subject=subject), active_backend=None
         )
-        await provider_a._list_tools()
-        await provider_b._list_tools()
+        await mcp._list_tools()
     assert (client_a.call_count, client_b.call_count) == (4, 4)
 
 
@@ -3129,7 +3119,7 @@ async def test_client_factory_x509_elicitation_accepted_now_linked_proceeds(
 class TestClassifyFailureUnavailable:
     """issue #280 / B.3: a request that never got a correlated response used
     to be distinguished as "timeout" from a connection-level "unavailable"
-    via ``McpError.error.code == httpx.codes.REQUEST_TIMEOUT``. fastmcp v4 /
+    via ``McpError.error.code == httpx2.codes.REQUEST_TIMEOUT``. fastmcp v4 /
     mcp SDK v2 no longer produce that code at all -- every proxy transport
     failure, timeouts included, normalizes to a plain ``INTERNAL_ERROR``
     (``_proxy_upstream_error``) -- so that probe is gone and every case

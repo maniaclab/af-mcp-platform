@@ -2,17 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import json
-import sys
 import uuid
 from dataclasses import dataclass, field
-from typing import TextIO
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
-logger = structlog.get_logger(__name__)
-
-_audit_logger: AuditLogger | None = None
+from af_mcp_broker.logging import AUDIT_LOGGER_NAME
 
 
 @dataclass
@@ -105,40 +102,33 @@ class AuditRecord:
     error_class: str | None = None
 
 
-class AuditLogger:
-    """Append-only audit logger. Writes one JSON line per record to *output*."""
-
-    def __init__(self, output: TextIO = sys.stdout) -> None:
-        self._output = output
-
-    async def write(self, record: AuditRecord) -> None:
-        payload = dataclasses.asdict(record)
-        # Truncate the args summary defensively — it is caller-supplied.
-        payload["args_summary"] = payload["args_summary"][:500]
-        payload["event"] = "audit"
-        line = json.dumps(payload, default=str)
-        # The output can be a real file (or stdout redirected to one) whose
-        # write/flush block — never do that on the event loop.
-        await asyncio.to_thread(self._write_line, line)
-
-    def _write_line(self, line: str) -> None:
-        self._output.write(line + "\n")
-        self._output.flush()
-
-
-def init_audit_logger(output: TextIO = sys.stdout) -> None:
-    global _audit_logger
-    _audit_logger = AuditLogger(output)
-
-
 async def write_audit(record: AuditRecord) -> None:
-    """Module-level helper. Falls back to a structlog warning if not initialized."""
-    if _audit_logger is None:
-        logger.warning(
-            "audit_logger_not_initialized",
-            audit_id=record.audit_id,
-            target=record.target,
-            action=record.action,
-        )
-        return
-    await _audit_logger.write(record)
+    """Emit *record* as one ``event: "audit"`` line through structlog.
+
+    The line goes through the same processor chain as every other log line
+    (ISO ``timestamp``, ``level``, ``logger``, and the request's
+    ``correlation_id`` / ``subject`` contextvars), to the destination
+    ``configure_logging`` gives the audit logger. The record's own epoch
+    ``timestamp`` is emitted as ISO ``recorded_at`` -- the line's
+    ``timestamp`` is when it was written, which for a queued record is later.
+
+    A write failure propagates to the caller: an audit trail that silently
+    loses lines is worse than a failed call.
+    """
+    payload = dataclasses.asdict(record)
+    # Truncate the args summary defensively — it is caller-supplied.
+    payload["args_summary"] = payload["args_summary"][:500]
+    payload["recorded_at"] = datetime.fromtimestamp(
+        payload.pop("timestamp"), tz=UTC
+    ).isoformat()
+    # The output can be a real file (or stdout redirected to one) whose
+    # write/flush block — never do that on the event loop. to_thread copies
+    # the current contextvars, so correlation_id/subject still merge in.
+    await asyncio.to_thread(_emit, payload)
+
+
+def _emit(payload: dict[str, Any]) -> None:
+    # A fresh logger per call: structlog's cache_logger_on_first_use would
+    # otherwise pin the logger to whatever configuration was active at the
+    # first audit write.
+    structlog.get_logger(AUDIT_LOGGER_NAME).info("audit", **payload)

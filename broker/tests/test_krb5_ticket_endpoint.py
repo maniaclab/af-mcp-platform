@@ -8,7 +8,7 @@ krb5-token ``identity_providers`` entry, resolve the registered
 underlying ``Krb5TokenServiceClient`` with an in-memory recording fake --
 the same "swap the concrete client attribute post-boot" pattern
 test_x509_service_mode.py's ``FakeVomsClient`` uses for
-``VomsTokenServiceClient`` -- rather than mocking httpx at the wire level.
+``VomsTokenServiceClient`` -- rather than mocking httpx2 at the wire level.
 The provider's vault store is swapped the same way, for the same reason
 ``test_x509_preflight.py``'s ``_enable_service_mode`` swaps
 ``X509Provider._vault_store`` for a ``FakeX509Store``: with a real

@@ -1,0 +1,30 @@
+# Vault-backed maintenance mode as the ONLY Vault consumer (tokenStore,
+# tokenRegistry and principalCache stay in-memory, no krb5/x509/servicex
+# provider), plus an oauth21-direct entry with a revocation endpoint. Used by
+# check-vault-rendering.sh; see that script for what it asserts.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+
+broker:
+  sharedState:
+    allowPerReplicaState: true
+  identityProviders:
+    - type: oauth21-direct
+      alias: rucio-mcp-example
+      targets: ["rucio-mcp-example"]
+      authorizationEndpoint: "https://rucio-mcp.example.com/authorize"
+      tokenEndpoint: "https://rucio-mcp.example.com/token"
+      revocationEndpoint: "https://rucio-mcp.example.com/revoke"
+      issuer: "https://rucio-mcp.example.com"
+  maintenanceMode:
+    backend: vault
+  oauth21:
+    tokenStore:
+      vault:
+        addr: "https://vault.example.com"
+        authRole: "af-mcp-broker-example"

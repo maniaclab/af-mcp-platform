@@ -87,3 +87,47 @@ describe('collapsible description', () => {
     expect(wrapper.text()).not.toContain('The scope to search.');
   });
 });
+
+describe('markdown descriptions', () => {
+  it('renders Markdown in the teaser and in the expanded detail', async () => {
+    const wrapper = mount(ToolTable, {
+      props: {
+        tools: [
+          tool({
+            description:
+              'Search with **wildcards**.\n\nSee `rucio_list_dids`.\n\n- first\n- second\n\nArgs:\n  scope: The `scope` to search.\n\nReturns:\n  A **list** of DIDs.',
+          }),
+        ],
+      },
+    });
+
+    expect(wrapper.find('strong').text()).toBe('wildcards');
+    await wrapper.find('.tool-table__more-toggle').trigger('click');
+    expect(wrapper.find('li').text()).toBe('first');
+    expect(wrapper.find('.tool-table__arg-desc code').text()).toBe('scope');
+    expect(wrapper.find('.tool-table__returns strong').text()).toBe('list');
+  });
+
+  it('strips scripts, handlers and unsafe links from a backend-supplied description', async () => {
+    const wrapper = mount(ToolTable, {
+      props: {
+        tools: [
+          tool({
+            description:
+              '<img src=x onerror="window.pwned = 1"> [go](javascript:alert(1))\n\n<script>window.pwned = 1</script>\n\n[ok](https://example.org)',
+          }),
+        ],
+      },
+    });
+    await wrapper.find('.tool-table__more-toggle').trigger('click');
+
+    expect(wrapper.find('script, img').exists()).toBe(false);
+    const hrefs = wrapper.findAll('a').map((a) => a.attributes('href') ?? null);
+    expect(hrefs).toEqual([null, 'https://example.org']);
+    for (const a of wrapper.findAll('a[href]')) {
+      expect(a.attributes('rel')).toBe('noopener noreferrer');
+      expect(a.attributes('target')).toBe('_blank');
+    }
+    expect((window as unknown as { pwned?: number }).pwned).toBeUndefined();
+  });
+});

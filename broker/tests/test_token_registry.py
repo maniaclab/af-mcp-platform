@@ -2,7 +2,7 @@
 
 Covers the shared ``TokenRegistryBackend`` contract parametrized across both
 implementations (``InMemoryTokenRegistryBackend``, ``VaultTokenRegistryBackend``
-— the latter against a fake Vault HTTP API via ``httpx.MockTransport``, same
+— the latter against a fake Vault HTTP API via ``httpx2.MockTransport``, same
 technique as ``test_oauth21_vault.py``).
 """
 
@@ -13,7 +13,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 import structlog
 
@@ -69,13 +69,13 @@ class _FakeRegistryVault:
         self.login_calls: list[dict[str, Any]] = []
         self.login_lease_duration = login_lease_duration
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
 
         if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
             body = json.loads(request.content.decode())
             self.login_calls.append(body)
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "auth": {
@@ -97,15 +97,15 @@ class _FakeRegistryVault:
             key = path[len(meta_prefix) :]
             is_metadata = True
         else:
-            return httpx.Response(
+            return httpx2.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
 
         if request.method == "GET" and not is_metadata:
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -121,7 +121,7 @@ class _FakeRegistryVault:
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
             if cas != current_version:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={
                         "errors": [
@@ -132,7 +132,7 @@ class _FakeRegistryVault:
                 )
             new_version = current_version + 1
             self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
 
@@ -145,14 +145,14 @@ class _FakeRegistryVault:
                 }
             )
             if not keys:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(200, json={"data": {"keys": keys}}, request=request)
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(200, json={"data": {"keys": keys}}, request=request)
 
         if request.method == "DELETE" and is_metadata:
             self.entries.pop(key, None)
-            return httpx.Response(204, request=request)
+            return httpx2.Response(204, request=request)
 
-        return httpx.Response(
+        return httpx2.Response(
             404, json={"errors": ["unhandled"]}, request=request
         )  # pragma: no cover
 
@@ -173,7 +173,7 @@ def _make_vault_backend(
         auth_role=AUTH_ROLE,
         kv_mount=KV_MOUNT,
         sa_token_path=str(sa_token_path),
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
     )
     return VaultTokenRegistryBackend(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 

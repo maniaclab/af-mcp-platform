@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable
@@ -27,7 +25,6 @@ from af_mcp_broker._version import version as __version__
 from af_mcp_broker.api.router import router as v1_router
 from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.api.wellknown import router as wellknown_router
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.audit.pipeline import (
     aclose_metering_pipeline,
     init_metering_pipeline,
@@ -76,6 +73,7 @@ from af_mcp_broker.identity import (
 from af_mcp_broker.logging import (
     CorrelatedHTTPException,
     bind_new_correlation_id,
+    close_audit_logging,
     configure_logging,
     log_request_finished,
     log_request_received,
@@ -172,20 +170,10 @@ def _validate_x509_provider_targets(
         raise RuntimeError(msg)
 
 
-def _open_audit_output(dest: str) -> TextIO:
-    """Resolve the AUDIT_LOG_FILE setting to a writable stream.
-
-    "-" means stdout; any other value is opened for appending.
-    """
-    if dest == "-":
-        return sys.stdout
-    return Path(dest).open("a")
-
-
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.audit_log_file)
 
     # --- Local-development auth bypass. When BROKER_DEV_INSECURE_PRINCIPAL is
     # set we parse it into a Principal at startup and refuse to boot unless
@@ -291,7 +279,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             ),
             replica_count=settings.mcp_replica_count,
         )
-    shared_state = build_shared_state(settings.shared_state_url)
+    shared_state = build_shared_state(
+        settings.shared_state_url, key_prefix=settings.shared_state_key_prefix
+    )
 
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
     try:
@@ -496,9 +486,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     list_cache_invalidator = ListCacheInvalidator(
         shared_state,
         invalidate=lambda subject, target: invalidate_subject_cache(
-            _mcp_aggregator, subject, target
+            application.state.backend_providers, subject, target
         ),
-        invalidate_all=lambda: invalidate_all_subject_caches(_mcp_aggregator),
+        invalidate_all=lambda: invalidate_all_subject_caches(
+            application.state.backend_providers
+        ),
     )
     list_cache_invalidator.start()
     #
@@ -1091,9 +1083,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         lint_observations=lint_observations,
     )
 
-    # --- Audit: without init the module drops every record. Honor AUDIT_LOG_FILE.
-    audit_output = _open_audit_output(settings.audit_log_file)
-    init_audit_logger(audit_output)
     # --- Usage: per-user usage accounting (usage/, PR C) consuming the
     # success/error tool-call records the pipeline below writes -- started
     # BEFORE the pipeline so no record the worker processes can miss the
@@ -1146,9 +1135,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.maintenance_mode_store = maintenance_mode_store
     application.state.lint_observations = lint_observations
     application.state.shared_state = shared_state
-    # Not yet consumed by KrbTokenProvider -- issue #274's remember/renew
-    # support wires it in -- exposed on state now so it exists in one place
-    # from the moment Vault is wired up, same as every other subsystem here.
+    # Also passed to KrbTokenProvider above (remember/renew support, issue
+    # #274); exposed on state so it exists in one place alongside every other
+    # subsystem here.
     application.state.krb5_vault_store = krb5_vault_store
     application.state.servicex_vault_store = servicex_vault_store
 
@@ -1229,8 +1218,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if metrics_server is not None:
         metrics_server.shutdown()
         metrics_server.server_close()
-    if audit_output is not sys.stdout:
-        audit_output.close()
+    close_audit_logging()
     # Flush spans still buffered in the batch processor (a no-op when tracing
     # was never enabled). After the pipeline drain above so the last audit
     # records' traces are flushed too.
@@ -1314,6 +1302,7 @@ app.mount("/mcp", _mcp_aggregator_app)
 # lists the builtin gateway service's methods straight from this instance's
 # local provider instead of HTTP-fetching a backend (issue #240).
 app.state.mcp_aggregator = _mcp_aggregator
+app.state.backend_providers = _mcp_aggregator.backend_providers
 
 app.include_router(v1_router)
 app.include_router(wellknown_router)

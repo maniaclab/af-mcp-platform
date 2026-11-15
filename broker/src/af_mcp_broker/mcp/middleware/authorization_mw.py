@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import time
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -23,6 +22,7 @@ from af_mcp_broker.authorization import (
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.authorization.rate_limit import check_rate_limits
+from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.mcp.errors import ERROR_CLASS_TOOL_REPORTED, classify_backend_error
 from af_mcp_broker.mcp.registry import RATE_LIMITS_TOOL_NAME
 from af_mcp_broker.shared_state import FallbackSharedState
@@ -218,7 +218,7 @@ class AuthorizationMiddleware(Middleware):
         # (service=gateway_service) like everything else; the one builtin difference
         # is the authorized_call_target guard below.
         service = self.registry.get_by_tool_prefix(tool_name)
-        request_id = str(uuid.uuid4())
+        request_id = current_correlation_id()
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
 
         # The broker's per-tool-call server span (OTel MCP semconv name

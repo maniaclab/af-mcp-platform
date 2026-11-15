@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +10,6 @@ from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
-from af_mcp_broker.audit.logger import init_audit_logger
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
@@ -93,12 +91,11 @@ async def test_calls_past_the_limit_are_refused_with_retry_info_and_audited(
     static_principal_cache: Any,
     sig_key: Any,
     prime_jwks: Any,
+    audit_buffer,
 ) -> None:
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     principal_cache, _directory = static_principal_cache
-    audit_buffer = io.StringIO()
-    init_audit_logger(audit_buffer)
     policy = _policy(RateLimitRule(2, 3600, tool="open_ping"))
 
     async with (
@@ -130,12 +127,12 @@ async def test_budget_is_per_principal_through_the_chain(
     static_principal_cache: Any,
     sig_key: Any,
     prime_jwks: Any,
+    audit_buffer,
 ) -> None:
     prime_jwks([sig_key.jwk])
     alice = sig_key.sign(make_claims(sub="alice"))
     bob = sig_key.sign(make_claims(sub="bob"))
     principal_cache, _directory = static_principal_cache
-    init_audit_logger(io.StringIO())
     policy = _policy(RateLimitRule(1, 3600, tool="open_ping"))
 
     async with _serve(settings, registry, principal_cache, policy) as server:
@@ -153,12 +150,11 @@ async def test_absent_rate_limits_never_refuse(
     static_principal_cache: Any,
     sig_key: Any,
     prime_jwks: Any,
+    audit_buffer,
 ) -> None:
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims())
     principal_cache, _directory = static_principal_cache
-    audit_buffer = io.StringIO()
-    init_audit_logger(audit_buffer)
 
     async with (
         _serve(settings, registry, principal_cache, _policy()) as server,

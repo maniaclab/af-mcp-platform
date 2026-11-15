@@ -1,29 +1,20 @@
-"""Tests for ``GET /v1/usage`` -- self-service usage with read-time cost.
+"""Tests for ``GET /v1/usage`` -- self-service usage accounting.
 
 The endpoint is self-scoped by default (a caller sees only their own
 subject's aggregates) with one override: a caller in ``settings.admin_group``
 may pass ``?subject=`` to view another subject's usage instead of their own
-(see the admin-override tests below). It prices stored token ESTIMATES at
-read time via tokencost's bundled static price table -- dollars are never
-stored, and no network is ever touched (the pod is egress-deny; see the
-socket-disabled test). ``PINNED_MODEL`` must stay a key of the installed
-tokencost's TOKEN_COSTS so the expected costs below are plain Decimal math
-against the bundled table.
+(see the admin-override tests below). It reports stored token ESTIMATES
+(counts only; the broker attaches no monetary figure to them).
 """
 
 from __future__ import annotations
 
 import asyncio
-import socket
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from tokencost import (  # type: ignore[import-untyped]
-    TOKEN_COSTS,
-    calculate_cost_by_tokens,
-)
 
 from af_mcp_broker.app import app
 from af_mcp_broker.audit import AuditRecord
@@ -33,11 +24,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from fastapi.testclient import TestClient
-
-# The broker's default cost_reference_model (config.py) -- pinned here so a
-# tokencost upgrade that drops the key fails these tests loudly instead of
-# silently 422ing every default-model /v1/usage call in production.
-PINNED_MODEL = "claude-sonnet-4-20250514"
 
 
 def _record(**overrides: Any) -> AuditRecord:
@@ -72,24 +58,35 @@ def _seed(client: TestClient, *records: AuditRecord) -> None:
     asyncio.run(_fill())
 
 
-def test_default_model_is_in_the_bundled_price_table() -> None:
-    """The proof behind the config default: the key must exist in the
-    installed tokencost's static table, with an input price to bill at."""
-    assert PINNED_MODEL in TOKEN_COSTS
-    assert TOKEN_COSTS[PINNED_MODEL]["input_cost_per_token"] > 0
+def test_usage_response_has_no_cost_fields(app_client) -> None:
+    """Token counts are the only size measure the API exposes: no price,
+    dollar, or model-selection field appears anywhere in the response."""
+    client, _ = app_client
+    _seed(client, _record())
+
+    body = client.get("/v1/usage").json()
+
+    def _keys(node: Any) -> set[str]:
+        if isinstance(node, dict):
+            return set(node) | {k for v in node.values() for k in _keys(v)}
+        if isinstance(node, list):
+            return {k for v in node for k in _keys(v)}
+        return set()
+
+    forbidden = ("cost", "price", "usd", "model")
+    assert not [k for k in _keys(body) if any(f in k.lower() for f in forbidden)]
 
 
-def test_cost_estimation_requires_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """tokencost loads only its bundled static price JSON at import; pricing
-    must keep working with sockets disabled entirely (egress-deny pod).
-    update_token_costs/refresh_prices, which do fetch, are never called."""
+def test_usage_ignores_a_model_query_parameter(app_client) -> None:
+    """``model`` is not a parameter of this endpoint: it is ignored and does
+    not change the response."""
+    client, _ = app_client
+    _seed(client, _record())
 
-    def _no_network(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("network disabled in this test")
-
-    monkeypatch.setattr(socket, "socket", _no_network)
-    cost = calculate_cost_by_tokens(1000, PINNED_MODEL, token_type="input")
-    assert float(cost) > 0
+    plain = client.get("/v1/usage").json()
+    with_model = client.get("/v1/usage", params={"model": "anything"})
+    assert with_model.status_code == 200, with_model.text
+    assert with_model.json() == plain
 
 
 def test_usage_empty_store_returns_zeroed_window(app_client) -> None:
@@ -100,14 +97,12 @@ def test_usage_empty_store_returns_zeroed_window(app_client) -> None:
     body = resp.json()
     assert body["subject"] == "sub-abc"
     assert body["window_days"] == 30
-    assert body["cost_model"] == PINNED_MODEL
     assert body["totals"] == {
         "calls": 0,
         "errors": 0,
         "duration_ms": 0.0,
         "result_bytes": 0,
         "result_tokens_est": 0,
-        "estimated_cost_usd": 0.0,
     }
     assert body["by_service"] == []
     assert body["by_day"] == []
@@ -126,18 +121,14 @@ def test_usage_totals_by_service_and_by_day(app_client) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    expected_total_cost = float(
-        calculate_cost_by_tokens(1500, PINNED_MODEL, token_type="input")
-    )
     assert body["totals"] == {
         "calls": 3,
         "errors": 1,
         "duration_ms": pytest.approx(30.0),
         "result_bytes": 210,
         # The unmeasured (None) record counts its call and bytes but adds no
-        # tokens and no cost.
+        # tokens.
         "result_tokens_est": 1500,
-        "estimated_cost_usd": pytest.approx(expected_total_cost),
     }
 
     by_service = {entry["service"]: entry for entry in body["by_service"]}
@@ -145,40 +136,11 @@ def test_usage_totals_by_service_and_by_day(app_client) -> None:
     assert by_service["rucio"]["calls"] == 2
     assert by_service["rucio"]["errors"] == 1
     assert by_service["rucio"]["result_tokens_est"] == 1000
-    assert by_service["rucio"]["estimated_cost_usd"] == pytest.approx(
-        float(calculate_cost_by_tokens(1000, PINNED_MODEL, token_type="input"))
-    )
     assert by_service["ami"]["calls"] == 1
     assert by_service["ami"]["errors"] == 0
 
     today = datetime.now(tz=UTC).date().isoformat()
     assert body["by_day"] == [{"date": today, "calls": 3, "result_tokens_est": 1500}]
-
-
-def test_usage_model_override_reprices_the_window(app_client) -> None:
-    client, _ = app_client
-    _seed(client, _record())
-
-    # Any second Claude key from the bundled table works; this one is pinned
-    # for the same fail-loudly reason as PINNED_MODEL.
-    other = "claude-3-5-sonnet-20241022"
-    resp = client.get("/v1/usage", params={"model": other})
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["cost_model"] == other
-    assert body["totals"]["estimated_cost_usd"] == pytest.approx(
-        float(calculate_cost_by_tokens(1000, other, token_type="input"))
-    )
-
-
-def test_usage_unknown_model_is_422_without_dumping_the_table(app_client) -> None:
-    client, _ = app_client
-    resp = client.get("/v1/usage", params={"model": "not-a-real-model"})
-    assert resp.status_code == 422, resp.text
-    detail = resp.json()["detail"]
-    assert "not-a-real-model" in detail
-    # The table has thousands of keys -- the error must not enumerate them.
-    assert PINNED_MODEL not in detail
 
 
 @pytest.mark.parametrize("days", [0, 366, -1])

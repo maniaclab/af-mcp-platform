@@ -1,6 +1,6 @@
 """Tests for ``VaultKV``, the shared Vault/OpenBao KV-v2 transport client.
 
-A fake Vault HTTP API is built with ``httpx.MockTransport`` -- no real Vault
+A fake Vault HTTP API is built with ``httpx2.MockTransport`` -- no real Vault
 process, no ``hvac``. Covers the Kubernetes auth login/re-auth flow (caching,
 safety margin, single-flight lock) and the four KV verbs' error mapping,
 independent of any consumer's path layout or record shape -- see
@@ -15,7 +15,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 
 from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
@@ -51,13 +51,13 @@ class _FakeVault:
         # instead of running the normal CAS logic -- for error-mapping tests.
         self.kv_status = kv_status
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix("/v1/")
 
         if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
             body = _json_body(request)
             self.login_calls.append(body)
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "auth": {
@@ -79,20 +79,20 @@ class _FakeVault:
             key = path[len(meta_prefix) :]
             is_metadata = True
         else:
-            return httpx.Response(
+            return httpx2.Response(
                 404, json={"errors": ["unknown path"]}, request=request
             )
 
         if self.kv_status is not None:
-            return httpx.Response(
+            return httpx2.Response(
                 self.kv_status, json={"errors": ["internal error"]}, request=request
             )
 
         if request.method == "GET" and not is_metadata:
             entry = self.entries.get(key)
             if entry is None:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -108,7 +108,7 @@ class _FakeVault:
             cas = body["options"]["cas"]
             current_version = self.entries.get(key, {}).get("version", 0)
             if cas != current_version:
-                return httpx.Response(
+                return httpx2.Response(
                     400,
                     json={
                         "errors": [
@@ -119,7 +119,7 @@ class _FakeVault:
                 )
             new_version = current_version + 1
             self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": {"version": new_version}}, request=request
             )
 
@@ -132,19 +132,19 @@ class _FakeVault:
                 }
             )
             if not keys:
-                return httpx.Response(404, json={"errors": []}, request=request)
-            return httpx.Response(200, json={"data": {"keys": keys}}, request=request)
+                return httpx2.Response(404, json={"errors": []}, request=request)
+            return httpx2.Response(200, json={"data": {"keys": keys}}, request=request)
 
         if request.method == "DELETE" and is_metadata:
             self.entries.pop(key, None)
-            return httpx.Response(204, request=request)
+            return httpx2.Response(204, request=request)
 
-        return httpx.Response(
+        return httpx2.Response(
             404, json={"errors": ["unhandled"]}, request=request
         )  # pragma: no cover
 
 
-def _json_body(request: httpx.Request) -> dict[str, Any]:
+def _json_body(request: httpx2.Request) -> dict[str, Any]:
 
     return json.loads(request.content.decode())
 
@@ -156,7 +156,7 @@ def _make_vault_kv(fake: _FakeVault, sa_token_path: Path, **overrides: Any) -> V
         "auth_role": AUTH_ROLE,
         "kv_mount": KV_MOUNT,
         "sa_token_path": str(sa_token_path),
-        "http_client": httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)),
+        "http_client": httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
     }
     kwargs.update(overrides)
     return VaultKV(**kwargs)

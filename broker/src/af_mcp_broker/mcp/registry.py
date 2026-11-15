@@ -639,10 +639,6 @@ class ServiceRegistry:
         """Return the currently recorded drift for *service*, or None. Used to log/meter only newly observed drift rather than on every tools/list request."""
         return self._tool_mapping_drifts.get(service)
 
-    def tool_mapping_drifts(self) -> list[ToolMappingDrift]:
-        """All currently recorded tool-mapping drifts, sorted by service for a stable admin-page listing."""
-        return sorted(self._tool_mapping_drifts.values(), key=lambda d: d.service)
-
     def record_tool_routing(self, routing: ToolRouting) -> None:
         """Record (or overwrite) *routing* for its service. Called by aggregator.py's _ObservableProxyProvider on every successful upstream tools/list."""
         self._tool_routings[routing.service] = routing
