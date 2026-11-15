@@ -209,6 +209,89 @@ async def test_is_error_result_audits_as_error_not_success(
     assert record.action == "rucio_list_dids"
 
 
+async def test_error_counter_by_service_and_error_class(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    """Every outcome="error" audit record also increments the error counter
+    under the record's own error_class -- a raised backend failure, a
+    transient connection drop, and an isError result each land in their own
+    series, and the isError result is observed under outcome="error" on the
+    latency histogram (it returned normally, so only is_error tells it apart)."""
+    mw = authorization_middleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+
+    def errors(error_class: str) -> float:
+        return _sample(
+            "af_mcp_tool_invocation_errors_total",
+            {"service": "rucio", "error_class": error_class},
+        )
+
+    duration_labels = {
+        "service": "rucio",
+        "tool": "rucio_list_dids",
+        "action_type": "read",
+        "outcome": "error",
+    }
+    before = {c: errors(c) for c in ("backend_error", "transient_connection")}
+    before_tool_reported = errors("tool_reported")
+    before_hist = _sample("af_mcp_tool_duration_seconds_count", duration_labels)
+
+    with pytest.raises(RuntimeError):
+        await mw.on_call_tool(context, _CallNextRecorder(error=RuntimeError("boom")))
+    with pytest.raises(ConnectionResetError):
+        await mw.on_call_tool(
+            context, _CallNextRecorder(error=ConnectionResetError("reset"))
+        )
+    await mw.on_call_tool(
+        context,
+        _CallNextRecorder(
+            result=ToolResult(
+                content=[mt.TextContent(type="text", text="nope")], is_error=True
+            )
+        ),
+    )
+
+    assert [r.error_class for r in captured_audits] == [
+        "backend_error",
+        "transient_connection",
+        "tool_reported",
+    ]
+    assert errors("backend_error") == before["backend_error"] + 1
+    assert errors("transient_connection") == before["transient_connection"] + 1
+    assert errors("tool_reported") == before_tool_reported + 1
+    assert (
+        _sample("af_mcp_tool_duration_seconds_count", duration_labels)
+        == before_hist + 3
+    )
+
+
+async def test_success_does_not_touch_error_counter(
+    registry, policy, make_principal, captured_audits
+) -> None:
+    mw = authorization_middleware(registry, policy)
+    principal = make_principal(groups=["atlas"])
+    context = _call_tool_context("rucio_list_dids", {}, principal)
+    before = sum(
+        s.value
+        for m in REGISTRY.collect()
+        if m.name == "af_mcp_tool_invocation_errors"
+        for s in m.samples
+        if s.name.endswith("_total")
+    )
+
+    await mw.on_call_tool(context, _CallNextRecorder(result=ToolResult(content=[])))
+
+    after = sum(
+        s.value
+        for m in REGISTRY.collect()
+        if m.name == "af_mcp_tool_invocation_errors"
+        for s in m.samples
+        if s.name.endswith("_total")
+    )
+    assert after == before
+
+
 async def test_entitled_call_proceeds_and_audits_success(
     registry, policy, make_principal, captured_audits
 ) -> None:
@@ -596,10 +679,13 @@ async def test_success_records_duration_and_observes_histogram(
     context = _call_tool_context("rucio_list_dids", {"scope": "foo"}, principal)
     call_next = _CallNextRecorder(result=ToolResult(content=[]))
 
-    before_count = _sample(
-        "af_mcp_tool_duration_seconds_count",
-        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
-    )
+    labels = {
+        "service": "rucio",
+        "tool": "rucio_list_dids",
+        "action_type": "read",
+        "outcome": "success",
+    }
+    before_count = _sample("af_mcp_tool_duration_seconds_count", labels)
 
     await mw.on_call_tool(context, call_next)
 
@@ -607,13 +693,7 @@ async def test_success_records_duration_and_observes_histogram(
     assert record.outcome == "success"
     assert record.duration_ms is not None
     assert record.duration_ms >= 0.0
-    assert (
-        _sample(
-            "af_mcp_tool_duration_seconds_count",
-            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
-        )
-        == before_count + 1
-    )
+    assert _sample("af_mcp_tool_duration_seconds_count", labels) == before_count + 1
 
 
 async def test_success_records_result_bytes_and_tokens(
@@ -655,10 +735,13 @@ async def test_call_next_failure_records_duration_but_no_result_fields(
     context = _call_tool_context("rucio_list_dids", {}, principal)
     call_next = _CallNextRecorder(error=RuntimeError("boom"))
 
-    before_count = _sample(
-        "af_mcp_tool_duration_seconds_count",
-        {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
-    )
+    labels = {
+        "service": "rucio",
+        "tool": "rucio_list_dids",
+        "action_type": "read",
+        "outcome": "error",
+    }
+    before_count = _sample("af_mcp_tool_duration_seconds_count", labels)
 
     with pytest.raises(RuntimeError):
         await mw.on_call_tool(context, call_next)
@@ -669,15 +752,8 @@ async def test_call_next_failure_records_duration_but_no_result_fields(
     assert record.duration_ms >= 0.0
     assert record.result_bytes is None
     assert record.result_tokens_est is None
-    # The histogram observes errors too -- outcome is deliberately not a
-    # label (the audit log is the per-outcome source of truth).
-    assert (
-        _sample(
-            "af_mcp_tool_duration_seconds_count",
-            {"service": "rucio", "tool": "rucio_list_dids", "action_type": "read"},
-        )
-        == before_count + 1
-    )
+    # The histogram observes errors too, under outcome="error".
+    assert _sample("af_mcp_tool_duration_seconds_count", labels) == before_count + 1
 
 
 async def test_denied_call_leaves_metering_fields_none(

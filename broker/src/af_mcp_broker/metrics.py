@@ -28,6 +28,10 @@ Cardinality policy -- read this before adding a label or a new metric:
   facility scale) -- safe on every counter that carries them.
 - ``tool`` is also configuration-bound (a service's own fixed schema, on
   the order of dozens of names) -- safe on ``tool_invocations_total``.
+- ``outcome`` (``success`` or ``error`` on the latency histogram) and
+  ``error_class`` (``transient_connection``, ``backend_error``,
+  ``tool_reported``) are the audit record's own fixed vocabularies, so
+  ``service`` x ``outcome`` and ``service`` x ``error_class`` stay bounded.
 - ``target`` on the credential-cache counters is the configured service
   target set (``services.yaml``), not user input.
 - A tool call whose name matches no registered service prefix is audited
@@ -42,7 +46,8 @@ Which signal carries what (the same policy across every telemetry path):
 ====================  ========  =========================================  =====================
 Signal                Identity  Attributes                                 Cardinality
 ====================  ========  =========================================  =====================
-Prometheus (:9090)    no        service, tool, action_type, target         bounded by config
+Prometheus (:9090)    no        service, tool, action_type, outcome,       bounded by config
+                                error_class, target
 OTel metrics (OTLP)   no        service, method, action_type, outcome      bounded by config
 Audit log (JSON)      yes       principal_sub, token_id, request_id,       unbounded by design,
                                 audit_id, trace_id, per-call               access-controlled
@@ -88,14 +93,24 @@ tool_invocations_rate_limited_total = Counter(
 tool_duration_seconds = Histogram(
     "af_mcp_tool_duration_seconds",
     "Wall time of the downstream tool call (credential resolution plus the "
-    "backend call itself), by service, tool, and action_type. Observed on "
-    "success and error alike -- outcome is deliberately not a label; the "
-    "audit log is the per-outcome source of truth. No identity label -- "
-    "see module docstring. Buckets are sized for tool calls that can "
+    "backend call itself), by service, tool, action_type, and outcome "
+    "('success' or 'error' -- the audit record's outcome vocabulary; denied "
+    "and rate_limited calls never execute, so they are never observed). "
+    "No identity label -- see module docstring. Buckets are sized for tool calls that can "
     "include credential minting at voms-token-service (tens of seconds "
     "to minutes), not just fast HTTP proxying.",
-    ["service", "tool", "action_type"],
+    ["service", "tool", "action_type", "outcome"],
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
+)
+
+tool_invocation_errors_total = Counter(
+    "af_mcp_tool_invocation_errors_total",
+    "Tool invocations that ended with outcome='error' in the audit log, by "
+    "service and error_class -- the audit record's own failure "
+    "classification ('transient_connection', 'backend_error' or "
+    "'tool_reported'; see backend_errors.py). No identity label -- see "
+    "module docstring.",
+    ["service", "error_class"],
 )
 
 tool_invocations_unmapped_total = Counter(
