@@ -14,7 +14,6 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-import httpcore
 import httpcore2
 import httpx2
 import pytest
