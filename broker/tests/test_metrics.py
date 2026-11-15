@@ -16,7 +16,7 @@ def test_metrics_not_on_api_port(app_client) -> None:
 
 def test_metrics_served_on_dedicated_port(app_client) -> None:
     client, _ = app_client
-    port = client.app.state.metrics_port
+    port = client.app.state.broker.metrics_port
     assert isinstance(port, int)
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics") as resp:
         assert resp.status == 200
@@ -27,7 +27,7 @@ def test_metrics_served_on_dedicated_port(app_client) -> None:
 def test_metrics_disabled_with_negative_port(monkeypatch, app_client_factory) -> None:
     monkeypatch.setenv("METRICS_PORT", "-1")
     with app_client_factory() as (client, _):
-        assert client.app.state.metrics_port is None
+        assert client.app.state.broker.metrics_port is None
 
 
 def test_http_metrics_use_af_mcp_namespace(app_client) -> None:
@@ -37,7 +37,7 @@ def test_http_metrics_use_af_mcp_namespace(app_client) -> None:
     """
     client, _ = app_client
     assert client.get("/v1/healthz").status_code == 200
-    port = client.app.state.metrics_port
+    port = client.app.state.broker.metrics_port
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics") as resp:
         body = resp.read().decode()
     assert 'af_mcp_http_requests_total{handler="/v1/healthz"' in body

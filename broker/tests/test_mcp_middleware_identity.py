@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import structlog
+from broker_state_helpers import make_broker_state
 from conftest import RaisingTokenRegistryBackend, make_claims
 from fastmcp.exceptions import AuthorizationError
 from prometheus_client import REGISTRY
@@ -651,10 +653,16 @@ async def test_expired_pat_rejected_with_actionable_portal_message(settings):
 # ---------------------------------------------------------------------------
 
 
-def _gated(inner: Any, identity_mw: IdentityMiddleware) -> AsgiAuthMiddleware:
+def _gated(
+    inner: Any, identity_mw: IdentityMiddleware, store: MaintenanceModeStore
+) -> AsgiAuthMiddleware:
     """Compose the /mcp ASGI stack the way ``build_asgi_middleware`` does: identity outermost, maintenance inside it."""
+    base = make_broker_state(maintenance_mode_store=store)
     return AsgiAuthMiddleware(
-        AsgiMaintenanceMiddleware(inner, identity_mw), identity_mw
+        AsgiMaintenanceMiddleware(
+            inner, lambda: replace(base, settings=identity_mw.settings)
+        ),
+        identity_mw,
     )
 
 
@@ -699,9 +707,8 @@ async def test_mcp_blocks_non_admin_jwt_during_maintenance(
     inner = _InnerApp()
     middleware = _gated(
         inner,
-        IdentityMiddleware(
-            settings, principal_cache=principal_cache, maintenance_mode_store=store
-        ),
+        IdentityMiddleware(settings, principal_cache=principal_cache),
+        store,
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -725,11 +732,9 @@ async def test_mcp_blocks_non_admin_pat_during_maintenance(settings):
     middleware = _gated(
         inner,
         IdentityMiddleware(
-            settings,
-            pat_backend=backend,
-            principal_cache=principal_cache,
-            maintenance_mode_store=store,
+            settings, pat_backend=backend, principal_cache=principal_cache
         ),
+        store,
     )
 
     messages = await _run(
@@ -758,11 +763,8 @@ async def test_mcp_allows_admin_during_maintenance(
     inner = _InnerApp()
     middleware = _gated(
         inner,
-        IdentityMiddleware(
-            admin_settings,
-            principal_cache=principal_cache,
-            maintenance_mode_store=store,
-        ),
+        IdentityMiddleware(admin_settings, principal_cache=principal_cache),
+        store,
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -785,9 +787,8 @@ async def test_mcp_not_blocked_when_maintenance_disabled(
     inner = _InnerApp()
     middleware = _gated(
         inner,
-        IdentityMiddleware(
-            settings, principal_cache=principal_cache, maintenance_mode_store=store
-        ),
+        IdentityMiddleware(settings, principal_cache=principal_cache),
+        store,
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -810,11 +811,8 @@ async def test_mcp_non_admin_not_blocked_when_store_unavailable(
     inner = _InnerApp()
     middleware = _gated(
         inner,
-        IdentityMiddleware(
-            settings,
-            principal_cache=principal_cache,
-            maintenance_mode_store=_BrokenMaintenanceModeStore(),
-        ),
+        IdentityMiddleware(settings, principal_cache=principal_cache),
+        _BrokenMaintenanceModeStore(),
     )
 
     messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
@@ -836,11 +834,8 @@ async def test_mcp_store_unavailable_is_logged_and_shares_v1s_counter(
     inner = _InnerApp()
     middleware = _gated(
         inner,
-        IdentityMiddleware(
-            settings,
-            principal_cache=principal_cache,
-            maintenance_mode_store=_BrokenMaintenanceModeStore(),
-        ),
+        IdentityMiddleware(settings, principal_cache=principal_cache),
+        _BrokenMaintenanceModeStore(),
     )
 
     before = _store_unavailable_count()

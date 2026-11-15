@@ -808,7 +808,7 @@ def test_token_rejects_pkce_mismatch(
     _configure_env(monkeypatch, Fernet.generate_key().decode())
 
     with app_client_factory() as (client, _):
-        store = client.app.state.mcp_auth_code_store
+        store = client.app.state.broker.mcp_auth_code_store
         code = store.put(
             McpAuthCodeRecord(
                 principal_id="sub-1",
@@ -846,7 +846,7 @@ def _token_request(client: Any, code: str, **overrides: str) -> Any:
 
 
 def _bootstrap_code(client: Any) -> str:
-    return client.app.state.mcp_auth_code_store.put(
+    return client.app.state.broker.mcp_auth_code_store.put(
         McpAuthCodeRecord(
             principal_id="sub-1",
             client_id=MCP_CLIENT_ID,

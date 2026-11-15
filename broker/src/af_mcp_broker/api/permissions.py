@@ -6,12 +6,6 @@ import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.app_state import (
-    get_credential_registry,
-    get_policy,
-    get_registry,
-    get_target_to_alias,
-)
 from af_mcp_broker.authorization import (
     PERMISSIONS,
     EntitlementPolicy,
@@ -19,6 +13,7 @@ from af_mcp_broker.authorization import (
     get_action_type,
     get_principal_permissions,
 )
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.service_status import (
@@ -282,8 +277,8 @@ async def get_permissions(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> PermissionsResponse:
-    policy = get_policy(request)
-    registry = get_registry(request)
+    policy = get_broker_state(request).entitlement_policy
+    registry = get_broker_state(request).service_registry
     return PermissionsResponse(
         subject=principal.subject,
         groups=principal.groups,
@@ -300,7 +295,7 @@ async def get_entitlements(
     request: Request,
     _principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> EntitlementsResponse:
-    policy = get_policy(request)
+    policy = get_broker_state(request).entitlement_policy
     return EntitlementsResponse(
         group_permissions=policy.group_permissions,
         permissions=_permission_catalog(policy),
@@ -318,8 +313,8 @@ async def authorize(
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> AuthorizeResponse:
     """Derive the required permission server-side from the service registry (``body.target``/``body.action`` -> ``ServiceRegistry.required_permission_for``) rather than trusting a permission supplied by the caller -- a client used to be able to claim any permission for any target and have it evaluated at face value (see issue #60)."""
-    policy = get_policy(request)
-    registry = get_registry(request)
+    policy = get_broker_state(request).entitlement_policy
+    registry = get_broker_state(request).service_registry
     service = registry.get(body.target)
     if service is None:
         reason = f"target '{body.target}' is not a registered service"
@@ -365,11 +360,11 @@ async def get_catalog(
     request: Request,
     principal: Annotated[Principal, Depends(keycloak_dependency)],
 ) -> CatalogResponse:
-    policy = get_policy(request)
-    registry = get_registry(request)
-    credential_registry = get_credential_registry(request)
+    policy = get_broker_state(request).entitlement_policy
+    registry = get_broker_state(request).service_registry
+    credential_registry = get_broker_state(request).credential_registry
     caps = get_principal_permissions(principal, policy)
-    target_to_alias = get_target_to_alias(request)
+    target_to_alias = get_broker_state(request).target_to_alias
 
     servers: list[CatalogServer] = []
     for spec in registry.all_services():

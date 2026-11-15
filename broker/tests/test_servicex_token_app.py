@@ -96,7 +96,7 @@ def test_servicex_token_provider_registered_from_config(
     servicex_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         assert state.broker_token_issuer is not None
         assert isinstance(state.identity_providers["servicex"], ServiceXProvider)
         provider = asyncio.run(state.credential_registry.resolve("servicex-target"))
@@ -115,7 +115,7 @@ def test_servicex_vault_store_constructed_and_exposed_on_state(
     servicex_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         assert isinstance(state.servicex_vault_store, VaultServiceXStore)
 
 
@@ -127,7 +127,7 @@ def test_servicex_provider_wired_to_shared_vault_store(
     servicex_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         provider = state.identity_providers["servicex"]
         assert isinstance(provider, ServiceXProvider)
         assert provider._vault_store is state.servicex_vault_store
@@ -170,7 +170,7 @@ def test_identities_lists_servicex_token_provider_as_linked(
         # is_linked() asks the vault store -- swap in the in-memory fake
         # (test_servicex.py's FakeServiceXStore) so this assertion doesn't
         # require a live Vault connection.
-        client.app.state.identity_providers[
+        client.app.state.broker.identity_providers[
             "servicex"
         ]._vault_store = FakeServiceXStore()
         resp = client.get("/v1/identities")
@@ -201,7 +201,7 @@ def test_identities_reports_configured_external_login_url(
     monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(providers))
 
     with app_client_factory() as (client, _):
-        client.app.state.identity_providers[
+        client.app.state.broker.identity_providers[
             "servicex"
         ]._vault_store = FakeServiceXStore()
         resp = client.get("/v1/identities")
@@ -229,7 +229,7 @@ def test_unlink_servicex_token_alias_deletes_stored_link_and_revokes_cache(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        app_state = client.app.state
+        app_state = client.app.state.broker
         fake_vault_store = FakeServiceXStore()
         app_state.identity_providers["servicex"]._vault_store = fake_vault_store
         asyncio.run(

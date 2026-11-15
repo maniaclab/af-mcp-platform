@@ -108,12 +108,14 @@ from typing import TYPE_CHECKING, Any, assert_never
 import structlog
 
 from af_mcp_broker.errors import BrokerError, require
+from af_mcp_broker.shared_state import FallbackSharedState, InMemorySharedState
 from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from af_mcp_broker.config import Settings
+    from af_mcp_broker.shared_state import SharedState
 
 log = structlog.get_logger(__name__)
 
@@ -842,3 +844,131 @@ def build_token_registry_backend(
             )
         case _:
             assert_never(backend)
+
+
+# Rate limit is per-uid and intentionally separate from
+# CredentialCache's failed-unlock limiter (credentials/cache.py) — that one
+# guards against passphrase brute-forcing; this one guards against unbounded
+# token issuance, a different threat with a different sane threshold.
+#
+# The counter lives in the broker's SharedState (shared_state.py), so the cap
+# holds across replicas instead of multiplying by the replica count. It is
+# still a soft anti-abuse counter, not a security boundary, so an outage of
+# the shared store degrades to a per-replica count (FallbackSharedState)
+# rather than refusing mints. It stays out of the Vault KV record the
+# TokenRegistryBackend uses: that would add a durable write on every mint
+# attempt purely to guard a convenience threshold (issue #115 requirement 4).
+_MAX_MINTS_PER_HOUR = 10
+_MINT_RATE_WINDOW_SECONDS = 60 * 60
+
+# ---------------------------------------------------------------------------
+# Registry orchestration -- rate limiting + the durable TokenRegistryBackend.
+# ---------------------------------------------------------------------------
+
+
+class PatMintRateLimitError(BrokerError):
+    """Raised when a principal exceeds the mint-rate limit."""
+
+
+def pat_mint_key(subject: str) -> str:
+    """Shared-state key of *subject*'s PAT mint counter."""
+    return f"pat-mint:{subject}"
+
+
+class TokenRegistry:
+    """Process-facing API for the manual bearer-token bootstrap routes.
+
+    Delegates durable metadata storage to a ``TokenRegistryBackend`` (in-
+    memory or Vault/OpenBao -- see token_registry.py, chosen by
+    ``settings.token_registry_backend``); keeps the per-principal mint-rate-
+    limit window in the injected ``SharedState`` (see the constant above), so
+    the cap is shared by every replica when a store is configured. If the
+    store is unreachable the window degrades to a per-replica count and logs
+    ``token_registry.shared_state_unavailable``.
+
+    Keyed by ``principal.subject``, not ``principal.uid`` -- issue #148 made
+    POSIX identity optional, and this endpoint only requires a Keycloak JWT
+    (see this module's docstring), so its callers commonly have no uid at
+    all. Keying this limiter by uid would mean every such principal shares
+    one rate-limit bucket, letting one heavy minter lock out every other
+    POSIX-less caller; subject is always present and unique per principal.
+    """
+
+    def __init__(
+        self,
+        backend: TokenRegistryBackend,
+        shared_state: SharedState | None = None,
+    ) -> None:
+        self._backend = backend
+        self._shared_state = FallbackSharedState(
+            shared_state or InMemorySharedState(),
+            component="token_registry",
+            effect="PAT mint cap is per-replica until the store recovers",
+        )
+        self._log = structlog.get_logger(__name__).bind(component="TokenRegistry")
+
+    async def check_mint_rate_limit(self, subject: str) -> None:
+        """Raise PatMintRateLimitError if *subject* has hit the per-hour mint cap."""
+        window = await self._shared_state.get_window(pat_mint_key(subject))
+        if window is not None and window.count >= _MAX_MINTS_PER_HOUR:
+            raise PatMintRateLimitError(
+                f"Too many tokens minted for subject={subject!r}. "
+                f"Try again in {int(window.ttl_seconds)}s."
+            )
+
+    async def record_mint(self, subject: str) -> None:
+        await self._shared_state.incr_window(
+            pat_mint_key(subject), _MINT_RATE_WINDOW_SECONDS
+        )
+
+    async def put(self, record: TokenRecord) -> None:
+        await self._backend.add(record)
+        self._log.info(
+            "token_registry.minted",
+            lookup_id=record.lookup_id,
+            principal_id=record.principal_id,
+            expires_at=record.expires_at,
+        )
+
+    async def list_for_principal(self, principal_id: str) -> list[TokenRecord]:
+        return await self._backend.list_for_principal(principal_id)
+
+    async def owner_principal_id(self, lookup_id: str) -> str | None:
+        return await self._backend.owner_principal_id(lookup_id)
+
+    async def get(self, principal_id: str, lookup_id: str) -> TokenRecord | None:
+        return await self._backend.get(principal_id, lookup_id)
+
+    async def revoke_all(self, principal_id: str) -> list[TokenRecord]:
+        """Revoke every active token *principal_id* owns in one write; return the revoked records."""
+        records = await self._backend.revoke_all(principal_id, revoked_at=time.time())
+        for record in records:
+            self._log.info(
+                "token_registry.revoked",
+                lookup_id=record.lookup_id,
+                principal_id=principal_id,
+            )
+        return records
+
+    async def delete_inactive(
+        self, principal_id: str, lookup_ids: frozenset[str] | None = None
+    ) -> list[str]:
+        """Delete *principal_id*'s revoked or expired records (only *lookup_ids*, when given); return the deleted lookup_ids."""
+        deleted = await self._backend.delete_inactive(
+            principal_id, now=time.time(), lookup_ids=lookup_ids
+        )
+        for lookup_id in deleted:
+            self._log.info(
+                "token_registry.deleted", lookup_id=lookup_id, principal_id=principal_id
+            )
+        return deleted
+
+    async def revoke(self, principal_id: str, lookup_id: str) -> TokenRecord | None:
+        record = await self._backend.revoke(
+            principal_id, lookup_id, revoked_at=time.time()
+        )
+        if record is not None:
+            self._log.info(
+                "token_registry.revoked", lookup_id=lookup_id, principal_id=principal_id
+            )
+        return record

@@ -353,6 +353,10 @@ flowchart TB
         direction LR
         m_identity["identity"]
     end
+    subgraph stateL["Broker state: the typed state the lifespan stores on app.state"]
+        direction LR
+        m_broker_state["broker_state"]
+    end
     subgraph features["Features: services the edges share"]
         direction LR
         m_credmon["credmon"]
@@ -421,7 +425,7 @@ flowchart TB
         m_pat["pat"]
         m_errors ~~~ m_constants ~~~ m_principal ~~~ m_http ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
     end
-    appL --> wiring --> edges --> tokenid --> ident --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
+    appL --> wiring --> edges --> tokenid --> ident --> stateL --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
 ```
 
 An arrow means "may import from". Imports may skip layers downward; they may
@@ -445,8 +449,19 @@ What the layering means in practice:
   `service_status` (per-caller availability of a service), `backend_client`
   (building the backend client and listing a service's tools),
   `backend_errors`, `service_registry` and `lint_observations`.
-  `api/app_state.py` holds the accessors for what the lifespan puts on
-  `app.state`, so the route modules share them under public names.
+- `broker_state` holds the `BrokerState` dataclass the lifespan stores once on
+  `app.state.broker`, and the accessors that read it back:
+  `get_broker_state(request)` for `/v1` routes and `identity`, and
+  `broker_state_of(app)` for code that holds the app. It sits below
+  `identity` (which reads the principal cache and the dev-bypass principal
+  from it) and above every subsystem it holds, so `api`, `mcp` and `identity`
+  can all import it while construction stays in `wiring`. A component a
+  deployment may lack is an explicit `X | None` field and each consumer decides
+  what absence means; every other field is required, so a state missing one
+  cannot be built. A request reaching an app with no state stored fails with
+  a `RuntimeError` rather than falling back to defaults. The `/mcp` ASGI
+  middleware is built before the lifespan runs and receives a `get_state`
+  callable that returns the state at request time.
 - By convention a module does not import another module's `_private` name;
   anything shared is public in the module that owns it.
 
@@ -460,8 +475,8 @@ build_token_registry_backend`, `credentials.stores.build_vault_link_stores`);
 glue that needs several subsystems lives in the `wiring` package (service
 catalog and identity targets, the Vault client, the credential cache and
 providers, the principal cache and token registry, the lifetime resources,
-aggregator population). `wiring.state.BrokerState.publish` assigns the built
-subsystems to the `app.state` attributes the routes read.
+aggregator population). `wiring.state.build_broker_state` assembles the built
+subsystems into the `BrokerState` the lifespan stores as `app.state.broker`.
 
 Every resource with a close registers it on one `contextlib.AsyncExitStack`
 when it is built, so shutdown closes in reverse build order and a builder that
@@ -634,7 +649,7 @@ discriminated union on `type`:
 An entry's `alias` doubles as the portal-facing id on `GET /v1/identities` —
 there is no separate id-to-alias mapping. `app.py`'s lifespan builds one
 `CredentialProvider` instance per entry, keyed by alias, on
-`app.state.identity_providers`, and registers each entry's `targets` with the
+`BrokerState.identity_providers`, and registers each entry's `targets` with the
 `CredentialRegistry` the same way regardless of provider type — `x509`
 entries included: every backend wired with `auth_type: x509` must be
 covered by an explicit `x509` entry, or the lifespan refuses to start

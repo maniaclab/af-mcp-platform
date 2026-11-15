@@ -6,7 +6,6 @@ from __future__ import annotations
 # connection to a backend service, through backend_client.py's list-time
 # helpers.
 import asyncio
-import time
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import structlog
@@ -17,11 +16,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.types import ToolAnnotations  # noqa: TC002
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.app_state import (
-    get_credential_registry,
-    get_policy,
-    get_registry,
-)
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     get_action_type,
@@ -33,7 +27,7 @@ from af_mcp_broker.backend_client import (
     resolve_list_time_credential,
 )
 from af_mcp_broker.backend_errors import NotLinkedForListingError
-from af_mcp_broker.config import get_settings
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.service_status import holds_any_required_permission
@@ -135,52 +129,6 @@ class ServiceToolsResponse(BaseModel):
     tools: list[ServiceTool]
 
 
-class ToolListingCache:
-    """In-process TTL cache of successful tool listings, keyed by service.
-
-    Tool schemas aren't user-specific (the same cross-user assumption
-    fastmcp's ProxyProvider component cache already relies on -- see
-    aggregator.py's _make_client_factory docstring; that cache itself can't
-    be reused here because its client factories require an in-flight MCP
-    request context), so one process-wide entry per service is safe. The TTL
-    is the service's own ``tools_cache_ttl`` -- the same operator knob that
-    governs the ProxyProvider cache, and 0 disables caching here too.
-    Per-caller decisions (entitlement, linkage) are re-evaluated on every
-    request; only the network fan-out is skipped. Each broker replica keeps
-    its own copy -- acceptable divergence for a tool *catalog* (worst case a
-    just-redeployed service's new tool appears on one replica up to one TTL
-    before another), unlike per-caller status data which is never cached.
-    """
-
-    def __init__(self) -> None:
-        # service name -> (monotonic fetch time, [ToolListingEntry, ...])
-        self._entries: dict[str, tuple[float, list[ToolListingEntry]]] = {}
-
-    def get(self, service: str, ttl: float) -> list[ToolListingEntry] | None:
-        if ttl <= 0:
-            return None
-        entry = self._entries.get(service)
-        if entry is None:
-            return None
-        fetched_at, tools = entry
-        if time.monotonic() - fetched_at > ttl:
-            return None
-        return tools
-
-    def put(self, service: str, tools: list[ToolListingEntry]) -> None:
-        self._entries[service] = (time.monotonic(), tools)
-
-
-def _get_cache(request: Request) -> ToolListingCache:
-    # Lazily created on first use -- app.py's lifespan doesn't need to know
-    # about it, and a fresh app (tests included) just starts cold.
-    cache = getattr(request.app.state, "tool_listing_cache", None)
-    if cache is None:
-        cache = ToolListingCache()
-        request.app.state.tool_listing_cache = cache
-    return cache
-
-
 def _respond(
     spec: ServiceSpec,
     status: str,
@@ -246,13 +194,14 @@ async def get_service_tools(
     so what the portal shows always matches what a tools/list through /mcp
     would return for this caller.
     """
-    registry = get_registry(request)
+    state = get_broker_state(request)
+    registry = state.service_registry
     spec = registry.get(service)
     if spec is None:
         raise HTTPException(
             status_code=404, detail=f"service '{service}' is not registered"
         )
-    policy = get_policy(request)
+    policy = state.entitlement_policy
     caps = get_principal_permissions(principal, policy)
 
     # Same pre-fetch gate /v1/catalog's status derivation applies (issue #60,
@@ -267,14 +216,8 @@ async def get_service_tools(
         # The builtin gateway service's methods (issue #240) are the
         # aggregator's own local tools (mcp/diagnostics.py) -- there is no
         # backend to HTTP-fetch and no credential to resolve, so list them
-        # straight from the mounted FastMCP instance's local provider
-        # (stamped onto app.state at mount time in app.py). A bare app
-        # without one (misassembled test double) degrades to "unavailable"
-        # rather than passing off an empty method list as the truth.
-        aggregator = getattr(request.app.state, "mcp_aggregator", None)
-        if aggregator is None:
-            return _respond(spec, "unavailable", [], policy, registry, caps)
-        local_tools = await aggregator.local_provider.list_tools()
+        # straight from the mounted FastMCP instance's local provider.
+        local_tools = await state.mcp_aggregator.local_provider.list_tools()
         tools = sorted(
             (
                 ToolListingEntry(
@@ -293,14 +236,12 @@ async def get_service_tools(
     # backend round trip), the same Settings.mcp_list_timeout_seconds that
     # bounds a tools/list through /mcp, so a hung backend or credential store
     # cannot hold this request past the portal's own timeout.
-    settings = getattr(request.app.state, "settings", None) or get_settings()
+    settings = state.settings
     deadline = asyncio.timeout(settings.mcp_list_timeout_seconds)
     try:
         async with deadline:
-            credential_registry = get_credential_registry(request)
-            broker_token_issuer = getattr(
-                request.app.state, "broker_token_issuer", None
-            )
+            credential_registry = state.credential_registry
+            broker_token_issuer = state.broker_token_issuer
             try:
                 credential = await resolve_list_time_credential(
                     spec, credential_registry, principal, broker_token_issuer
@@ -323,7 +264,7 @@ async def get_service_tools(
             # (not linked, provider unavailable) always goes to the live attempt so
             # their status reflects *their* credential state, never another
             # caller's cached success.
-            cache = _get_cache(request)
+            cache = state.tool_listing_cache
             if skip_reason is None:
                 cached = cache.get(spec.name, spec.tools_cache_ttl)
                 if cached is not None:

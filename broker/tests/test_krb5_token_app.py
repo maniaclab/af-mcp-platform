@@ -96,7 +96,7 @@ def test_krb5_token_provider_registered_from_config(
     krb5_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         assert state.broker_token_issuer is not None
         assert isinstance(state.identity_providers["krb5"], KrbTokenProvider)
         provider = asyncio.run(state.credential_registry.resolve("krb5-target"))
@@ -115,7 +115,7 @@ def test_krb5_vault_store_constructed_and_exposed_on_state(
     krb5_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         assert isinstance(state.krb5_vault_store, Krb5VaultStore)
 
 
@@ -130,7 +130,7 @@ def test_krb5_token_provider_wired_to_shared_vault_store(
     krb5_token_env()
 
     with app_client_factory() as (client, _):
-        state = client.app.state
+        state = client.app.state.broker
         provider = state.identity_providers["krb5"]
         assert isinstance(provider, KrbTokenProvider)
         assert provider._vault_store is state.krb5_vault_store
@@ -178,7 +178,9 @@ def test_identities_lists_krb5_token_provider_as_linked(
         # attribute post-boot" pattern test_x509_preflight.py's
         # _enable_service_mode uses for X509Provider._vault_store) so this
         # assertion doesn't require a live Vault connection.
-        client.app.state.identity_providers["krb5"]._vault_store = FakeKrb5VaultStore()
+        client.app.state.broker.identity_providers[
+            "krb5"
+        ]._vault_store = FakeKrb5VaultStore()
         resp = client.get("/v1/identities")
 
     assert resp.status_code == 200, resp.text
@@ -230,7 +232,7 @@ def test_krb5_audiences_built_from_auth_type_krb5_services(
     )
 
     with app_client_factory() as (client, _):
-        assert client.app.state.krb5_audiences == {
+        assert client.app.state.broker.krb5_audiences == {
             "krb5-example-service": "krb5-example"
         }
 
@@ -245,7 +247,7 @@ def test_unlink_krb5_token_alias_deletes_stored_link_and_revokes_cache(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        app_state = client.app.state
+        app_state = client.app.state.broker
         fake_vault_store = FakeKrb5VaultStore()
         app_state.identity_providers["krb5"]._vault_store = fake_vault_store
         asyncio.run(

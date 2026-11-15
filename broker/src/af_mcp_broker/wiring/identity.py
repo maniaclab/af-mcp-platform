@@ -7,12 +7,11 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from af_mcp_broker.api.tokens import TokenRegistry
 from af_mcp_broker.identity import build_dev_principal, issuer_is_local
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import PrincipalCache, build_principal_cache_backend
 from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
-from af_mcp_broker.token_registry import build_token_registry_backend
+from af_mcp_broker.token_registry import TokenRegistry, build_token_registry_backend
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet

@@ -201,6 +201,23 @@ def test_bypass_response_header_present(monkeypatch: pytest.MonkeyPatch) -> None
     assert resp.headers.get("X-Dev-Bypass") == "true"
 
 
+@pytest.mark.usefixtures("unpinned_loggers")
+def test_bypass_response_header_present_on_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    _bootstrap_env(monkeypatch)
+    monkeypatch.setenv("BROKER_DEV_INSECURE_PRINCIPAL", DEV_PRINCIPAL_JSON)
+    monkeypatch.setenv("OIDC_ISSUER", "http://localhost:8081/realms/x")
+
+    app = _fresh_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/mcp/",
+            headers={"Accept": "application/json, text/event-stream"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+
+    assert resp.headers.get("X-Dev-Bypass") == "true"
+
+
 def test_bypass_missing_required_key_fails_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import structlog
+from broker_state_helpers import set_broker_state
 from fastmcp.server.providers.proxy import ProxyTool
 from mcp.types import Tool as McpTool
 
@@ -32,7 +33,9 @@ from af_mcp_broker.service_registry import (
 def maintenance_client(app_client_factory, monkeypatch):
     monkeypatch.setenv("ADMIN_GROUP", "af-admins")
     with app_client_factory() as (client, state):
-        client.app.state.maintenance_mode_store = InMemoryMaintenanceModeStore()
+        set_broker_state(
+            client.app, maintenance_mode_store=InMemoryMaintenanceModeStore()
+        )
         yield client, state
 
 
@@ -74,7 +77,7 @@ def test_enabled_by_resolves_to_unixname_when_principal_cache_can(
     cache, directory = static_principal_cache
     directory.groups_by_subject["admin-sub"] = ["af-admins"]
     directory.posix_by_subject["admin-sub"] = {"unixname": "gstark"}
-    client.app.state.principal_cache = cache
+    set_broker_state(client.app, principal_cache=cache)
     state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
 
     post_resp = client.post(
@@ -94,7 +97,7 @@ def test_enabled_by_falls_back_to_bare_subject_when_unresolvable(
     client, state = maintenance_client
     cache, directory = static_principal_cache
     directory.unavailable_subjects.add("admin-sub")
-    client.app.state.principal_cache = cache
+    set_broker_state(client.app, principal_cache=cache)
     state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
 
     client.post("/v1/admin/maintenance", json={"enabled": True, "reason": "upgrading"})
@@ -175,7 +178,7 @@ def test_conflicting_toggle_is_not_audited(maintenance_client, make_principal):
         async def set(self, new_state: MaintenanceState) -> None:
             raise MaintenanceStateConflictError
 
-    client.app.state.maintenance_mode_store = _ConflictingStore()
+    set_broker_state(client.app, maintenance_mode_store=_ConflictingStore())
 
     with structlog.testing.capture_logs() as logs:
         resp = client.post(
@@ -240,7 +243,7 @@ class _ConflictingStore(MaintenanceModeStore):
 def test_post_conflict_from_store_returns_409(maintenance_client, make_principal):
     client, state = maintenance_client
     state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
-    client.app.state.maintenance_mode_store = _ConflictingStore()
+    set_broker_state(client.app, maintenance_mode_store=_ConflictingStore())
 
     resp = client.post("/v1/admin/maintenance", json={"enabled": True, "reason": "r"})
     assert resp.status_code == 409
@@ -266,7 +269,7 @@ class _BrokenGetStore(MaintenanceModeStore):
 def test_get_fails_open_when_store_is_unreachable(maintenance_client):
     client, _state = maintenance_client
     client.app.dependency_overrides.clear()  # GET requires no auth at all
-    client.app.state.maintenance_mode_store = _BrokenGetStore()
+    set_broker_state(client.app, maintenance_mode_store=_BrokenGetStore())
 
     resp = client.get("/v1/admin/maintenance")
     assert resp.status_code == 200
@@ -302,7 +305,7 @@ _DRIFT = ToolMappingDrift(
 
 
 def _observe(client, service, mismatches=(), drift=None):
-    store = client.app.state.lint_observations
+    store = client.app.state.broker.lint_observations
     asyncio.run(store.observe(service, mismatches, drift))
 
 
@@ -344,7 +347,9 @@ def test_the_builtin_gateway_service_is_not_listed(maintenance_client, make_prin
     body = client.get("/v1/admin/annotation-mismatches").json()
 
     builtin = {
-        s.name for s in client.app.state.service_registry.all_services() if s.builtin
+        s.name
+        for s in client.app.state.broker.service_registry.all_services()
+        if s.builtin
     }
     assert builtin
     assert not builtin & {s["service"] for s in body["services"]}
@@ -392,7 +397,7 @@ def test_what_the_registry_alone_recorded_is_not_reported(
     """The in-process records only dedupe the log line and metric; the page reads the shared store."""
     client, state = maintenance_client
     state["principal"] = make_principal(groups=["af-admins"])
-    client.app.state.service_registry.record_annotation_mismatch(_MISMATCH)
+    client.app.state.broker.service_registry.record_annotation_mismatch(_MISMATCH)
 
     assert client.get("/v1/admin/annotation-mismatches").json()["mismatches"] == []
 
@@ -454,7 +459,7 @@ def _list_renamed_backend(
     monkeypatch.setattr(
         entitlement_mw, "logger", structlog.get_logger(entitlement_mw.__name__)
     )
-    registry = client.app.state.service_registry
+    registry = client.app.state.broker.service_registry
     registry.register(
         ServiceSpec(
             name="atlas_search_service",
@@ -487,8 +492,8 @@ def _list_renamed_backend(
         registry=registry,
         route_prefix="atlas_opensearch",
     )
-    mw = EntitlementMiddleware(registry, client.app.state.entitlement_policy)
-    mw.use_lint_store(client.app.state.lint_observations)
+    mw = EntitlementMiddleware(registry, client.app.state.broker.entitlement_policy)
+    mw.use_lint_store(client.app.state.broker.lint_observations)
 
     async def _run() -> None:
         tools = await provider._list_tools()

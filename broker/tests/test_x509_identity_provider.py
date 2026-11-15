@@ -184,7 +184,7 @@ class TestBootWiring:
         )
 
         with app_client_factory() as (client, _):
-            provider = client.app.state.x509_provider
+            provider = client.app.state.broker.x509_provider
             assert isinstance(provider, X509Provider)
             voms_client = provider._voms_client
             assert voms_client._mint_endpoint == f"{_SERVICE_URL}/v1/mint"
@@ -192,7 +192,7 @@ class TestBootWiring:
             assert voms_client._valid == "24:00"
             assert voms_client._audience == "voms-dev"
             # The catalog join uses the real entry alias.
-            assert client.app.state.target_to_alias["ami"] == "x509"
+            assert client.app.state.broker.target_to_alias["ami"] == "x509"
 
     def test_explicit_entry_registers_targets_under_its_alias(
         self,
@@ -205,10 +205,10 @@ class TestBootWiring:
         _set_identity_providers(monkeypatch, [_x509_entry(alias="grid-cert")])
 
         with app_client_factory() as (client, _):
-            provider = client.app.state.x509_provider
+            provider = client.app.state.broker.x509_provider
             assert isinstance(provider, X509Provider)
-            assert client.app.state.target_to_alias["ami"] == "grid-cert"
-            assert "grid-cert" in client.app.state.identity_providers
+            assert client.app.state.broker.target_to_alias["ami"] == "grid-cert"
+            assert "grid-cert" in client.app.state.broker.identity_providers
 
     def test_multiple_entries_resolve_to_distinct_providers(
         self,
@@ -244,7 +244,7 @@ class TestBootWiring:
         )
 
         with app_client_factory() as (client, _):
-            registry = client.app.state.credential_registry
+            registry = client.app.state.broker.credential_registry
 
             ami_provider = asyncio.run(registry.resolve("ami"))
             dune_provider = asyncio.run(registry.resolve("dune-mcp"))
@@ -253,7 +253,7 @@ class TestBootWiring:
             assert dune_provider._voms_client._voms == "dune"
             # IDENTITY_PROVIDERS was overridden with just the two x509
             # entries, so the join contains exactly their targets.
-            assert client.app.state.target_to_alias == {
+            assert client.app.state.broker.target_to_alias == {
                 "ami": "x509",
                 "dune-mcp": "x509-dune",
             }
@@ -372,13 +372,13 @@ class TestPerTargetResolution:
             ],
         )
         with app_client_factory() as (client, state):
-            registry = client.app.state.credential_registry
+            registry = client.app.state.broker.credential_registry
             dune_provider = asyncio.run(registry.resolve("dune-mcp"))
             store = FakeX509Store()
             dune_provider._vault_store = store
             dune_provider._voms_client = FakeVomsClient()
             # The default provider (first x509 target, "ami") keeps its own.
-            assert client.app.state.x509_provider is not dune_provider
+            assert client.app.state.broker.x509_provider is not dune_provider
             yield client, store, state
 
     def test_redeem_resolves_the_target_entry_provider(self, two_entry_app) -> None:
@@ -405,7 +405,7 @@ class TestPerTargetResolution:
                 not_after=_time.time() + 3600.0,
             )
         )
-        token, _ = client.app.state.broker_token_issuer.mint(subject, "dune-mcp")
+        token, _ = client.app.state.broker.broker_token_issuer.mint(subject, "dune-mcp")
 
         resp = client.post(
             "/v1/credentials/x509/redeem",
@@ -421,7 +421,7 @@ class TestPerTargetResolution:
     ) -> None:
         client, _store, state = two_entry_app
         linked: list[tuple[str, str]] = []
-        client.app.state.credential_cache._on_link = lambda subject, target: (
+        client.app.state.broker.credential_cache._on_link = lambda subject, target: (
             linked.append((subject, target))
         )
 
@@ -438,7 +438,7 @@ class TestPerTargetResolution:
     ) -> None:
         client, _store, state = two_entry_app
         revoked: list[tuple[str, str]] = []
-        client.app.state.credential_cache._on_revoke = lambda subject, target: (
+        client.app.state.broker.credential_cache._on_revoke = lambda subject, target: (
             revoked.append((subject, target))
         )
 

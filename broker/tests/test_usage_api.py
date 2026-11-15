@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import set_broker_state
 
 from af_mcp_broker.app import app
 from af_mcp_broker.audit import AuditRecord
@@ -49,7 +50,7 @@ def _record(**overrides: Any) -> AuditRecord:
 
 def _seed(client: TestClient, *records: AuditRecord) -> None:
     """Seed the app's installed (in-memory) usage store directly."""
-    store = client.app.state.usage_store  # type: ignore[attr-defined]
+    store = client.app.state.broker.usage_store  # type: ignore[attr-defined]
 
     async def _fill() -> None:
         for record in records:
@@ -263,7 +264,7 @@ def test_usage_subjects_resolves_unixname(
 
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["atlas", "af-admins"])
-        client.app.state.principal_cache = cache
+        set_broker_state(client.app, principal_cache=cache)
         _seed(client, _record(principal_sub="someone-else"))
 
         resp = client.get("/v1/usage/subjects")
@@ -288,7 +289,7 @@ def test_usage_subjects_falls_back_to_bare_subject_when_unresolvable(
 
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["atlas", "af-admins"])
-        client.app.state.principal_cache = cache
+        set_broker_state(client.app, principal_cache=cache)
         _seed(client, _record(principal_sub="ghost"))
 
         resp = client.get("/v1/usage/subjects")

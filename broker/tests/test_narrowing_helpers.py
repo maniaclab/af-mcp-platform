@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from broker_state_helpers import make_broker_state
 
 from af_mcp_broker.api.credentials import _krb5_expires_at
 from af_mcp_broker.api.identities import _typed_provider
@@ -25,7 +26,11 @@ from af_mcp_broker.mcp.aggregator import (
 
 def _request(providers: dict[str, Any]) -> Any:
     return SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(identity_providers=providers))
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                broker=make_broker_state(identity_providers=providers)
+            )
+        )
     )
 
 

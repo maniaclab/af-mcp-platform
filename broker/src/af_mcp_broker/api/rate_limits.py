@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.api.app_state import get_policy
 from af_mcp_broker.authorization.rate_limit import (
     RateLimitStatus,
     rate_limit_statuses,
     read_rate_limit_usage,
 )
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 
@@ -56,8 +56,7 @@ async def get_rate_limits(
 ) -> RateLimitsResponse:
     # The subject comes from the authenticated principal, never a parameter,
     # so a caller can only ever read their own counters.
+    state = get_broker_state(request)
     return await build_rate_limits_response(
-        get_policy(request),
-        getattr(request.app.state, "shared_state", None),
-        principal.subject,
+        state.entitlement_policy, state.shared_state, principal.subject
     )

@@ -94,7 +94,7 @@ def test_a_failure_after_every_builder_ran_closes_all_of_them(
     ]
     assert get_usage_store() is None
     assert metering._pipeline is None
-    port = app_module.app.state.metrics_port
+    port = app_module.app.state.broker.metrics_port
     assert port is not None
     with pytest.raises(OSError):  # noqa: PT011 -- connection refused, any OSError subclass
         socket.create_connection(("127.0.0.1", port), timeout=2)

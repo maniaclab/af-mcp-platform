@@ -16,6 +16,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import set_broker_state
 from conftest import make_claims, run_aggregator_async, run_inprocess_server
 from fastmcp import FastMCP
 
@@ -80,7 +81,7 @@ class TestV1GateOrdering:
             client.app.dependency_overrides.clear()
             store = InMemoryMaintenanceModeStore()
             asyncio.run(store.set(_MAINTENANCE_ON))
-            client.app.state.maintenance_mode_store = store
+            set_broker_state(client.app, maintenance_mode_store=store)
 
             resp = client.get("/v1/identities")
 
@@ -100,7 +101,7 @@ class TestV1GateOrdering:
             )
             store = InMemoryMaintenanceModeStore()
             asyncio.run(store.set(_MAINTENANCE_ON))
-            client.app.state.maintenance_mode_store = store
+            set_broker_state(client.app, maintenance_mode_store=store)
 
             resp = client.get(
                 "/v1/identities", headers={"Authorization": "Bearer not-a-jwt"}
@@ -115,7 +116,7 @@ class TestV1GateOrdering:
         with app_client_factory() as (client, _state):
             store = InMemoryMaintenanceModeStore()
             asyncio.run(store.set(_MAINTENANCE_ON))
-            client.app.state.maintenance_mode_store = store
+            set_broker_state(client.app, maintenance_mode_store=store)
 
             resp = client.get("/v1/identities")
 
@@ -126,7 +127,7 @@ class TestV1GateOrdering:
         with app_client_factory() as (client, _state):
             store = InMemoryMaintenanceModeStore()
             asyncio.run(store.set(_MAINTENANCE_ON))
-            client.app.state.maintenance_mode_store = store
+            set_broker_state(client.app, maintenance_mode_store=store)
 
             resp = client.get("/v1/admin/maintenance")
 
@@ -195,9 +196,8 @@ async def _serve_mcp(
         EntitlementPolicy(group_permissions={"__authenticated__": []}),
         CredentialRegistry(),
         principal_cache=principal_cache,
-        maintenance_mode_store=store,
     )
-    return run_aggregator_async(mcp, path="/mcp")
+    return run_aggregator_async(mcp, path="/mcp", maintenance_mode_store=store)
 
 
 @pytest.fixture

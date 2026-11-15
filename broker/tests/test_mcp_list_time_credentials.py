@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_state_helpers import asgi_state_getter
 from conftest import (
     make_claims,
     run_aggregator_async,
@@ -622,7 +623,7 @@ async def test_replica_split_session_continuity(
             mcp,
             path="/mcp",
             stateless_http=stateless,
-            middleware=build_asgi_middleware(mcp),
+            middleware=build_asgi_middleware(mcp, asgi_state_getter(mcp)),
         )
 
     headers = {

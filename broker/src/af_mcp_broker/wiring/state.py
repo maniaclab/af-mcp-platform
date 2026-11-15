@@ -1,15 +1,16 @@
-"""The built subsystems, and their publication onto ``app.state``."""
+"""Assembly of the built subsystems into the ``BrokerState`` the request path reads."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from af_mcp_broker.backend_client import ToolListingCache
+from af_mcp_broker.broker_state import BrokerState
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
-    from starlette.datastructures import State
+    from fastmcp import FastMCP
 
-    from af_mcp_broker.api.tokens import TokenRegistry
     from af_mcp_broker.config import Settings
     from af_mcp_broker.credentials import (
         BrokerTokenIssuer,
@@ -23,70 +24,73 @@ if TYPE_CHECKING:
     from af_mcp_broker.lint_observations import LintObservationStore
     from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
+    from af_mcp_broker.principal import Principal
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
+    from af_mcp_broker.token_registry import TokenRegistry
     from af_mcp_broker.usage import UsageStore
     from af_mcp_broker.wiring.credentials import CredentialProviders
     from af_mcp_broker.wiring.services import IdentityTargets, ServiceCatalog
 
 
-@dataclass(frozen=True)
-class BrokerState:
-    """Every subsystem the request path reads off ``app.state``, as built by the lifespan."""
-
-    settings: Settings
-    catalog: ServiceCatalog
-    targets: IdentityTargets
-    credential_cache: CredentialCache
-    providers: CredentialProviders
-    x509_provider: X509Provider | None
-    oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None
-    oauth21_state_cipher: Fernet | None
-    token_registry: TokenRegistry
-    principal_cache: PrincipalCache | None
-    mcp_auth_code_store: McpAuthCodeStore | None
-    broker_token_issuer: BrokerTokenIssuer | None
-    usage_store: UsageStore
-    maintenance_mode_store: MaintenanceModeStore
-    lint_observations: LintObservationStore
-    shared_state: SharedState
-    link_stores: VaultLinkStores
-    credmon_sync: CredmonSyncService | None
-
-    def publish(self, state: State) -> None:
-        """Assign each subsystem to the ``app.state`` attribute the routes and middleware read it from."""
-        state.settings = self.settings
-        state.entitlement_policy = self.catalog.entitlement_policy
-        state.service_registry = self.catalog.service_registry
-        state.services = self.catalog.services
-        state.services_loaded = self.catalog.services_loaded
-        state.credential_cache = self.credential_cache
-        state.credential_registry = self.providers.registry
-        state.x509_provider = self.x509_provider
-        state.x509_targets = self.targets.x509_targets
-        state.x509_audiences = self.targets.x509_audiences
-        state.krb5_audiences = self.targets.krb5_audiences
-        state.krb5_targets = self.targets.krb5_targets
-        state.servicex_audiences = self.targets.servicex_audiences
-        state.servicex_targets = self.targets.servicex_targets
-        state.identity_providers = self.providers.providers
-        state.identity_provider_configs = self.providers.configs
-        state.target_to_alias = self.targets.target_to_alias
-        state.oauth21_token_store = self.oauth21_token_store
-        state.oauth21_state_cipher = self.oauth21_state_cipher
-        state.token_registry = self.token_registry
-        state.principal_cache = self.principal_cache
-        state.mcp_auth_code_store = self.mcp_auth_code_store
-        state.broker_token_issuer = self.broker_token_issuer
-        state.usage_store = self.usage_store
-        state.maintenance_mode_store = self.maintenance_mode_store
-        state.lint_observations = self.lint_observations
-        state.shared_state = self.shared_state
-        # Also passed to KrbTokenProvider (remember/renew support, issue
-        # #274); exposed on state so it exists in one place alongside every
-        # other subsystem here.
-        state.krb5_vault_store = self.link_stores.krb5
-        state.servicex_vault_store = self.link_stores.servicex
-        # Set unconditionally so a disabled deployment reads None rather than
-        # whatever a previous app instance left behind.
-        state.credmon_sync = self.credmon_sync
+def build_broker_state(
+    settings: Settings,
+    *,
+    catalog: ServiceCatalog,
+    targets: IdentityTargets,
+    providers: CredentialProviders,
+    credential_cache: CredentialCache,
+    x509_provider: X509Provider | None,
+    oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None,
+    oauth21_state_cipher: Fernet | None,
+    token_registry: TokenRegistry,
+    principal_cache: PrincipalCache | None,
+    mcp_auth_code_store: McpAuthCodeStore | None,
+    broker_token_issuer: BrokerTokenIssuer | None,
+    usage_store: UsageStore,
+    maintenance_mode_store: MaintenanceModeStore,
+    lint_observations: LintObservationStore,
+    shared_state: SharedState,
+    link_stores: VaultLinkStores,
+    credmon_sync: CredmonSyncService | None,
+    mcp_aggregator: FastMCP,
+    dev_bypass_principal: Principal | None,
+    metrics_port: int | None,
+) -> BrokerState:
+    """Flatten the lifespan's built subsystems (and the groups they come in) into one ``BrokerState``, with a cold tool-listing cache."""
+    return BrokerState(
+        settings=settings,
+        entitlement_policy=catalog.entitlement_policy,
+        service_registry=catalog.service_registry,
+        services=catalog.services,
+        services_loaded=catalog.services_loaded,
+        credential_cache=credential_cache,
+        credential_registry=providers.registry,
+        x509_provider=x509_provider,
+        x509_targets=targets.x509_targets,
+        krb5_targets=targets.krb5_targets,
+        servicex_targets=targets.servicex_targets,
+        x509_audiences=targets.x509_audiences,
+        krb5_audiences=targets.krb5_audiences,
+        servicex_audiences=targets.servicex_audiences,
+        target_to_alias=targets.target_to_alias,
+        identity_providers=providers.providers,
+        identity_provider_configs=providers.configs,
+        oauth21_token_store=oauth21_token_store,
+        oauth21_state_cipher=oauth21_state_cipher,
+        token_registry=token_registry,
+        principal_cache=principal_cache,
+        mcp_auth_code_store=mcp_auth_code_store,
+        broker_token_issuer=broker_token_issuer,
+        usage_store=usage_store,
+        maintenance_mode_store=maintenance_mode_store,
+        lint_observations=lint_observations,
+        shared_state=shared_state,
+        krb5_vault_store=link_stores.krb5,
+        servicex_vault_store=link_stores.servicex,
+        credmon_sync=credmon_sync,
+        tool_listing_cache=ToolListingCache(),
+        mcp_aggregator=mcp_aggregator,
+        dev_bypass_principal=dev_bypass_principal,
+        metrics_port=metrics_port,
+    )

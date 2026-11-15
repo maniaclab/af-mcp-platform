@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from starlette.types import Message, Receive, Scope, Send
 
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.maintenance import MaintenanceModeStore
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.token_registry import TokenRegistryBackend
 
@@ -230,9 +229,9 @@ class AsgiAuthMiddleware:
             # Local-dev auth bypass, mirroring app.py's lifespan check
             # (settings-driven, same build_dev_principal helper). This
             # middleware wraps a mounted sub-app, not the parent FastAPI
-            # app, so app.state.dev_bypass_active/dev_bypass_principal are
-            # unreachable here -- re-derive the bypass from settings
-            # directly, exactly like the lifespan does.
+            # app, so the BrokerState's dev_bypass_principal is not at hand
+            # here -- re-derive the bypass from settings directly, exactly
+            # like the lifespan does.
             if not issuer_is_local(settings.oidc_issuer):
                 # app.py's own lifespan already refuses to start in this
                 # configuration; reaching here means this invariant is being
@@ -340,20 +339,17 @@ class IdentityMiddleware(Middleware):
         settings: Settings,
         pat_backend: TokenRegistryBackend | None = None,
         principal_cache: PrincipalCache | None = None,
-        maintenance_mode_store: MaintenanceModeStore | None = None,
     ) -> None:
         # on_request below reads none of these directly -- it is a thin
         # hand-off (see the module docstring). They're kept here anyway
         # because this instance is the single mutable config handle
         # aggregator.populate_aggregator() already updates once app.py's
         # lifespan has the real Settings/PAT store/principal
-        # cache; AsgiAuthMiddleware and maintenance_mw.AsgiMaintenanceMiddleware
-        # read them off *this* instance rather than holding a second,
-        # separately-updated copy.
+        # cache; AsgiAuthMiddleware reads them off *this* instance rather
+        # than holding a second, separately-updated copy.
         self.settings = settings
         self.pat_backend = pat_backend
         self.principal_cache = principal_cache
-        self.maintenance_mode_store = maintenance_mode_store
         # Purely in-process, ephemeral throttle state for PAT last_used_at
         # writes (see pat_auth.LastUsedTracker) -- constructed unconditionally
         # (not a constructor param) since it has no external dependency and

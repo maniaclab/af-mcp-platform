@@ -4,7 +4,7 @@ Both are admin-only. GET reports whether the integration is enabled and the
 last sync cycle's status record (the same record on every replica, since
 only the lease holder writes it); POST runs a cycle now, or 409s when
 another replica holds the cycle lease. The sync service is injected on
-``app.state.credmon_sync`` directly, the same way test_admin_api.py injects
+``app.state.broker.credmon_sync`` directly, the same way test_admin_api.py injects
 its maintenance store.
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
+from broker_state_helpers import set_broker_state
 from conftest import InMemoryCredmonSyncState
 
 from af_mcp_broker.credmon.storer import SyncReport
@@ -42,13 +43,16 @@ def credmon_client(app_client_factory, monkeypatch, make_principal):
     with app_client_factory() as (client, state):
         sync_state = InMemoryCredmonSyncState()
         storer = _FakeStorer()
-        client.app.state.credmon_sync = CredmonSyncService(
-            storer=storer,  # type: ignore[arg-type]
-            state=sync_state,
-            holder="broker-pod-a",
-            interval_seconds=14400.0,
-            lease_ttl_seconds=600.0,
-            poll_seconds=60.0,
+        set_broker_state(
+            client.app,
+            credmon_sync=CredmonSyncService(
+                storer=storer,  # type: ignore[arg-type]
+                state=sync_state,
+                holder="broker-pod-a",
+                interval_seconds=14400.0,
+                lease_ttl_seconds=600.0,
+                poll_seconds=60.0,
+            ),
         )
         state["principal"] = make_principal(groups=["af-admins"], subject="admin-sub")
         yield client, state, sync_state, storer

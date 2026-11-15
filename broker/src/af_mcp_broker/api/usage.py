@@ -19,13 +19,13 @@ shaping) live in ``usage/summary.py``, shared with the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from af_mcp_broker.authorization import is_admin
-from af_mcp_broker.config import get_settings
+from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.identity import keycloak_dependency, require_admin
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
@@ -33,9 +33,6 @@ from af_mcp_broker.usage.summary import (
     UsageResponse,
     build_usage_summary,
 )
-
-if TYPE_CHECKING:
-    from af_mcp_broker.usage import UsageStore
 
 router = APIRouter(prefix="/usage", tags=["usage"])
 
@@ -82,7 +79,7 @@ async def get_usage(
     Token counts are a tiktoken (o200k) ESTIMATE of tool-result context
     injection only (see the module docstring's honesty caveats).
     """
-    settings = getattr(request.app.state, "settings", None) or get_settings()
+    settings = get_broker_state(request).settings
 
     # Authz check must run before `subject` is used for anything below --
     # do not reorder this past the effective_subject assignment, or a
@@ -95,9 +92,7 @@ async def get_usage(
         )
     effective_subject = subject if subject is not None else principal.subject
 
-    # None only outside the lifespan (unit tests hitting the router bare) --
-    # degrade to an empty window rather than 500ing a self-service page.
-    store: UsageStore | None = getattr(request.app.state, "usage_store", None)
+    store = get_broker_state(request).usage_store
     return await build_usage_summary(store, effective_subject, days)
 
 
@@ -130,12 +125,9 @@ async def get_usage_subjects(
     Backs the portal's admin usage-view dropdown. Only ever lists people
     with broker activity -- never a full Keycloak user directory.
     """
-    store: UsageStore | None = getattr(request.app.state, "usage_store", None)
-    if store is None:
-        return UsageSubjectsResponse(subjects=[])
-
-    subjects = await store.list_subjects(days)
-    principal_cache = getattr(request.app.state, "principal_cache", None)
+    state = get_broker_state(request)
+    subjects = await state.usage_store.list_subjects(days)
+    principal_cache = state.principal_cache
 
     resolved: list[UsageSubject] = []
     for subject in subjects:

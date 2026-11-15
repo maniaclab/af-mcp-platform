@@ -454,7 +454,7 @@ def test_lifespan_boots_with_vault_backend_on_successful_trial_auth(
 
     app = _fresh_app()
     with TestClient(app):
-        assert isinstance(app.state.oauth21_token_store, VaultTokenStore)
+        assert isinstance(app.state.broker.oauth21_token_store, VaultTokenStore)
     assert len(fake.login_calls) == 1
 
 

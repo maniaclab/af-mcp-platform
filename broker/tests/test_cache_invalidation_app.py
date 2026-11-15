@@ -36,7 +36,7 @@ _PUBSUB_TIMEOUT_SECONDS = 5
 
 
 def _first_provider() -> _ObservableProxyProvider:
-    return broker_app.state.backend_providers.values()[0]
+    return broker_app.state.broker.mcp_aggregator.backend_providers.values()[0]
 
 
 async def _await_app_subscribed(shared_state_url: str) -> None:

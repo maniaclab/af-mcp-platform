@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import structlog.testing
+from broker_state_helpers import set_broker_state
 from cryptography.fernet import Fernet
 from x509_fakes import seed_x509_link, seed_x509_proxy
 
@@ -39,7 +40,7 @@ def _register_condor_service(client: TestClient) -> None:
     required permission from the registry, not the request body -- issue
     #60) has a real backend to look up."""
 
-    client.app.state.service_registry.register(
+    client.app.state.broker.service_registry.register(
         ServiceSpec(
             name="condor-mcp",
             prefix="condor",
@@ -147,7 +148,7 @@ def test_authorize_ignores_client_supplied_permission(
 
 def _register_dict_form_condor_service(client: TestClient) -> None:
 
-    client.app.state.service_registry.register(
+    client.app.state.broker.service_registry.register(
         ServiceSpec(
             name="condor_service",
             prefix="condor",
@@ -196,7 +197,7 @@ def test_catalog_reflects_permissions(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    seed_x509_link(client.app.state.x509_provider.vault_store)
+    seed_x509_link(client.app.state.broker.x509_provider.vault_store)
     resp = client.get("/v1/catalog", headers=_AUTH)
     assert resp.status_code == 200, resp.text
     servers = {s["name"]: s for s in resp.json()["servers"]}
@@ -440,7 +441,7 @@ def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
-    app.state.service_registry.register(
+    app.state.broker.service_registry.register(
         ServiceSpec(
             name="orphan",
             prefix="orphan",
@@ -471,7 +472,9 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unavailable", "sub-abc")
+    app.state.broker.service_registry.record_list_failure(
+        "rucio", "unavailable", "sub-abc"
+    )
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -497,7 +500,9 @@ def test_catalog_status_unauthorized_failure_prompts_relink(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-abc")
+    app.state.broker.service_registry.record_list_failure(
+        "rucio", "unauthorized", "sub-abc"
+    )
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"])
@@ -523,7 +528,9 @@ def test_catalog_status_ignores_another_subjects_unauthorized_failure(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-a")
+    app.state.broker.service_registry.record_list_failure(
+        "rucio", "unauthorized", "sub-a"
+    )
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"], subject="sub-b")
@@ -549,7 +556,9 @@ def test_catalog_status_shows_service_wide_unavailable_to_every_subject(
         return True
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _linked)
-    app.state.service_registry.record_list_failure("rucio", "unavailable", "sub-a")
+    app.state.broker.service_registry.record_list_failure(
+        "rucio", "unavailable", "sub-a"
+    )
 
     client, state = app_client
     for subject in ("sub-a", "sub-b"):
@@ -566,7 +575,7 @@ def test_catalog_status_shows_service_wide_unavailable_for_auth_type_none(
     """A backend needing no credential is still "unavailable" for every
     caller once a service-wide tools/list failure is on record."""
 
-    app.state.service_registry.register(
+    app.state.broker.service_registry.register(
         ServiceSpec(
             name="downopen",
             prefix="downopen",
@@ -576,7 +585,9 @@ def test_catalog_status_shows_service_wide_unavailable_for_auth_type_none(
             auth_type="none",
         )
     )
-    app.state.service_registry.record_list_failure("downopen", "unavailable", "sub-a")
+    app.state.broker.service_registry.record_list_failure(
+        "downopen", "unavailable", "sub-a"
+    )
 
     client, state = app_client
     for subject in ("sub-a", "sub-b"):
@@ -598,7 +609,7 @@ def test_catalog_status_ignores_caller_specific_failure_for_auth_type_none(
     """Caller-specific listing failures are about a per-user credential, which
     an auth_type "none" backend has none of, so they never change its status."""
 
-    app.state.service_registry.register(
+    app.state.broker.service_registry.register(
         ServiceSpec(
             name="openbackend",
             prefix="openbackend",
@@ -608,7 +619,9 @@ def test_catalog_status_ignores_caller_specific_failure_for_auth_type_none(
             auth_type="none",
         )
     )
-    app.state.service_registry.record_list_failure("openbackend", reason, "sub-a")
+    app.state.broker.service_registry.record_list_failure(
+        "openbackend", reason, "sub-a"
+    )
 
     client, state = app_client
     state["principal"] = make_principal(groups=[], subject="sub-a")
@@ -633,8 +646,12 @@ def test_catalog_unlinked_caller_is_told_to_link_not_that_a_credential_was_rejec
         return linked["value"]
 
     monkeypatch.setattr(OIDCProvider, "is_linked", _is_linked)
-    app.state.service_registry.record_list_failure("rucio", "not_linked", "sub-a")
-    app.state.service_registry.record_list_failure("rucio", "unauthorized", "sub-a")
+    app.state.broker.service_registry.record_list_failure(
+        "rucio", "not_linked", "sub-a"
+    )
+    app.state.broker.service_registry.record_list_failure(
+        "rucio", "unauthorized", "sub-a"
+    )
 
     client, state = app_client
     state["principal"] = make_principal(groups=["atlas"], subject="sub-a")
@@ -675,7 +692,7 @@ def test_catalog_status_reflects_recorded_tool_routing(
     with tools advertised but none routable must not read "available"."""
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    client.app.state.service_registry.record_tool_routing(
+    client.app.state.broker.service_registry.record_tool_routing(
         ToolRouting(service="docs", advertised=advertised, unroutable=unroutable)
     )
     resp = client.get("/v1/catalog", headers=_AUTH)
@@ -715,7 +732,7 @@ def test_catalog_status_required_permission_forms(
 
     client, state = app_client
     state["principal"] = make_principal(groups=groups)
-    app.state.service_registry.register(
+    app.state.broker.service_registry.register(
         ServiceSpec(
             name="capform",
             prefix="capform",
@@ -741,7 +758,7 @@ def test_catalog_status_never_leaks_urls_or_upstream_errors(
 
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    app.state.service_registry.register(
+    app.state.broker.service_registry.register(
         ServiceSpec(
             name="orphan",
             prefix="orphan",
@@ -786,7 +803,7 @@ def test_catalog_action_type_reflects_target_action_type_overrides(
 
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["atlas"])
-        app.state.service_registry.register(
+        app.state.broker.service_registry.register(
             ServiceSpec(
                 name="logbook",
                 prefix="logbook",
@@ -855,7 +872,7 @@ def test_credential_x509_needs_unlock_409(app_client: tuple[TestClient, dict]) -
     # (a remember=false link) makes is_linked() report True, but nothing can
     # renew it: with an empty cache and no passphrase the provider raises
     # NeedsUnlockError, which the endpoint maps to 409 + unlock_endpoint.
-    seed_x509_proxy(client.app.state.x509_provider.vault_store, remaining=100.0)
+    seed_x509_proxy(client.app.state.broker.x509_provider.vault_store, remaining=100.0)
     resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
@@ -1004,7 +1021,7 @@ def test_catalog_docs_url_is_returned_for_every_status(
 ) -> None:
     client, state = app_client
     state["principal"] = make_principal(groups=groups)
-    client.app.state.service_registry.get(
+    client.app.state.broker.service_registry.get(
         "rucio"
     ).docs_url = "https://docs.example.org/rucio"
     servers = _catalog_by_name(client)
@@ -1023,14 +1040,17 @@ def test_catalog_dict_form_granting_groups_union_across_tools(
 
     client, state = app_client
     state["principal"] = make_principal(groups=[])
-    client.app.state.entitlement_policy = EntitlementPolicy(
-        group_permissions={
-            "ops": ["manage_jobs"],
-            "analysts": ["read_data"],
-            "__authenticated__": [],
-        }
+    set_broker_state(
+        client.app,
+        entitlement_policy=EntitlementPolicy(
+            group_permissions={
+                "ops": ["manage_jobs"],
+                "analysts": ["read_data"],
+                "__authenticated__": [],
+            }
+        ),
     )
-    client.app.state.service_registry.register(
+    client.app.state.broker.service_registry.register(
         ServiceSpec(
             name="mixed",
             prefix="mixed",

@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from af_mcp_broker.config import Settings
+from af_mcp_broker.broker_state import get_broker_state
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
 
 # Not mounted under /v1 — CIMD is served at the well-known root path required
 # by draft-ietf-oauth-client-id-metadata-document, not the broker's own API
 # boundary. Registered directly on the app in app.py.
 router = APIRouter(tags=["wellknown"])
-
-
-def _require_settings(request: Request) -> Settings:
-    return cast("Settings", getattr(request.app.state, "settings", None)) or Settings()
 
 
 def _require_public_origin(settings: Settings) -> str:
@@ -52,9 +51,7 @@ async def get_cimd(request: Request) -> CimdResponse:
     it must equal the exact URL the client used to fetch this document, so it
     is read from the incoming request rather than hardcoded.
     """
-    settings: Settings = (
-        cast("Settings", getattr(request.app.state, "settings", None)) or Settings()
-    )
+    settings = get_broker_state(request).settings
 
     public_origin = settings.broker_public_origin.rstrip("/")
     # A provider registered under its own client_id never identifies the
@@ -112,7 +109,7 @@ class AuthorizationServerMetadataResponse(BaseModel):
 
 
 def _protected_resource_metadata(request: Request) -> ProtectedResourceMetadataResponse:
-    settings = _require_settings(request)
+    settings = get_broker_state(request).settings
     authorization_server = _require_public_origin(settings)
     # ``resource`` must self-identify the host this particular request
     # arrived on, not the broker's fixed OAuth-canonical origin -- /mcp is
@@ -172,7 +169,7 @@ async def get_authorization_server_metadata(
     an MCP client must be able to fetch this before it has any credential at
     all.
     """
-    settings = _require_settings(request)
+    settings = get_broker_state(request).settings
     origin = _require_public_origin(settings)
     return AuthorizationServerMetadataResponse(
         issuer=origin,
@@ -217,7 +214,7 @@ async def get_broker_jwks(request: Request) -> JwksResponse:
     signing key is configured, the same degraded shape as the discovery
     metadata above.
     """
-    issuer = getattr(request.app.state, "broker_token_issuer", None)
+    issuer = get_broker_state(request).broker_token_issuer
     if issuer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -298,7 +298,7 @@ def test_oauth21_provider_linked_reflects_token_store_state(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         cred = StoredOAuthCredential(
             alias=ALIAS,
             subject=subject,
@@ -329,7 +329,7 @@ def test_oauth21_provider_rejected_credential_is_unlinked_and_flagged_rejected(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         cred = StoredOAuthCredential(
             alias=ALIAS,
             subject=subject,
@@ -377,7 +377,7 @@ def test_providers_order_matches_identity_providers_config_order(
 ) -> None:
     """The response's providers list must reflect identity_providers' config
     order, not grouped by type — Python dicts preserve insertion order, and
-    app.py's lifespan populates app.state.identity_providers by iterating
+    app.py's lifespan populates app.state.broker.identity_providers by iterating
     identity_providers in order, so this is structural rather than an
     explicit sort."""
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
@@ -635,7 +635,7 @@ def test_x509_linked_reflects_vault_link_in_service_mode(
     storing a link must flip the flag."""
 
     client, state = app_client
-    store = client.app.state.x509_provider.vault_store
+    store = client.app.state.broker.x509_provider.vault_store
 
     resp = client.get("/v1/identities", headers=_AUTH)
     assert resp.status_code == 200, resp.text
@@ -675,7 +675,7 @@ def test_x509_proxy_expires_at_reflects_cached_proxy(
     client, state = app_client
     subject = state["principal"].subject
     not_after = _seed_service_record(
-        client.app.state.x509_provider.vault_store,
+        client.app.state.broker.x509_provider.vault_store,
         subject,
         passphrase="hunter2",
         proxy_remaining=3600.0,
@@ -704,7 +704,7 @@ def test_x509_proxy_expires_at_ignores_a_stale_in_memory_meta(
         not_after=time.time() + 3600.0,
     )
     asyncio.run(
-        client.app.state.credential_cache.put(
+        client.app.state.broker.credential_cache.put(
             subject, "ami", {"proxy_handle": subject}, proxy_meta=meta
         )
     )
@@ -733,7 +733,7 @@ def test_non_x509_entries_have_null_proxy_expires_at(
 
 def _x509_store(client: TestClient) -> FakeX509Store:
     """The in-memory x509 link/proxy store conftest wires into the app."""
-    store = client.app.state.x509_provider.vault_store
+    store = client.app.state.broker.x509_provider.vault_store
     assert isinstance(store, FakeX509Store)
     return store
 
@@ -898,7 +898,7 @@ def test_unlink_known_oauth21_alias_returns_204_and_deletes_stored_token(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         cred = StoredOAuthCredential(
             alias=ALIAS,
             subject=subject,
@@ -930,7 +930,7 @@ def test_unlink_known_oauth21_alias_purges_credential_cache(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        cache = broker_app.state.credential_cache
+        cache = broker_app.state.broker.credential_cache
         asyncio.run(cache.put(subject, ALIAS, "fake-cached-credential"))
         assert asyncio.run(cache.get(subject, ALIAS)) is not None
 
@@ -1002,7 +1002,7 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
 
     with app_client_factory() as (client, state):
         subject = state["principal"].subject
-        store = broker_app.state.oauth21_token_store
+        store = broker_app.state.broker.oauth21_token_store
         cred = StoredOAuthCredential(
             alias=ALIAS,
             subject=subject,
