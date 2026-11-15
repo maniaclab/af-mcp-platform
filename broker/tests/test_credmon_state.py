@@ -1,8 +1,8 @@
-"""Tests for ``InMemoryCredmonSyncState`` -- the no-Vault (local dev) lease/status store."""
+"""Tests for ``InMemoryCredmonSyncState`` -- the no-Vault test lease/status store."""
 
 from __future__ import annotations
 
-from af_mcp_broker.credmon.state import InMemoryCredmonSyncState
+from conftest import InMemoryCredmonSyncState
 
 
 async def test_lease_refused_to_other_holder_until_expiry() -> None:

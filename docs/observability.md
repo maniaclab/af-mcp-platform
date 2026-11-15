@@ -33,11 +33,10 @@ record (and the usage store accumulates them):
 
 Be clear about what the token number is: an estimate of what each tool
 result would inject into an LLM client's context — **not**
-provider-reported usage, and **not** the user's full LLM spend (their
+provider-reported usage, and **not** the user's full token volume (their
 prompts, the model's own output, and every non-tool token are invisible to
-the broker). Dollars are never stored — only tokens — so cost is derived
-at read time from a price table (see the next section) and repricing is a
-config change, not a migration.
+the broker). The broker reports token counts only and attaches no monetary
+figure to them.
 
 A record whose measurement failed (or that arrived via the queue-overflow
 inline fallback) is still written and still counts as a call — its
@@ -66,10 +65,6 @@ Query parameters:
 
 - `days` — trailing window in UTC calendar days, today inclusive
   (`1..365`, default `30`; `days=1` is just today).
-- `model` — the [tokencost](https://github.com/AgentOps-AI/tokencost)
-  price-table key whose *input* rate turns token estimates into
-  `estimated_cost_usd`. Defaults to the broker's `cost_reference_model`
-  (currently `claude-sonnet-4-20250514`); an unknown key is a 422.
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
@@ -85,14 +80,12 @@ Trimmed response:
 {
   "subject": "f1b0…",
   "window_days": 7,
-  "cost_model": "claude-sonnet-4-20250514",
   "totals": {
     "calls": 42,
     "errors": 1,
     "duration_ms": 91834.2,
     "result_bytes": 1048576,
-    "result_tokens_est": 262144,
-    "estimated_cost_usd": 0.786432
+    "result_tokens_est": 262144
   },
   "by_service": [
     {
@@ -100,8 +93,7 @@ Trimmed response:
       "calls": 30,
       "errors": 0,
       "result_bytes": 917504,
-      "result_tokens_est": 229376,
-      "estimated_cost_usd": 0.688128
+      "result_tokens_est": 229376
     }
   ],
   "by_day": [
@@ -113,14 +105,13 @@ Trimmed response:
 **Honesty caveats** (verbatim from the endpoint's own description): token
 counts are a tiktoken (o200k) ESTIMATE of the tool-result text injected
 into the LLM client's context — not provider-reported usage, and not the
-user's full LLM spend — and `estimated_cost_usd` is that estimate priced
-at the chosen model's input rate.
+user's full token volume.
 
 An MCP client doesn't need to leave the MCP surface for this: the
 broker-native `af_usage` method (alongside `af_whoami` and the builtin
 `gateway_service` service's other methods) returns the same payload — totals,
 `by_service`, `by_day` — for the calling principal, with the same
-`days`/`model` parameters and the same honesty caveats in its tool
+`days` parameter and the same honesty caveats in its tool
 description, so the LLM can relay them.
 
 `af_*` calls are themselves audited and metered like every other call

@@ -167,6 +167,7 @@ ServiceX token" link, optional).
       "enables" (.enables | default "")
       "authorization_endpoint" .authorizationEndpoint
       "token_endpoint" .tokenEndpoint
+      "revocation_endpoint" (.revocationEndpoint | default nil)
       "issuer" .issuer
       "scope" (.scope | default "openid profile email")
       "client_id" (.clientId | default nil)
@@ -285,7 +286,7 @@ _validate_vault_config: a service-mode x509 entry (type "x509" with a
 non-empty serviceUrl) implies the x509 Vault store, and krb5-token/
 servicex-token entries always imply their own Vault store (no legacy/
 no-Vault mode for either, unlike x509). Used to gate VAULT_ADDR/etc.
-rendering below alongside the three backend checks.
+rendering below alongside the backend checks (af-mcp-platform.needsVault).
 */}}
 {{- define "af-mcp-platform.identityProvidersNeedVault" -}}
 {{- $needs := false -}}
@@ -297,6 +298,24 @@ rendering below alongside the three backend checks.
 {{- $needs = true -}}
 {{- end -}}
 {{- if eq .type "servicex-token" -}}
+{{- $needs = true -}}
+{{- end -}}
+{{- end -}}
+{{- $needs -}}
+{{- end }}
+
+{{/*
+"true" when any Vault-capable store is selected, so the shared Vault
+connection env (VAULT_*) must be rendered. Mirrors config.py's
+_validate_vault_config: every `backend: vault` selector in the list below,
+plus the identityProviders entries that imply a Vault store (see
+af-mcp-platform.identityProvidersNeedVault). A new Vault-capable backend
+belongs in that list.
+*/}}
+{{- define "af-mcp-platform.needsVault" -}}
+{{- $needs := eq (include "af-mcp-platform.identityProvidersNeedVault" .) "true" -}}
+{{- range list .Values.broker.oauth21.tokenStore.backend .Values.broker.tokenRegistry.backend .Values.broker.principalCache.backend .Values.broker.maintenanceMode.backend -}}
+{{- if eq . "vault" -}}
 {{- $needs = true -}}
 {{- end -}}
 {{- end -}}
@@ -376,6 +395,12 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 {{- else if .Values.broker.sharedState.url }}
 - name: SHARED_STATE_URL
   value: {{ .Values.broker.sharedState.url | quote }}
+{{- end }}
+{{- if include "af-mcp-platform.sharedState.configured" . }}
+# Namespace of every key and pub/sub channel on the store; defaults to the
+# release name so releases sharing one store never see each other's state.
+- name: SHARED_STATE_KEY_PREFIX
+  value: {{ .Values.broker.sharedState.keyPrefix | default (printf "%s:" .Release.Name) | quote }}
 {{- end }}
 {{- if .Values.broker.sharedState.allowPerReplicaState }}
 - name: ALLOW_PER_REPLICA_STATE
@@ -583,20 +608,10 @@ Vault connection settings are shared by all Vault-backed stores above (one
 VaultKV instance, per config.py/app.py) — rendered once whenever any of
 them needs it, not duplicated per-backend. A service-mode x509 or
 krb5-token identityProviders entry also implies a Vault-backed store (see
-af-mcp-platform.identityProvidersNeedVault above) even when none of the
-three backend settings below is "vault".
-
-KNOWN GAP (not fixed here, out of scope for this branch): config.py's
-_validate_vault_config also requires Vault when maintenance_mode_backend
-is "vault", but this gate does not check .Values.broker.maintenanceMode.
-backend. Not an active regression today — maintenanceMode.backend
-defaults to something other than "vault" — but a future maintenanceMode:
-{backend: vault} deployment would render cleanly here with VAULT_ADDR
-missing and fail at broker startup instead. Needs a fourth `eq` clause
-below (or a helper alongside identityProvidersNeedVault) when that gets
-addressed.
+af-mcp-platform.identityProvidersNeedVault above) even when no backend
+selector is "vault". The gate is af-mcp-platform.needsVault.
 */}}
-{{- if or (eq .Values.broker.oauth21.tokenStore.backend "vault") (eq .Values.broker.tokenRegistry.backend "vault") (eq .Values.broker.principalCache.backend "vault") (eq (include "af-mcp-platform.identityProvidersNeedVault" .) "true") }}
+{{- if eq (include "af-mcp-platform.needsVault" .) "true" }}
 {{- if .Values.broker.oauth21.tokenStore.vault.addr }}
 - name: VAULT_ADDR
   value: {{ .Values.broker.oauth21.tokenStore.vault.addr | quote }}
@@ -619,6 +634,17 @@ addressed.
   value: {{ .Values.broker.oauth21.tokenStore.vault.kvPathPrefix | quote }}
 {{- end }}
 {{- end }}
+# KV path prefixes of the stores that have no backend selector (they follow
+# the identityProviders entries and credmon). Rendered with the connection so
+# two releases sharing one KV mount can be told apart.
+- name: X509_KV_PATH_PREFIX
+  value: {{ .Values.broker.vault.x509KvPathPrefix | quote }}
+- name: KRB5_KV_PATH_PREFIX
+  value: {{ .Values.broker.vault.krb5KvPathPrefix | quote }}
+- name: SERVICEX_KV_PATH_PREFIX
+  value: {{ .Values.broker.vault.servicexKvPathPrefix | quote }}
+- name: CREDMON_STATE_KV_PATH_PREFIX
+  value: {{ .Values.broker.vault.credmonKvPathPrefix | quote }}
 {{- end }}
 {{- if .Values.broker.existingServiceTokenSecret }}
 - name: AF_SERVICE_TOKEN

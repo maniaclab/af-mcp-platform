@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from af_mcp_broker.shared_state import RedisSharedState, SharedStateUnavailableError
+from af_mcp_broker.mcp.cache_invalidation import LIST_CACHE_INVALIDATION_CHANNEL
+from af_mcp_broker.shared_state import (
+    RedisSharedState,
+    SharedStateUnavailableError,
+    build_shared_state,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -147,6 +152,22 @@ async def test_subscriber_only_sees_its_own_channel_and_prefix(
     finally:
         await a.close()
         await b.close()
+
+
+async def test_releases_sharing_a_store_do_not_see_each_others_invalidations(
+    shared_state_url: str,
+) -> None:
+    """Pub/sub ignores the redis database number, so only the prefix separates two releases on one store."""
+    release_a = build_shared_state(shared_state_url, key_prefix="release-a:")
+    release_b = build_shared_state(shared_state_url, key_prefix="release-b:")
+    try:
+        async with release_a.subscribe(LIST_CACHE_INVALIDATION_CHANNEL) as messages:
+            await release_b.publish(LIST_CACHE_INVALIDATION_CHANNEL, "from-b")
+            await release_a.publish(LIST_CACHE_INVALIDATION_CHANNEL, "from-a")
+            assert await asyncio.wait_for(anext(messages), timeout=5) == "from-a"
+    finally:
+        await release_a.close()
+        await release_b.close()
 
 
 async def test_idle_subscription_outlives_the_socket_timeout(

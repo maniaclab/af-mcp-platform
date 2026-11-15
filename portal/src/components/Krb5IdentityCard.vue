@@ -60,6 +60,7 @@
  * transient base64 string built for the one POST body — also never
  * persisted client-side.
  */
+import { errorMessage } from '../lib/apiError';
 import { LINK_ACTION_LABEL } from '../lib/identityLinkLabel';
 import { Ticket } from '@lucide/vue';
 import { computed, nextTick, ref } from 'vue';
@@ -342,7 +343,7 @@ async function handleForget() {
     result.value = null;
     emit('revoked');
   } catch (err) {
-    forgetError.value = err instanceof Error ? err.message : 'Forget failed. Try again.';
+    forgetError.value = errorMessage(err, 'Forget failed. Try again.');
   } finally {
     busy.value = false;
   }
