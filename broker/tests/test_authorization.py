@@ -339,7 +339,7 @@ def test_startup_refuses_to_start_when_group_permissions_empty(
     every user). This is Kubernetes: a Deployment rollout with a failing new
     pod leaves the previous ReplicaSet serving, so refusing to start turns
     the misconfiguration into a visible rollout failure with zero outage,
-    naming both the affected backend and the unreachable permission.
+    naming the policy file and the setting that points at it.
     """
     monkeypatch.setenv(
         "POLICY_FILE",
@@ -350,11 +350,9 @@ def test_startup_refuses_to_start_when_group_permissions_empty(
         with app_client_factory():
             pass
 
-    # SHIPPED_SERVICES' "rucio" entry requires "read_data" (!= "__none__"),
-    # so both must be named in the failure.
     message = str(exc_info.value)
-    assert "rucio" in message, message
-    assert "read_data" in message, message
+    assert "POLICY_FILE" in message, message
+    assert "grants no permissions" in message, message
 
 
 def test_startup_quiet_when_permissions_are_all_reachable(
@@ -447,15 +445,14 @@ def test_startup_refuses_to_start_for_unreachable_permission_in_dict_form(
     assert "manage_jobs" not in message, message
 
 
-def test_startup_stays_quiet_with_empty_group_permissions_and_no_gated_backends(
+def test_startup_refuses_empty_group_permissions_even_with_no_gated_backends(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
 ) -> None:
     """Backends that omit required_permission (with a credential-layer gate)
-    or set it to __none__ need no group_permissions entry at all -- an
-    empty group_permissions must not be flagged as unreachable for them,
-    and the broker must still start cleanly."""
+    or set it to __none__ need no group_permissions entry, but an empty
+    policy is still a boot error: it is never a deliberate configuration."""
     monkeypatch.setenv(
         "POLICY_FILE",
         _write_policy(tmp_path, "group_permissions: {}\ntarget_action_types: {}\n"),
@@ -477,10 +474,9 @@ def test_startup_stays_quiet_with_empty_group_permissions_and_no_gated_backends(
         ),
     )
 
-    with app_client_factory() as (client, _):
-        resp = client.get("/v1/healthz")
-
-    assert resp.status_code == 200, resp.text
+    with pytest.raises(RuntimeError, match="grants no permissions"):  # noqa: SIM117
+        with app_client_factory():
+            pass
 
 
 def test_startup_refuses_to_start_for_unknown_permission(

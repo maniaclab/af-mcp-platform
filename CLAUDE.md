@@ -58,7 +58,7 @@ Four subsystems, each a package under `broker/src/af_mcp_broker/`:
 3. **Credentials** (`credentials/`) — provider classes (oidc, oauth21, x509, service) behind `CredentialProvider`; minted creds cached in-process by `(subject, target)` in `CredentialCache` with expiry sweeping. POSIX identity is optional on `Principal`; backends that need it (x509, condor, `requires_posix` identity tokens) take a `PosixPrincipal`, built once by `PosixPrincipal.from_principal`. Every entry that needs broker-signed identity tokens (x509 included) requires the signing key at boot; x509 also requires Vault.
 4. **Audit** (`audit/`) — structlog JSON line per tool invocation + Prometheus metrics served on a dedicated port (9090, `METRICS_PORT`); the API port has no `/metrics`.
 
-Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into the typed `BrokerState` on `app.state.broker` (see `app.py` lifespan, `broker_state.py`); missing files degrade gracefully for local dev. Settings are pydantic-settings env vars in `config.py`.
+Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults under `/etc/af-mcp/`) are loaded at startup into the typed `BrokerState` on `app.state.broker` (see `app.py` lifespan, `broker_state.py`); a missing or empty `POLICY_FILE` (no group grants any permission) is a boot error, including under the dev bypass (the pixi `broker` feature points it at the dev policy in `authorization/policy.yaml`); a missing `SERVICES_FILE` degrades to an empty registry with a warning. Settings are pydantic-settings env vars in `config.py`.
 
 ### Adding a service requires no code
 

@@ -2229,9 +2229,11 @@ all.
 users to them. Group names are entirely up to you — the chart ships no
 site-specific default, so pick names that match your own Keycloak realm
 (see the worked example below). The broker's own dev-only fallback policy
-(`broker/src/af_mcp_broker/authorization/policy.yaml`, used when no
-`POLICY_FILE` is configured) mirrors the ATLAS AF's own group names:
-`atlas`, `cms`, `dune`, `escape`, `af-admins`.
+(`broker/src/af_mcp_broker/authorization/policy.yaml`, which the pixi
+`broker` environment points `POLICY_FILE` at) mirrors the ATLAS AF's own group names:
+`atlas`, `cms`, `dune`, `escape`, `af-admins`. The broker refuses to boot
+when `POLICY_FILE` is missing, unreadable, or no group grants any
+permission.
 
 If your realm still has a legacy Group Membership mapper on the
 `mcp-gateway` client scope, it's inert now — the broker never reads the

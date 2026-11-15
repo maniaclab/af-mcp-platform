@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
+import yaml  # type: ignore[import-untyped]
 
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.service_registry import ServiceRegistry
@@ -43,18 +44,34 @@ class ServiceCatalog:
     services_loaded: bool
 
 
-def build_service_catalog(settings: Settings) -> ServiceCatalog:
-    """Load the policy and service registry and refuse to boot on an undeclared or ungranted service permission.
+def _load_nonempty_policy(path: str) -> EntitlementPolicy:
+    """Load the policy at *path*, refusing one that is missing, unreadable or grants nothing.
 
-    Missing files degrade gracefully for local dev (an empty policy, an empty
-    registry), with a warning each.
+    A broker whose policy grants nothing authenticates users and then denies
+    every service, so it must never become ready.
+    """
+    try:
+        policy = load_policy(path)
+    except (OSError, yaml.YAMLError) as exc:
+        msg = f"cannot read the entitlement policy at POLICY_FILE={path!r}: {exc}"
+        raise RuntimeError(msg) from exc
+    if not any(policy.group_permissions.values()):
+        msg = (
+            f"the entitlement policy at POLICY_FILE={path!r} grants no permissions "
+            "(group_permissions has no group with a permission)"
+        )
+        raise RuntimeError(msg)
+    return policy
+
+
+def build_service_catalog(settings: Settings) -> ServiceCatalog:
+    """Load the policy and service registry and refuse to boot on a missing or empty policy or an undeclared or ungranted service permission.
+
+    A missing services file degrades gracefully (an empty registry), with a
+    warning.
     """
     # --- Authorization: the authorization/ engine matches the shipped policy.yaml.
-    try:
-        entitlement_policy = load_policy(settings.policy_file)
-    except FileNotFoundError:
-        logger.warning("policy_file_not_found", path=settings.policy_file)
-        entitlement_policy = EntitlementPolicy()
+    entitlement_policy = _load_nonempty_policy(settings.policy_file)
     # Observability for issue #125: the effective group -> permission mapping
     # is otherwise implicit (chart default vs. operator override vs. dev-only
     # fallback all merge into the same in-memory EntitlementPolicy), so an

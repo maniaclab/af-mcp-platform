@@ -1,4 +1,4 @@
-# Local-dev fallback policy, dev-only -- not shipped by the Helm chart (see
+# Local-dev policy, dev-only -- not shipped by the Helm chart (see
 # charts/af-mcp-platform/templates/configmap-policy.yaml, which ships no
 # site-specific group_permissions default). Group names are site-specific;
 # these ATLAS AF ones only make sense against the AF's own Keycloak realm.

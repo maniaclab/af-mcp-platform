@@ -29,6 +29,14 @@ pixi run broker
 
 Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
 
+> The broker also refuses to boot when `POLICY_FILE` is missing, unreadable
+> or grants no permissions, with or without the bypass below. The pixi
+> `broker` feature sets `POLICY_FILE` to the dev-only policy at
+> `broker/src/af_mcp_broker/authorization/policy.yaml` (ATLAS AF group
+> names), so `pixi run broker` works out of the box. To use your own, export
+> `POLICY_FILE=/path/to/policy.yaml` first; it needs at least one group that
+> maps to a non-empty permission list.
+
 > Plain `pixi run broker` refuses to start unless a Keycloak admin service
 > account is configured: every credential type (JWT included, not just
 > PATs) resolves its groups and POSIX identity from that account, so a
@@ -66,9 +74,8 @@ pixi run -e bypass broker
 Equivalent long form, for one-off overrides:
 
 ```bash
-# the built-in policy grants read_data and friends to atlas; pick a
-# different group here if your local POLICY_FILE overlay uses a different
-# mapping
+# the dev policy (`POLICY_FILE`) grants read_data and friends to atlas; pick a
+# different group here if your own POLICY_FILE uses a different mapping
 export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["atlas"]}'
 export OIDC_ISSUER=http://localhost:8081/realms/dev
 pixi run broker
