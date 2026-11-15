@@ -617,6 +617,20 @@ enabled or disabled, the reason given) and logs `maintenance_mode_changed`
 at `info`. A toggle that loses the compare-and-set race changed nothing and
 writes neither.
 
+## HTTP request lines
+
+Every request except the kubelet probes (`/v1/healthz`, `/v1/readyz`) logs
+exactly one `http.request.received` and one `http.request.finished` line,
+both under one `correlation_id`. A `/mcp` request is logged by
+`AsgiAuthMiddleware` and a `/v1` request by the FastAPI request middleware;
+neither logs the other's requests.
+
+| Field | On | Meaning |
+|---|---|---|
+| `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
+| `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`null` when the request raised or the client disconnected first), wall time since `received`, and the exception class if one escaped. |
+| `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
+
 ## Correlation ids on calls to token services
 
 Every `/v1` request binds a `correlation_id` into the broker's log lines.
