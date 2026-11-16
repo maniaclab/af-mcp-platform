@@ -32,7 +32,7 @@ group_permissions:
 
 
 def _backend() -> FastMCP:
-    mcp = FastMCP(name="rate-limit-e2e-backend")
+    mcp = FastMCP(name="rate-limit-in-process-backend")
 
     @mcp.tool
     def echo(message: str) -> str:

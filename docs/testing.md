@@ -13,9 +13,11 @@ carries a marker by hand and `-m` selects a whole directory's worth.
 
 A test that needs the booted app is an integration test even when every
 backend behind it is a fake: the booted app is the unit under test, and the
-tests that cover it are the ones that find wiring mistakes. When a file holds
-both kinds, the two halves live in the same-named file in each directory (or,
-where the name already says which tier it is, a sibling name).
+tests that cover it are the ones that find wiring mistakes. Where one subject
+has both kinds of test, the module sits in the tier most of its tests belong to
+and the rest go in a sibling named `<module>_unit.py` or
+`<module>_integration.py` in the other directory; the sibling imports what the
+two share from the module.
 
 ## Running a tier
 

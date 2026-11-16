@@ -21,16 +21,16 @@ import pytest
 from broker_state_helpers import authorization_middleware
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.tools.base import ToolResult
-from opentelemetry.trace import SpanKind, StatusCode
-from test_mcp_middleware_authorization import (
+from mcp_middleware_authorization_support import (
     _call_tool_context,
     _CallNextRecorder,
     _FakeFastMCPContext,
     _FakeMiddlewareContext,
-    captured_audits,  # noqa: F401  -- fixture re-export
-    policy,  # noqa: F401  -- fixture re-export
-    registry,  # noqa: F401  -- fixture re-export
+    captured_audits_fixture,  # noqa: F401  -- fixture import
+    policy_fixture,  # noqa: F401  -- fixture import
+    registry_fixture,  # noqa: F401  -- fixture import
 )
+from opentelemetry.trace import SpanKind, StatusCode
 from test_tracing import (
     _TRACE_ID_HEX,
     _TRACEPARENT,

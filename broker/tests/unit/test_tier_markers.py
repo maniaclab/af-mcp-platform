@@ -29,5 +29,17 @@ def test_each_collected_test_carries_exactly_its_directory_tier(
     assert mismatched == {}
 
 
+def test_no_test_module_sits_outside_a_tier_directory(
+    request: pytest.FixtureRequest,
+) -> None:
+    outside = {
+        item.nodeid
+        for item in request.session.items
+        if item.path.is_relative_to(_TESTS_DIR)
+        and item.path.relative_to(_TESTS_DIR).parts[0] not in _TIERS
+    }
+    assert outside == set()
+
+
 def test_this_module_is_marked_unit(request: pytest.FixtureRequest) -> None:
     assert _tier_markers(request.node) == {"unit"}
