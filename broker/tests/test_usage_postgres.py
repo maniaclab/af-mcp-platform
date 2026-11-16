@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 def _record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
-        "principal_sub": "sub-abc",
+        "subject": "sub-abc",
         "principal_uid": 1000,
         "permission": "read_data",
         "target": "rucio",
@@ -243,7 +243,7 @@ async def test_query_excludes_records_outside_the_trailing_window(
 
 async def test_query_is_scoped_to_the_subject(store: PostgresUsageStore) -> None:
     await store.record(_record(audit_id="mine"))
-    await store.record(_record(audit_id="theirs", principal_sub="sub-other"))
+    await store.record(_record(audit_id="theirs", subject="sub-other"))
 
     aggs = await store.query("sub-abc", days=30)
     assert sum(a.calls for a in aggs) == 1
@@ -252,9 +252,9 @@ async def test_query_is_scoped_to_the_subject(store: PostgresUsageStore) -> None
 async def test_list_subjects_returns_distinct_subjects_in_window(
     store: PostgresUsageStore,
 ) -> None:
-    await store.record(_record(principal_sub="alice"))
-    await store.record(_record(principal_sub="bob", audit_id="audit-2"))
-    await store.record(_record(principal_sub="alice", audit_id="audit-3"))
+    await store.record(_record(subject="alice"))
+    await store.record(_record(subject="bob", audit_id="audit-2"))
+    await store.record(_record(subject="alice", audit_id="audit-3"))
 
     subjects = await store.list_subjects(days=30)
 
@@ -305,10 +305,10 @@ async def test_record_many_is_all_or_nothing_when_one_row_is_rejected(
     store: PostgresUsageStore,
 ) -> None:
     """executemany runs the batch in one implicit transaction: a row that
-    violates a constraint (NULL principal_sub) rolls back its siblings too.
+    violates a constraint (NULL subject) rolls back its siblings too.
     The pipeline-side sink accounts for this by counting every row of a
     failed batch."""
-    batch = [_record(audit_id="good"), _record(audit_id="bad", principal_sub=None)]
+    batch = [_record(audit_id="good"), _record(audit_id="bad", subject=None)]
 
     with pytest.raises(asyncpg.PostgresError):
         await store.record_many(batch)

@@ -53,7 +53,7 @@ def _capturing_info(
     monkeypatch: pytest.MonkeyPatch, logger: Any
 ) -> list[dict[str, Any]]:
     """Record every ``logger.info(...)``/``logger.error(...)`` call's level, event, explicit kwargs, and
-    currently-bound structlog contextvars (correlation_id/subject) together
+    currently-bound structlog contextvars (request_id/subject) together
     -- the contextvar merge normally only happens inside structlog's
     processor chain on the way to output, which patching the method this way
     bypasses for the *recorded* copy (the original call still runs, so real
@@ -117,7 +117,7 @@ def v1_logging_app() -> Starlette:
     return test_app
 
 
-def test_v1_success_logs_received_and_finished_with_matching_correlation_id(
+def test_v1_success_logs_received_and_finished_with_matching_request_id(
     monkeypatch: pytest.MonkeyPatch, v1_logging_app: Starlette
 ) -> None:
     events = _capturing_info(monkeypatch, app_module.logger)
@@ -138,8 +138,8 @@ def test_v1_success_logs_received_and_finished_with_matching_correlation_id(
     assert finished["level"] == "info"
     assert finished["duration_ms"] >= 0
     assert finished["exc_type"] is None
-    assert received["correlation_id"]
-    assert received["correlation_id"] == finished["correlation_id"]
+    assert received["request_id"]
+    assert received["request_id"] == finished["request_id"]
 
     # No query string, headers, or token anywhere in either logged line.
     dumped = json.dumps([received, finished])
@@ -166,7 +166,7 @@ def test_v1_exception_logs_finished_with_exc_type_and_still_returns_500(
     # an unhandled exception is the broker's failure, so it logs at error.
     assert finished["status_code"] == 500
     assert finished["level"] == "error"
-    assert received["correlation_id"] == finished["correlation_id"]
+    assert received["request_id"] == finished["request_id"]
 
 
 def test_v1_exception_still_propagates_when_client_asks_for_it(
@@ -200,7 +200,7 @@ def test_v1_health_endpoints_excluded_from_request_logging(
 # ---------------------------------------------------------------------------
 
 
-async def test_mcp_received_and_finished_have_matching_correlation_id(
+async def test_mcp_received_and_finished_have_matching_request_id(
     monkeypatch: pytest.MonkeyPatch, settings: Any
 ) -> None:
     events = _capturing_info(monkeypatch, identity_mw.logger)
@@ -213,8 +213,8 @@ async def test_mcp_received_and_finished_have_matching_correlation_id(
     assert _status(messages) == 401
     received = next(e for e in events if e["event"] == "http.request.received")
     finished = next(e for e in events if e["event"] == "http.request.finished")
-    assert received["correlation_id"]
-    assert received["correlation_id"] == finished["correlation_id"]
+    assert received["request_id"]
+    assert received["request_id"] == finished["request_id"]
     assert finished["status_code"] == 401
     assert finished["exc_type"] is None
 

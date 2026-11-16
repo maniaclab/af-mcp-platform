@@ -13,9 +13,12 @@ statically over every ``logger.<level>("event", field=...)`` call:
 from __future__ import annotations
 
 import ast
+import dataclasses
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from af_mcp_broker.audit.logger import AuditRecord
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 
@@ -29,7 +32,7 @@ _EVENT_PATTERN = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")
 _AUDIT_EVENT = "audit"
 
 # Names the conventions replace, and names that could carry a secret or a
-# payload. ``subject``, ``detail``, ``correlation_id`` etc. are the standard
+# payload. ``subject``, ``detail``, ``request_id`` etc. are the standard
 # fields (CLAUDE.md, "Logging conventions").
 _FORBIDDEN_FIELDS = frozenset(
     {
@@ -37,7 +40,7 @@ _FORBIDDEN_FIELDS = frozenset(
         "principal_sub",
         "user",
         "message",
-        "request_id",
+        "correlation_id",
         "token",
         "access_token",
         "refresh_token",
@@ -196,6 +199,13 @@ def test_failed_events_log_at_warning_or_above() -> None:
 
 def test_personal_data_fields_are_logged_at_debug_only() -> None:
     assert _pii_violations(_all_calls()) == set()
+
+
+def test_audit_record_uses_the_log_field_names() -> None:
+    """The audit line is a log line: it names the user ``subject``, the request ``request_id`` and a token ``jti``."""
+    fields = {f.name for f in dataclasses.fields(AuditRecord)}
+    assert {"subject", "request_id", "jti"} <= fields
+    assert not fields & {"principal_sub", "correlation_id", "principal_id"}
 
 
 def test_scanner_flags_each_kind_of_outlier() -> None:

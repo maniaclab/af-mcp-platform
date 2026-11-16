@@ -39,7 +39,7 @@ const SERVER: CatalogServer = {
   credential_provider: 'atlas-oidc',
   status: 'available',
   status_detail: 'Available.',
-  correlation_id: null,
+  request_id: null,
   link_state: null,
   builtin: false,
   docs_url: null,
@@ -57,7 +57,7 @@ const BUILTIN_SERVER: CatalogServer = {
   credential_provider: null,
   status: 'available',
   status_detail: 'Available.',
-  correlation_id: null,
+  request_id: null,
   link_state: null,
   builtin: true,
   docs_url: null,
@@ -487,7 +487,7 @@ describe('status line', () => {
     const down = mountWith({ status: 'unavailable' });
     expect(down.get('.bc__status-line').text()).toContain('Unavailable');
     expect(down.get('.bc__status-line .af-mark').classes()).toContain('warn');
-    const bad = mountWith({ status: 'misconfigured', correlation_id: 'abc123' });
+    const bad = mountWith({ status: 'misconfigured', request_id: 'abc123' });
     expect(bad.get('.bc__status-line').text()).toContain('Misconfigured');
     expect(bad.get('.bc__status-line .af-mark').classes()).toContain('bad');
     expect(bad.get('.bc__status-detail code').text()).toBe('abc123');
@@ -497,7 +497,7 @@ describe('status line', () => {
     const wrapper = mountWith({
       status: 'misconfigured',
       status_detail: 'This service is not configured correctly. Contact an administrator.',
-      correlation_id: 'abc123',
+      request_id: 'abc123',
     });
     const detail = wrapper.get('.bc__status-detail');
     expect(detail.text()).toContain('Contact an administrator');
@@ -509,7 +509,7 @@ describe('status line', () => {
       mountWith({
         status: 'permission_required',
         status_detail: "Your account doesn't have the access this service requires.",
-        correlation_id: 'abc123',
+        request_id: 'abc123',
         ...overrides,
       });
 

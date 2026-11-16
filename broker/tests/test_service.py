@@ -532,12 +532,15 @@ class TestIssue:
         now: list[float],
     ) -> None:
         _use_client_credentials(monkeypatch)
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id="req-7")
 
         cred = await _provider(keycloak).issue(_principal(), "monitoring")
+        structlog.contextvars.clear_contextvars()
 
         lines = [json.loads(line) for line in audit_buffer.getvalue().splitlines()]
         (audit,) = [line for line in lines if line["event"] == "audit"]
-        assert audit["principal_sub"] == "user-123"
+        assert audit["subject"] == "user-123"
         assert audit["principal_uid"] == 50123
         assert audit["permission"] == "service_account"
         assert audit["target"] == "monitoring"
@@ -545,7 +548,7 @@ class TestIssue:
         assert audit["action_type"] == "state_change"
         assert audit["args_summary"] == "on_behalf_of=user@example.org username=auser"
         assert audit["audit_id"] == cred.audit_id
-        assert audit["request_id"] == cred.audit_id
+        assert audit["request_id"] == "req-7"
         assert audit["execution_model"] == "on_behalf"
         assert audit["outcome"] == "success"
         assert audit["recorded_at"].startswith("1970-01-24T")

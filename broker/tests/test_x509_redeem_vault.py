@@ -161,7 +161,7 @@ class TestRedeemVaultServe:
         releases = _release_audit_records(state)
         assert len(releases) == 1
         assert releases[0]["outcome"] == "success"
-        assert releases[0]["principal_sub"] == "sub-abc"
+        assert releases[0]["subject"] == "sub-abc"
         assert releases[0]["target"] == "ami"
 
     async def test_stored_nickname_is_included_in_the_response(
@@ -301,9 +301,9 @@ class TestRedeemHandsFreeRenewal:
         assert resp.status_code == 502
         assert store.deleted == []
         assert await store.get_link("sub-abc") is not None
-        # af-mcp-platform#288: a 5xx gets the request's correlation_id folded
+        # af-mcp-platform#288: a 5xx gets the request's request_id folded
         # into the body, so the user has something to quote back to support.
-        assert resp.json()["correlation_id"]
+        assert resp.json()["request_id"]
 
         releases = _release_audit_records(state)
         assert [rec["outcome"] for rec in releases] == ["error"]
@@ -343,9 +343,9 @@ class TestUnlockEndpointServiceMode:
         resp = client.post(_UNLOCK, json={"passphrase": "wrong"})
 
         assert resp.status_code == 400
-        # af-mcp-platform#288: correlation_id is a 5xx-only addition -- a 4xx
+        # af-mcp-platform#288: request_id is a 5xx-only addition -- a 4xx
         # detail is already meant to be user-actionable on its own.
-        assert "correlation_id" not in resp.json()
+        assert "request_id" not in resp.json()
 
     def test_infra_failure_is_502(self, service_app) -> None:
         client, _, _, _ = service_app
@@ -373,7 +373,7 @@ class TestUnlockEndpointServiceMode:
 
         assert resp.status_code == 422
         assert resp.json()["detail"] == "Your grid certificate has expired."
-        assert "correlation_id" not in resp.json()
+        assert "request_id" not in resp.json()
         # Nothing persisted -- same "validate before storing" rule a bad
         # passphrase already gets.
         assert "sub-abc" not in store.records

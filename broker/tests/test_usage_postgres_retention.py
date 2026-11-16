@@ -68,7 +68,7 @@ async def _seed_old_and_new(store: PostgresUsageStore) -> None:
                 result_bytes=None,
                 result_tokens_est=None,
             ),
-            _record(audit_id="old-4", timestamp=_days_ago(95), principal_sub="other"),
+            _record(audit_id="old-4", timestamp=_days_ago(95), subject="other"),
             _record(audit_id="new-1", timestamp=_days_ago(10)),
             _record(audit_id="new-2"),
         ]
@@ -118,7 +118,7 @@ async def test_start_adds_token_and_trace_columns_to_an_existing_table(
             CREATE TABLE af_mcp_usage_events (
                 audit_id TEXT PRIMARY KEY,
                 request_id TEXT NOT NULL,
-                principal_sub TEXT NOT NULL,
+                subject TEXT NOT NULL,
                 service TEXT NOT NULL,
                 method TEXT NOT NULL,
                 action_type TEXT NOT NULL,
@@ -168,9 +168,9 @@ async def test_rollup_moves_old_rows_into_daily_aggregates(
     conn = await asyncpg.connect(postgres_dsn)
     try:
         rows = await conn.fetch(
-            "SELECT principal_sub, outcome, calls, duration_ms, result_bytes, "
+            "SELECT subject, outcome, calls, duration_ms, result_bytes, "
             "result_tokens_est FROM af_mcp_usage_daily "
-            "ORDER BY principal_sub, outcome"
+            "ORDER BY subject, outcome"
         )
     finally:
         await conn.close()

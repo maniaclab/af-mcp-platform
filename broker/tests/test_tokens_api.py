@@ -448,7 +448,7 @@ def test_mint_writes_one_audit_record_with_every_field(
     [record] = audited
     principal = state["principal"]
     lookup_id = body["lookup_id"]
-    assert record.principal_sub == principal.subject
+    assert record.subject == principal.subject
     assert record.principal_uid == principal.uid
     assert record.permission == "tokens"
     assert record.target == "mcp-gateway"
@@ -457,7 +457,7 @@ def test_mint_writes_one_audit_record_with_every_field(
     assert record.args_summary == (
         f"lookup_id={lookup_id} name='audited-mint' never_expires=False"
     )
-    assert record.request_id == lookup_id
+    assert record.token_id == lookup_id
     assert record.audit_id == lookup_id
     assert before <= record.timestamp <= after
     assert body["token"] not in record.args_summary
@@ -490,14 +490,14 @@ def test_revoke_writes_one_audit_record_with_every_field(
     assert resp.status_code == 200, resp.text
     [record] = audited
     principal = state["principal"]
-    assert record.principal_sub == principal.subject
+    assert record.subject == principal.subject
     assert record.principal_uid == principal.uid
     assert record.permission == "tokens"
     assert record.target == "mcp-gateway"
     assert record.action == "token.revoked"
     assert record.action_type == "state_change"
     assert record.args_summary == f"lookup_id={lookup_id}"
-    assert record.request_id == lookup_id
+    assert record.token_id == lookup_id
     assert record.audit_id == lookup_id
     assert before <= record.timestamp <= after
 
@@ -682,8 +682,8 @@ def test_delete_record_removes_a_revoked_token(
     assert resp.json() == {"lookup_id": lookup_id, "deleted": True}
     assert lookup_id not in _listed_ids(client)
     deleted = [r for r in audited if r.action == "token.deleted"]
-    assert [r.request_id for r in deleted] == [lookup_id]
-    assert deleted[0].principal_sub == state["principal"].subject
+    assert [r.token_id for r in deleted] == [lookup_id]
+    assert deleted[0].subject == state["principal"].subject
 
 
 def test_delete_record_removes_an_expired_token(
@@ -754,7 +754,7 @@ def test_clear_inactive_deletes_only_the_callers_revoked_and_expired_rows(
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"deleted": 2}
     assert _listed_ids(client) == {active}
-    cleared = sorted(r.request_id for r in audited if r.action == "token.deleted")
+    cleared = sorted(r.token_id for r in audited if r.action == "token.deleted")
     assert cleared == sorted(["old", revoked])
     state["principal"] = other_principal
     assert _listed_ids(client) == {other}

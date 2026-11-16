@@ -23,7 +23,7 @@ Run it with `SHELF_JWKS_URI`, `SHELF_ISSUER` and `SHELF_AUDIENCE` set, then
 ## Request flow
 
 1. The broker POSTs to `/mcp` with `Authorization: Bearer <broker token>` and
-   `X-Request-ID: <correlation id>`.
+   `X-Request-ID: <request id>`.
 2. `RequestLogMiddleware` binds the request id to the request's context.
 3. fastmcp calls `BrokerTokenVerifier`, which looks the token's `kid` up in the
    cached JWKS and checks signature, `iss`, `aud` and `exp`. A failure answers

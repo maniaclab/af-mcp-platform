@@ -133,8 +133,8 @@ const toolsView = computed(() =>
           ><template v-if="i < statusView.grantingGroups.length - 1">, </template></template
         >.
       </span>
-      <span v-if="statusView.correlationId" class="bc__status-ref">
-        Reference: <code>{{ statusView.correlationId }}</code>
+      <span v-if="statusView.requestId" class="bc__status-ref">
+        Reference: <code>{{ statusView.requestId }}</code>
       </span>
     </p>
 

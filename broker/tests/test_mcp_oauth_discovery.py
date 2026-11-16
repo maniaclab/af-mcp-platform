@@ -326,11 +326,11 @@ def test_full_bootstrap_round_trip_yields_working_pat(
     _configure_env(monkeypatch, fernet_key)
     prime_jwks([sig_key.jwk])
 
-    principal_sub = "kc-sub-abc123"
+    subject = "kc-sub-abc123"
     now = int(time.time())
     id_token = sig_key.sign(
         {
-            "sub": principal_sub,
+            "sub": subject,
             "iss": ISSUER,
             "aud": LOGIN_CLIENT_ID,
             "iat": now,
@@ -341,7 +341,7 @@ def test_full_bootstrap_round_trip_yields_working_pat(
     # resource-server audience on it (issue #245's gate lets this through).
     access_token = sig_key.sign(
         {
-            "sub": principal_sub,
+            "sub": subject,
             "iss": ISSUER,
             "aud": GATEWAY_AUDIENCE,
             "iat": now,
@@ -467,7 +467,7 @@ def test_full_bootstrap_round_trip_yields_working_pat(
         # MCP client's CIMD client_name. The override always answers with
         # state["principal"], so point it at the bootstrap principal to list
         # *their* tokens rather than the fixture's unrelated default.
-        state["principal"] = make_principal(subject=principal_sub)
+        state["principal"] = make_principal(subject=subject)
         listing: Any = client.get("/v1/tokens")
         assert listing.status_code == 200, listing.text
         names = [row["name"] for row in listing.json()]

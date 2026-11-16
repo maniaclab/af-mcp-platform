@@ -21,6 +21,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+import jwt
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
@@ -261,7 +262,7 @@ class TestRedeemAuth:
         assert record.action == "krb5_ticket_release"
         assert record.outcome == "denied"
         assert record.target == "condor-token-service"
-        assert record.principal_sub == "sub-abc"
+        assert record.subject == "sub-abc"
         assert "not a configured krb5 target" in (record.error or "")
 
     def test_redeem_maps_audience_to_target_when_name_differs(
@@ -339,7 +340,7 @@ class TestRedeem:
         self, krb5_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """The token's ``rid`` is the tool call that caused the redeem; the
-        release line keeps the token's ``jti`` as ``request_id`` and adds
+        release line names the token's ``jti`` and adds
         ``rid`` as ``parent_request_id`` so the two join."""
         krb5_redeem_env()
         with app_client_factory() as (client, _):
@@ -356,7 +357,12 @@ class TestRedeem:
         assert len(lines) == 1
         assert lines[0]["action"] == "krb5_ticket_release"
         assert lines[0]["parent_request_id"] == "tool-call-id"
-        assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
+        # request_id names the redeem request; jti names the token.
+        assert (
+            lines[0]["jti"]
+            == jwt.decode(token, options={"verify_signature": False})["jti"]
+        )
+        assert lines[0]["request_id"] not in {"tool-call-id", lines[0]["jti"]}
 
     def test_release_audit_line_has_no_parent_for_a_token_without_rid(
         self, krb5_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
@@ -551,7 +557,7 @@ class TestRedeem:
         assert record.action == "krb5_ticket_release"
         assert record.outcome == "success"
         assert record.target == _TARGET
-        assert record.principal_sub == "sub-abc"
+        assert record.subject == "sub-abc"
         assert cred.payload["ccache_b64"] not in record.args_summary
 
 
@@ -687,8 +693,8 @@ class TestRedeemHandsFreeRenewal:
             )
         assert resp.status_code == 404
         assert "/v1/krb5/ticket" in resp.json()["detail"]
-        # af-mcp-platform#288: correlation_id is a 5xx-only addition.
-        assert "correlation_id" not in resp.json()
+        # af-mcp-platform#288: request_id is a 5xx-only addition.
+        assert "request_id" not in resp.json()
 
     def test_renewal_infra_failure_with_no_keytab_is_502(
         self, krb5_redeem_env, app_client_factory
@@ -715,9 +721,9 @@ class TestRedeemHandsFreeRenewal:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 502
-        # af-mcp-platform#288: the request's correlation_id rides along on
+        # af-mcp-platform#288: the request's request_id rides along on
         # any 5xx, so the user has something to quote back to AF support.
-        assert resp.json()["correlation_id"]
+        assert resp.json()["request_id"]
 
     def test_renewal_infra_failure_falls_through_to_keytab_remint(
         self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch

@@ -316,18 +316,18 @@ class TestMintKeytabMode:
 
 
 class TestRequestCorrelation:
-    """af-mcp-platform#342: every call carries the broker's correlation id as X-Request-ID."""
+    """af-mcp-platform#342: every call carries the broker's request id as X-Request-ID."""
 
-    async def test_mint_sends_the_bound_correlation_id(self, make_client) -> None:
+    async def test_mint_sends_the_bound_request_id(self, make_client) -> None:
         structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        structlog.contextvars.bind_contextvars(request_id="corr-342")
         client, requests = make_client()
         await _mint(client)
         assert requests[0].headers["x-request-id"] == "corr-342"
 
-    async def test_renew_sends_the_bound_correlation_id(self, make_client) -> None:
+    async def test_renew_sends_the_bound_request_id(self, make_client) -> None:
         structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        structlog.contextvars.bind_contextvars(request_id="corr-342")
         client, requests = make_client()
         await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
         assert requests[0].headers["x-request-id"] == "corr-342"

@@ -285,12 +285,12 @@ async def test_dev_bypass_refuses_non_local_issuer(settings):
     assert not inner.called
 
 
-async def test_valid_bearer_binds_correlation_id_and_subject_to_structlog_context(
+async def test_valid_bearer_binds_request_id_and_subject_to_structlog_context(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     """Issue #281: /mcp requests never pass through /v1's FastAPI middleware
     chain (they're handled entirely by the mounted aggregator sub-app), so
-    AsgiAuthMiddleware is the only place that can bind a correlation_id for
+    AsgiAuthMiddleware is the only place that can bind a request_id for
     this surface -- and the natural place to bind subject once a JWT
     resolves, alongside the JWT/PAT/dev-bypass branches it already covers."""
     principal_cache, directory = static_principal_cache
@@ -305,11 +305,11 @@ async def test_valid_bearer_binds_correlation_id_and_subject_to_structlog_contex
 
     bound = structlog.contextvars.get_contextvars()
     assert bound["subject"] == "user-123"
-    assert bound["correlation_id"]
+    assert bound["request_id"]
 
 
-async def test_correlation_id_bound_even_when_auth_fails(settings):
-    """A rejected caller still gets a correlation_id -- just no subject,
+async def test_request_id_bound_even_when_auth_fails(settings):
+    """A rejected caller still gets a request_id -- just no subject,
     since none was ever established."""
     inner = _InnerApp()
     middleware = asgi_auth_middleware(inner, settings)
@@ -319,7 +319,7 @@ async def test_correlation_id_bound_even_when_auth_fails(settings):
 
     assert _status(messages) == 401
     bound = structlog.contextvars.get_contextvars()
-    assert bound["correlation_id"]
+    assert bound["request_id"]
     assert "subject" not in bound
 
 

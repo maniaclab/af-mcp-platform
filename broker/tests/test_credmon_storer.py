@@ -132,7 +132,7 @@ async def test_stores_top_token_for_linked_subject_with_unixname(
     # The audit line records who/what, never the token itself.
     assert len(captured_audits) == 1
     assert captured_audits[0].outcome == "success"
-    assert captured_audits[0].principal_sub == "sub-a"
+    assert captured_audits[0].subject == "sub-a"
     assert call["credential"]["access_token"] not in captured_audits[0].args_summary
 
 

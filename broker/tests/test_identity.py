@@ -75,14 +75,14 @@ async def test_wrong_audience_raises_401(
     assert exc.value.detail["error"] == "insufficient_scope"
 
 
-async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
+async def test_wrong_audience_raises_token_audience_error_with_request_id(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     """A structurally valid token missing the expected audience is not the
     same failure as an expired/malformed one -- it's permanent until an
     admin grants the audience via group membership (docs/auth.md's
     "cascading failure" section), so it gets its own exception type and a
-    correlation_id the caller can quote, mirroring permission_required in
+    request_id the caller can quote, mirroring permission_required in
     service_status.py::service_status (see
     docs/plans/2026-08-24-audience-mismatch-error-ui-design.md)."""
     cache, _directory = static_principal_cache
@@ -93,9 +93,9 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
         await get_principal(token, settings, cache, _NO_NETWORK)
 
     assert exc.value.detail["error"] == "insufficient_scope"
-    correlation_id = exc.value.detail["correlation_id"]
-    assert correlation_id
-    assert correlation_id in exc.value.detail["message"]
+    request_id = exc.value.detail["request_id"]
+    assert request_id
+    assert request_id in exc.value.detail["message"]
 
 
 async def test_wrong_audience_logs_actual_and_expected_audience(
@@ -105,7 +105,7 @@ async def test_wrong_audience_logs_actual_and_expected_audience(
     and the broker's expected one directly -- an operator (or Claude)
     grepping pod logs for this event should see immediately which audience
     the token had without needing to decode it separately, and without
-    needing to first find the matching correlation_id (hit in production
+    needing to first find the matching request_id (hit in production
     2026-09-01: diagnosing a real audience mismatch took several rounds of
     log searching before this context was available).
 

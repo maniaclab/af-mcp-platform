@@ -135,8 +135,8 @@ def test_admin_revokes_one_token_of_another_principal(
     assert rows[sibling]["revoked_at"] is None
     [event] = audited
     assert event.action == "token.revoked"
-    assert event.principal_sub == _ADMIN_SUB
-    assert event.request_id == target
+    assert event.subject == _ADMIN_SUB
+    assert event.token_id == target
     assert f"subject={_OWNER_SUB}" in event.args_summary
 
 
@@ -171,9 +171,9 @@ def test_admin_revokes_all_active_tokens_of_a_principal(
     assert rows[first]["revoked_at"] is not None
     assert rows[second]["revoked_at"] is not None
     assert _listed(client, as_principal, _OTHER_SUB)[bystander]["revoked_at"] is None
-    assert sorted(e.request_id for e in audited) == sorted([first, second])
+    assert sorted(e.token_id for e in audited) == sorted([first, second])
     assert {e.action for e in audited} == {"token.revoked"}
-    assert {e.principal_sub for e in audited} == {_ADMIN_SUB}
+    assert {e.subject for e in audited} == {_ADMIN_SUB}
     assert all(f"subject={_OWNER_SUB}" in e.args_summary for e in audited)
 
 

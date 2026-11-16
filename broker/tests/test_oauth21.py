@@ -923,7 +923,7 @@ async def _catalog_state(
     )
     credentials = CredentialRegistry()
     credentials.register(ALIAS, provider)
-    status, detail, _correlation_id, link_state = await service_status(
+    status, detail, _request_id, link_state = await service_status(
         spec, _principal(), set(), credentials, service_registry or ServiceRegistry()
     )
     return status, detail, link_state

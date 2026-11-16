@@ -292,7 +292,7 @@ def test_catalog_status_available_for_open_backend(
     docs = {s["name"]: s for s in resp.json()["servers"]}["docs"]
     assert docs["status"] == "available"
     assert docs["status_detail"]
-    assert docs["correlation_id"] is None
+    assert docs["request_id"] is None
     assert docs["link_state"] is None
 
 
@@ -311,7 +311,7 @@ def test_catalog_status_link_required_when_not_linked(
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "link_required"
     assert rucio["status_detail"]
-    assert rucio["correlation_id"] is None
+    assert rucio["request_id"] is None
     assert rucio["link_state"] == "not_linked"
 
 
@@ -358,15 +358,15 @@ def test_catalog_status_available_when_permission_and_linked(
     assert resp.status_code == 200, resp.text
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "available"
-    assert rucio["correlation_id"] is None
+    assert rucio["request_id"] is None
     assert rucio["link_state"] is None
 
 
-def test_catalog_status_permission_required_includes_correlation_id(
+def test_catalog_status_permission_required_includes_request_id(
     app_client: tuple[TestClient, dict], make_principal: Callable[..., object]
 ) -> None:
     """__authenticated__ lacks read_data -- "rucio" is flagged
-    "permission_required" with a correlation id an admin can grep the audit
+    "permission_required" with a request id an admin can grep the audit
     log for, per issue #123's "never leak internals, but let an admin trace
     it" constraint."""
     client, state = app_client
@@ -376,7 +376,7 @@ def test_catalog_status_permission_required_includes_correlation_id(
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "permission_required"
     assert rucio["status_detail"]
-    assert rucio["correlation_id"]
+    assert rucio["request_id"]
     assert rucio["link_state"] is None
 
 
@@ -435,7 +435,7 @@ def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     """A backend that omits required_permission (credential layer is the
     gate -- issue #60) but has no credential provider resolving for it is a
     genuine platform misconfiguration, not a transient failure -- flagged
-    "misconfigured" with a correlation id. (app.py's startup check normally
+    "misconfigured" with a request id. (app.py's startup check normally
     refuses to boot with this config at all; registering it directly on an
     already-booted registry, as other tests here do for "condor-mcp",
     exercises the defensive path.)"""
@@ -456,7 +456,7 @@ def test_catalog_status_misconfigured_when_no_credential_provider_resolves(
     orphan = {s["name"]: s for s in resp.json()["servers"]}["orphan"]
     assert orphan["status"] == "misconfigured"
     assert orphan["status_detail"]
-    assert orphan["correlation_id"]
+    assert orphan["request_id"]
 
 
 def test_catalog_status_unavailable_when_recent_list_failure_recorded(
@@ -483,7 +483,7 @@ def test_catalog_status_unavailable_when_recent_list_failure_recorded(
     assert resp.status_code == 200, resp.text
     rucio = {s["name"]: s for s in resp.json()["servers"]}["rucio"]
     assert rucio["status"] == "unavailable"
-    assert rucio["correlation_id"] is None
+    assert rucio["request_id"] is None
     assert rucio["link_state"] is None
 
 
@@ -597,7 +597,7 @@ def test_catalog_status_shows_service_wide_unavailable_for_auth_type_none(
         assert resp.status_code == 200, resp.text
         downopen = {s["name"]: s for s in resp.json()["servers"]}["downopen"]
         assert downopen["status"] == "unavailable"
-        assert downopen["correlation_id"] is None
+        assert downopen["request_id"] is None
         assert downopen["link_state"] is None
 
 
@@ -700,7 +700,7 @@ def test_catalog_status_reflects_recorded_tool_routing(
     assert resp.status_code == 200, resp.text
     docs = {s["name"]: s for s in resp.json()["servers"]}["docs"]
     assert docs["status"] == expected_status
-    assert (docs["correlation_id"] is not None) == (expected_status == "misconfigured")
+    assert (docs["request_id"] is not None) == (expected_status == "misconfigured")
     assert docs["link_state"] is None
 
 
