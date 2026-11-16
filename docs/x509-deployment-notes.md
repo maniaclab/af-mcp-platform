@@ -95,8 +95,9 @@ stamps differs from the URL ami-mcp reaches it at in-cluster.)
   atlas-ami.cern.ch (ship the grid CA bundle, e.g. conda-forge
   `ca-policy-lcg`).
 - NetworkPolicy: ami-mcp needs egress to the broker (redeem + JWKS) and to
-  atlas-ami.cern.ch:443; the broker needs egress to ami-mcp:8000 (already
-  covered by `networkPolicy.broker.servicePorts`).
+  atlas-ami.cern.ch:443; the broker's egress to ami-mcp is generated from the
+  service `url` (declare the pods under `networkPolicy.egress.endpoints.<host>`,
+  with `targetPort` when the Service port differs from the pod port).
 
 ## voms-token-service
 
