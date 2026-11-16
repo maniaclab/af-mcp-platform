@@ -35,7 +35,7 @@ from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import ASGIServer, asgi_server
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
-from signing_keys import make_rsa_key, private_pem
+from signing_keys import make_rsa_key, private_pem, shared_rsa_key
 from x509_fakes import FakeX509Store
 
 from af_mcp_broker import backend_client, identity, lint_observations
@@ -268,7 +268,7 @@ def enc_key() -> RsaKey:
 # tests that need a second, distinct key call ``signing_keys.make_rsa_key``.
 @pytest.fixture(scope="session")
 def broker_signing_key() -> rsa.RSAPrivateKey:
-    return make_rsa_key()
+    return shared_rsa_key()
 
 
 @pytest.fixture(scope="session")

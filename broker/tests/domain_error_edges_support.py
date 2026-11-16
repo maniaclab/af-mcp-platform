@@ -15,7 +15,7 @@ from oauth21_support import (
     _make_cred,
     _make_provider,
 )
-from signing_keys import make_rsa_key, private_pem
+from signing_keys import private_pem, shared_rsa_key
 
 from af_mcp_broker import identity as identity_module
 from af_mcp_broker.config import Settings
@@ -176,7 +176,7 @@ def _oidc_producer(status_code: int):
 def _condor_provider(http_client: Any) -> CondorTokenProvider:
     return CondorTokenProvider(
         issuer=BrokerTokenIssuer(
-            private_key_pem=private_pem(make_rsa_key()),
+            private_key_pem=private_pem(shared_rsa_key()),
             issuer="https://broker.test",
             ttl_seconds=600,
         ),
@@ -218,7 +218,7 @@ def _condor_exchange_producer(response: httpx2.Response | Exception):
 async def _broker_issued_no_posix(make_principal) -> BaseException:
     provider = BrokerIssuedProvider(
         issuer=BrokerTokenIssuer(
-            private_key_pem=private_pem(make_rsa_key()),
+            private_key_pem=private_pem(shared_rsa_key()),
             issuer="https://broker.test",
             ttl_seconds=600,
         ),

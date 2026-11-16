@@ -169,6 +169,20 @@ def _fake_service_client(
     return fake_client
 
 
+def _store_expired_renewable_ticket(store: FakeKrb5VaultStore) -> None:
+    """Seed *store* with a ticket past ``not_after`` whose renewal window is still open, so the redeem path must renew or remint it."""
+    asyncio.run(
+        store.store_ticket(
+            "sub-abc",
+            ccache_b64=SecretStr("b2xkY2NhY2hl"),
+            principal="tuser@CERN.CH",
+            realm="CERN.CH",
+            not_after=time.time() - 60,
+            renew_until=time.time() + 3600,
+        )
+    )
+
+
 def _mint(
     client: TestClient, *, subject: str = "sub-abc", audience: str = _TARGET
 ) -> str:
@@ -570,16 +584,7 @@ class TestRedeemHandsFreeRenewal:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
             store = _fake_vault_store(client)
-            asyncio.run(
-                store.store_ticket(
-                    "sub-abc",
-                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
-                    principal="tuser@CERN.CH",
-                    realm="CERN.CH",
-                    not_after=time.time() - 60,
-                    renew_until=time.time() + 3600,
-                )
-            )
+            _store_expired_renewable_ticket(store)
             fake_client = _fake_service_client(
                 client, renew_ticket=_minted_ticket(ccache_b64="cmVuZXdlZA==")
             )
@@ -598,16 +603,7 @@ class TestRedeemHandsFreeRenewal:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
             store = _fake_vault_store(client)
-            asyncio.run(
-                store.store_ticket(
-                    "sub-abc",
-                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
-                    principal="tuser@CERN.CH",
-                    realm="CERN.CH",
-                    not_after=time.time() - 60,
-                    renew_until=time.time() + 3600,
-                )
-            )
+            _store_expired_renewable_ticket(store)
             asyncio.run(
                 store.store_link(
                     "sub-abc", username="tuser", keytab_b64=SecretStr("a2V5dGFi")
@@ -702,16 +698,7 @@ class TestRedeemHandsFreeRenewal:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
             store = _fake_vault_store(client)
-            asyncio.run(
-                store.store_ticket(
-                    "sub-abc",
-                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
-                    principal="tuser@CERN.CH",
-                    realm="CERN.CH",
-                    not_after=time.time() - 60,
-                    renew_until=time.time() + 3600,
-                )
-            )
+            _store_expired_renewable_ticket(store)
             _fake_service_client(
                 client,
                 renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
@@ -734,16 +721,7 @@ class TestRedeemHandsFreeRenewal:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
             store = _fake_vault_store(client)
-            asyncio.run(
-                store.store_ticket(
-                    "sub-abc",
-                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
-                    principal="tuser@CERN.CH",
-                    realm="CERN.CH",
-                    not_after=time.time() - 60,
-                    renew_until=time.time() + 3600,
-                )
-            )
+            _store_expired_renewable_ticket(store)
             asyncio.run(
                 store.store_link(
                     "sub-abc", username="tuser", keytab_b64=SecretStr("a2V5dGFi")
@@ -780,16 +758,7 @@ class TestRedeemHandsFreeRenewal:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
             store = _fake_vault_store(client)
-            asyncio.run(
-                store.store_ticket(
-                    "sub-abc",
-                    ccache_b64=SecretStr("b2xkY2NhY2hl"),
-                    principal="tuser@CERN.CH",
-                    realm="CERN.CH",
-                    not_after=time.time() - 60,
-                    renew_until=time.time() + 3600,
-                )
-            )
+            _store_expired_renewable_ticket(store)
             _fake_service_client(
                 client,
                 renew_error=Krb5TokenMintError("krb5-token-service unreachable"),

@@ -265,14 +265,15 @@ def test_client_factory_none_auth_type_applies_backend_timeout(settings: Any) ->
     assert client._session_kwargs["read_timeout_seconds"] == 5.0
 
 
-async def test_client_factory_x509_auth_type_applies_backend_timeout(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("auth_type", ["x509", "krb5"])
+async def test_client_factory_broker_token_auth_type_applies_backend_timeout(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch, auth_type: str
 ) -> None:
     # active_backend=None takes the tools/list-refresh path (connect without
     # raising the not-yet-supported error), so the timeout can be inspected
     # on the returned Client the same way as the "none" branch above.
     _patch_context(monkeypatch, make_principal(), active_backend=None)
-    spec = _spec(auth_type="x509", timeout_seconds=5.0)
+    spec = _spec(auth_type=auth_type, timeout_seconds=5.0)
     client = await _make_client_factory(
         spec,
         CredentialRegistry(),
@@ -327,11 +328,12 @@ def test_client_factory_none_auth_type_never_touches_credential_registry(
     assert "Authorization" not in client.transport.headers
 
 
-async def test_client_factory_x509_call_without_principal_raises(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("auth_type", ["x509", "krb5"])
+async def test_client_factory_broker_token_call_without_principal_raises(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, auth_type: str
 ) -> None:
     _patch_context(monkeypatch, None)
-    spec = _spec(auth_type="x509")
+    spec = _spec(auth_type=auth_type)
     factory = _make_client_factory(
         spec,
         CredentialRegistry(),
@@ -343,15 +345,16 @@ async def test_client_factory_x509_call_without_principal_raises(
         await factory()
 
 
-async def test_client_factory_x509_auth_type_lists_without_raising(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("auth_type", ["x509", "krb5"])
+async def test_client_factory_broker_token_auth_type_lists_without_raising(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch, auth_type: str
 ) -> None:
     """A tools/list schema-cache refresh must still be able to connect to an
-    x509 backend to enumerate its tools -- only an actual tools/call (signalled
-    by authorized_call_target matching this backend) hits the not-yet-supported
-    error above."""
+    x509 or krb5 backend to enumerate its tools -- only an actual tools/call
+    (signalled by authorized_call_target matching this backend) hits the
+    not-yet-supported error above."""
     _patch_context(monkeypatch, make_principal(), active_backend=None)
-    spec = _spec(auth_type="x509")
+    spec = _spec(auth_type=auth_type)
     factory = _make_client_factory(
         spec,
         CredentialRegistry(),
@@ -2104,15 +2107,25 @@ async def test_resolve_list_time_credential_token_carries_the_request_id_as_rid(
     assert claims["rid"] == structlog.contextvars.get_contextvars()["request_id"]
 
 
-async def test_client_factory_x509_call_time_aud_uses_effective_audience(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("auth_type", "service_name", "audience"),
+    [("x509", "ami_service", "ami-mcp"), ("krb5", "krb5_service", "krb5-mcp")],
+)
+async def test_client_factory_call_time_aud_uses_effective_audience(
+    settings: Any,
+    make_principal,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_type: str,
+    service_name: str,
+    audience: str,
 ) -> None:
     """When a service's name and audience diverge (issue #257), the call-time
-    x509 mint stamps the backend's `audience`, NOT the (differing) `name` -- so a
-    service can be renamed without moving the aud every backend validates."""
+    x509 or krb5 mint stamps the backend's `audience`, NOT the (differing)
+    `name` -- so a service can be renamed without moving the aud every backend
+    validates."""
     _patch_context(monkeypatch, make_principal(subject="sub-abc"))
     issuer = _make_issuer()
-    spec = _spec(name="ami_service", auth_type="x509", audience="ami-mcp")
+    spec = _spec(name=service_name, auth_type=auth_type, audience=audience)
     registry = CredentialRegistry()
     registry.register(spec.name, _FakeProvider(linked=True))
 
@@ -2124,7 +2137,7 @@ async def test_client_factory_x509_call_time_aud_uses_effective_audience(
         client.transport.headers["Authorization"].removeprefix("Bearer ")
     )
     assert claims is not None
-    assert claims["aud"] == "ami-mcp"
+    assert claims["aud"] == audience
 
 
 @pytest.mark.parametrize("auth_type", ["x509", "krb5", "servicex"])
@@ -2206,12 +2219,13 @@ async def test_client_factory_x509_not_linked_names_portal_deep_link(
     assert f"{portal}/identities#identity-card-x509" in str(excinfo.value)
 
 
-async def test_client_factory_x509_list_time_injects_header_best_effort(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("auth_type", ["x509", "krb5"])
+async def test_client_factory_broker_token_list_time_injects_header_best_effort(
+    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch, auth_type: str
 ) -> None:
     _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
     issuer = _make_issuer()
-    spec = _spec(auth_type="x509")
+    spec = _spec(auth_type=auth_type)
 
     client = await _make_client_factory(
         spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
@@ -2418,60 +2432,6 @@ async def test_resolve_list_time_credential_krb5_mints_not_provider_issue(
 # ---------------------------------------------------------------------------
 
 
-async def test_client_factory_krb5_auth_type_applies_backend_timeout(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # active_backend=None takes the tools/list-refresh path (connect without
-    # raising the not-yet-supported error), so the timeout can be inspected
-    # on the returned Client the same way as the "none"/"x509" branches above.
-    _patch_context(monkeypatch, make_principal(), active_backend=None)
-    spec = _spec(auth_type="krb5", timeout_seconds=5.0)
-    client = await _make_client_factory(
-        spec,
-        CredentialRegistry(),
-        settings,
-        _OPEN_POLICY,
-        broker_token_issuer=_make_issuer(),
-    )()
-    assert client._session_kwargs["read_timeout_seconds"] == 5.0
-
-
-async def test_client_factory_krb5_call_without_principal_raises(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_context(monkeypatch, None)
-    spec = _spec(auth_type="krb5")
-    factory = _make_client_factory(
-        spec,
-        CredentialRegistry(),
-        settings,
-        _OPEN_POLICY,
-        broker_token_issuer=_make_issuer(),
-    )
-    with pytest.raises(ToolError, match="principal"):
-        await factory()
-
-
-async def test_client_factory_krb5_auth_type_lists_without_raising(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A tools/list schema-cache refresh must still be able to connect to a
-    krb5 backend to enumerate its tools -- only an actual tools/call (signalled
-    by authorized_call_target matching this backend) hits the not-yet-supported
-    error above."""
-    _patch_context(monkeypatch, make_principal(), active_backend=None)
-    spec = _spec(auth_type="krb5")
-    factory = _make_client_factory(
-        spec,
-        CredentialRegistry(),
-        settings,
-        _OPEN_POLICY,
-        broker_token_issuer=_make_issuer(),
-    )
-    client = await factory()
-    assert isinstance(client, Client)
-
-
 async def test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issue(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2500,28 +2460,6 @@ async def test_client_factory_krb5_injects_broker_identity_jwt_not_provider_issu
     assert provider.issue_calls == []
 
 
-async def test_client_factory_krb5_call_time_aud_uses_effective_audience(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Mirrors x509's audience/name split (issue #257) -- the call-time krb5
-    mint stamps the backend's `audience`, NOT the (differing) `name`."""
-    _patch_context(monkeypatch, make_principal(subject="sub-abc"))
-    issuer = _make_issuer()
-    spec = _spec(name="krb5_service", auth_type="krb5", audience="krb5-mcp")
-    registry = CredentialRegistry()
-    registry.register(spec.name, _FakeProvider(linked=True))
-
-    client = await _make_client_factory(
-        spec, registry, settings, _OPEN_POLICY, broker_token_issuer=issuer
-    )()
-
-    claims = issuer.verify(
-        client.transport.headers["Authorization"].removeprefix("Bearer ")
-    )
-    assert claims is not None
-    assert claims["aud"] == "krb5-mcp"
-
-
 async def test_client_factory_krb5_not_linked_raises_friendly_error(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2544,24 +2482,6 @@ async def test_client_factory_krb5_not_linked_raises_friendly_error(
     assert LIST_MCP_SERVERS_TOOL_NAME in str(excinfo.value)
     assert "af_link_identity" in str(excinfo.value)
     assert provider.issue_calls == []
-
-
-async def test_client_factory_krb5_list_time_injects_header_best_effort(
-    settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_context(monkeypatch, make_principal(subject="sub-abc"), active_backend=None)
-    issuer = _make_issuer()
-    spec = _spec(auth_type="krb5")
-
-    client = await _make_client_factory(
-        spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
-    )()
-
-    auth = client.transport.headers["Authorization"]
-    assert auth.startswith("Bearer ")
-    claims = issuer.verify(auth.removeprefix("Bearer "))
-    assert claims is not None
-    assert claims["sub"] == "sub-abc"
 
 
 # ---------------------------------------------------------------------------

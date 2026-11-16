@@ -177,18 +177,22 @@ class TestMintFailures:
             await _mint(client)
         assert exc_info.value.retry_after is None
 
-    async def test_mint_401_raises_generic_mint_error(self, make_client) -> None:
+    @pytest.mark.parametrize(
+        "status_code",
+        [
+            pytest.param(401, id="401"),
+            pytest.param(502, id="502"),
+        ],
+    )
+    async def test_mint_status_raises_generic_mint_error(
+        self, make_client, status_code: int
+    ) -> None:
         """401 means the BROKER's own identity token was rejected -- a
         broker<->service contract failure the end user cannot act on, so it
         must NOT read as a bad CERN password (unlike condor-token's
         doctrine, krb5 has genuine client-actionable 400/403 cases, so 401
         must stay clearly distinct)."""
-        client, _ = make_client(httpx2.Response(401))
-        with pytest.raises(Krb5TokenMintError):
-            await _mint(client)
-
-    async def test_mint_502_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(502))
+        client, _ = make_client(httpx2.Response(status_code))
         with pytest.raises(Krb5TokenMintError):
             await _mint(client)
 

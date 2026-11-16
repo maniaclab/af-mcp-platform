@@ -16,7 +16,7 @@ from broker_issued_support import (
     _rfc7638_thumbprint,
 )
 from conftest import configure_keyless_env
-from signing_keys import make_rsa_key, private_pem, public_pem
+from signing_keys import make_rsa_key, private_pem, public_pem, shared_rsa_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 def _configure_signing_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
-    key = make_rsa_key()
+    key = shared_rsa_key()
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(private_pem(key))
     monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))

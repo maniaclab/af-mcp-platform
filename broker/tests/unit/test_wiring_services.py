@@ -266,18 +266,20 @@ class TestBuildIdentityTargets:
         }
         assert targets.x509_audiences == {}
 
-    def test_refuses_an_x509_service_no_entry_covers(self, tmp_path: Path) -> None:
-        services = _service("ami", "x509")
+    @pytest.mark.parametrize(
+        ("name", "auth_type", "message"),
+        [
+            pytest.param("ami", "x509", "not targeted by any x509", id="x509"),
+            pytest.param("krbsvc", "krb5", "auth_type: krb5 services", id="krb5"),
+        ],
+    )
+    def test_refuses_a_service_no_entry_covers(
+        self, tmp_path: Path, name: str, auth_type: str, message: str
+    ) -> None:
+        services = _service(name, auth_type)
         settings = _settings(tmp_path, services, identity_providers=[])
 
-        with pytest.raises(RuntimeError, match="not targeted by any x509"):
-            build_identity_targets(settings, _specs(tmp_path, services))
-
-    def test_refuses_a_krb5_service_no_entry_covers(self, tmp_path: Path) -> None:
-        services = _service("krbsvc", "krb5")
-        settings = _settings(tmp_path, services, identity_providers=[])
-
-        with pytest.raises(RuntimeError, match="auth_type: krb5 services"):
+        with pytest.raises(RuntimeError, match=message):
             build_identity_targets(settings, _specs(tmp_path, services))
 
     def test_result_is_an_identity_targets(self, tmp_path: Path) -> None:
