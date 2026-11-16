@@ -165,15 +165,15 @@ needs nothing else configured — it follows the same discovery-then-login
 sequence described above on its own. A client without that support still
 needs an explicit `Authorization: Bearer <token>` header on every request,
 using a PAT minted from the portal or the command line above. This is
-exactly what `scripts/verify-mcp-flow.py` does via the `fastmcp` Python
-client (bearer-header path, not OAuth discovery) — read its `--help` and
-source for a minimal working example, or run it directly to sanity-check
-your own token before wiring up a client:
+exactly what `broker/tests/e2e/test_mcp_flow.py` does via the `fastmcp`
+Python client (bearer-header path, not OAuth discovery) — read it for a
+minimal working example, or run it directly to sanity-check your own token
+before wiring up a client:
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
-pixi run -e dev python scripts/verify-mcp-flow.py --broker-url https://mcp.example.org
+E2E_BROKER_URL=https://mcp.example.org pixi run test-e2e
 ```
 
 ## What tools you should expect to see
@@ -262,4 +262,4 @@ to your own traces — both are covered in
   — link the accounts your tool calls need credentials for.
 - [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
   verified by automated tests vs. what still needs a live-deploy check with
-  `scripts/verify-mcp-flow.py`.
+  `pixi run test-e2e`.

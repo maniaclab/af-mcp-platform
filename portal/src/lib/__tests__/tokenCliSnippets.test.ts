@@ -38,7 +38,7 @@ describe('pythonMintAndConnectSnippet', () => {
     expect(snippet).toContain('"https://mcp.example.org/mcp/"');
   });
 
-  it('reuses the exact fastmcp Client/transport shape scripts/verify-mcp-flow.py uses', () => {
+  it('reuses the exact fastmcp Client/transport shape broker/tests/e2e/test_mcp_flow.py uses', () => {
     const snippet = pythonMintAndConnectSnippet('https://mcp.example.org');
     expect(snippet).toContain('from fastmcp import Client');
     expect(snippet).toContain('from fastmcp.client.transports import StreamableHttpTransport');

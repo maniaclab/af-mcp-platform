@@ -258,7 +258,7 @@ the vite proxy target.
 Broker (Python):
 
 ```bash
-pixi run -e dev test         # pytest broker/ skills/ -v -n auto (-n 0 to debug serially)
+pixi run -e dev test         # pytest broker/ skills/ -m "not e2e" -v -n auto (-n 0 to debug serially)
 pixi run -e dev lint         # ruff check + format --check
 pixi run -e dev typecheck    # mypy broker/src
 pixi run -e dev lint-all     # everything CI's lint job runs
