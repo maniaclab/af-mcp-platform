@@ -24,7 +24,7 @@ services:
     trust_tier: user-tier
     display_name: Rucio
     description: ATLAS distributed data management — browse and query datasets, files, and replicas.
-    # Model-facing policy (dual enforcement, re-review #6): guidance the agent
+    # Model-facing policy (dual enforcement, re-review finding 6): guidance the agent
     # reasons over — distinct from the user-facing description above.
     agent_policy: >-
       Read-only DID, replica, and rule *queries* are safe. Creating, updating,
@@ -81,7 +81,7 @@ services:
     # Launches the notebook server AS the caller, so its identity token must
     # carry the caller's POSIX identity (issue #257).
     requires_posix: true
-    timeout_seconds: 120   # phase 2 nested execute calls will need this later; harmless now
+    timeout_seconds: 120   # sized for phase 2 nested execute calls; harmless otherwise
 
   - name: af-filesystem-mcp
     prefix: fs

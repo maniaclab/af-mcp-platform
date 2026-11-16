@@ -453,7 +453,7 @@ def test_ticket_route_mints_hands_free_via_stored_keytab_with_no_credential(
     krb5_app,
 ) -> None:
     """A linked keytab (tier 4) lets ``POST /v1/krb5/ticket`` succeed with an
-    empty body -- the exact request the portal's "Refresh ticket" button now
+    empty body -- the exact request the portal's "Refresh ticket" button
     sends before ever asking for a password."""
     client, state, fake_client = krb5_app
     vault_store = asyncio.run(

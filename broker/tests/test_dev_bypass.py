@@ -121,7 +121,7 @@ def test_bypass_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BROKER_DEV_INSECURE_PRINCIPAL", raising=False)
     # Unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
     monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
-    # Issue #144 step 3: with the bypass disabled, the broker now refuses to
+    # Issue #144 step 3: with the bypass disabled, the broker refuses to
     # start at all unless a Keycloak admin service account is configured
     # (see test_no_bypass_and_no_directory_refuses_to_start below for that
     # check itself) -- configure one here so this test can exercise its own
@@ -141,7 +141,7 @@ def test_no_bypass_and_no_directory_refuses_to_start(
 ) -> None:
     """Issue #144 step 3: neither the dev bypass nor a Keycloak admin
     service account configured means the broker can never authenticate
-    anyone (JWT groups resolution now depends on the directory too, not
+    anyone (JWT groups resolution depends on the directory too, not
     just PATs) -- refuse to start rather than boot into a broker that
     accepts every request and can satisfy none of them. Same fail-fast
     reasoning as the other startup checks in app.py's lifespan (issue #125):

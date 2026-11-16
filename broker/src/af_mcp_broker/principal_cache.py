@@ -123,8 +123,8 @@ yet to compare against, and nothing yet to be a heartbeat "since"). Setting
 (roughly half, by default) guarantees a healthy, reachable system always
 has a persisted record well inside the staleness bound, regardless of how
 stable any given principal's attributes are. The write-rate arithmetic:
-with the defaults (45s refresh, 3-hour heartbeat), a stable principal now
-writes once per heartbeat instead of once per refresh -- a ~240x reduction
+with the defaults (45s refresh, 3-hour heartbeat), a stable principal
+writes once per heartbeat rather than once per refresh -- a ~240x reduction
 from the naive "write every refresh" baseline, while still guaranteeing
 persistence never lags wall-clock reality by more than the heartbeat
 interval.
@@ -142,7 +142,8 @@ a per-request Vault round trip this design deliberately avoids.
 to turn a request into a failure by itself. A backend read failure at cold
 start (Vault unreachable) is treated identically to "nothing persisted" --
 logged, not raised -- since the fallback (an in-memory-only cache) is
-exactly what shipped before this PR and is not a regression to degrade to.
+exactly the behavior without a persistence backend, so degrading to it is
+not a regression.
 A backend write failure is logged loudly (structlog `error`, since silently
 non-functioning persistence deserves an operator's attention) but never
 propagates -- the in-memory entry the current ``get()`` call is about to

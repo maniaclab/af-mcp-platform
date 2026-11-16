@@ -753,9 +753,9 @@ class Settings(BaseSettings):
     # PAT for the MCP client. `TOKEN_MINT_CLIENT_ID`/`TOKEN_MINT_CLIENT_SECRET`
     # is the same "confidential client + sealed secret" env var pair the chart
     # already wires (see charts/af-mcp-platform/values.yaml's
-    # `broker.tokenMint`) -- it was left unused when issue #144 step 2a
-    # replaced the RFC 8693 token-exchange design that originally needed it;
-    # this repurposes the identical shape for a different grant type
+    # `broker.tokenMint`). The `TOKEN_MINT` names come from the RFC 8693
+    # token-exchange design (issue #144 step 2a replaced it with broker-issued
+    # PATs); this reuses the identical shape for a different grant type
     # (authorization_code instead of token-exchange) rather than adding a
     # second confidential-client env var pair.
     keycloak_login_client_id: str = Field(default="", alias="TOKEN_MINT_CLIENT_ID")
@@ -834,7 +834,7 @@ class Settings(BaseSettings):
     # narrowest roles that satisfy GET .../users/{id} and
     # GET .../users/{id}/groups; see docs/auth.md). Issue #144 step 3 unified
     # groups resolution through this account for JWT callers too, not just
-    # PATs -- both empty (the default) is therefore no longer a degraded-but-
+    # PATs -- both empty (the default) is therefore not a degraded-but-
     # working state. app.py's lifespan refuses to start when both are empty
     # unless the dev bypass (BROKER_DEV_INSECURE_PRINCIPAL) is active, which
     # short-circuits this account entirely -- see that lifespan's own
@@ -915,8 +915,8 @@ class Settings(BaseSettings):
     # group membership by Keycloak's group ``path`` (e.g. ``/atlas/users``)
     # instead of its bare ``name`` (e.g. ``atlas``). Issue #144 step 3
     # unified groups resolution through this same directory for every
-    # credential type, so this setting now governs JWT and PAT callers
-    # identically -- there is no longer a separate JWT-side mapper
+    # credential type, so this setting governs JWT and PAT callers
+    # identically -- there is no separate JWT-side mapper
     # convention it needs to be kept consistent with (see docs/auth.md's
     # "Keycloak: Group Membership mapper" section). Default False (bare
     # name) matches ``policy.yaml``'s ``group_permissions`` keys directly.

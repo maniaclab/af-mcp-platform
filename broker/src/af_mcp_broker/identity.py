@@ -263,8 +263,8 @@ class PrincipalDirectoryUnavailableError(IdentityError):
     do they have," which is not something the caller can fix by getting a
     new token. 503, not 401, and a detail that says so explicitly -- see
     this module's docstring on the availability regression this introduces
-    for JWT callers, previously self-contained and therefore immune to a
-    Keycloak outage.
+    for JWT callers, which would otherwise be self-contained and therefore
+    immune to a Keycloak outage.
     """
 
 
@@ -353,10 +353,10 @@ async def get_principal(
     disagree about it. Raises `PrincipalDirectoryUnavailableError` (503)
     rather than 401 when that question cannot be answered -- see that
     exception's docstring for why, and for the availability regression this
-    introduces: a JWT used to be self-contained, so a Keycloak outage never
-    blocked authentication; now a principal this cache has never resolved
-    before, hit during an outage, has no last-known value to fall back on
-    and cannot authenticate at all.
+    introduces: a JWT alone would be self-contained, so a Keycloak outage
+    would never block authentication; with the directory in the loop, a
+    principal this cache has never resolved before, hit during an outage,
+    has no last-known value to fall back on and cannot authenticate at all.
 
     *caller_path* is purely diagnostic: the request path this validation is
     gating, attached to the ``jwt_validation_failed`` log line below so a

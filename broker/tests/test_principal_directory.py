@@ -299,7 +299,7 @@ async def test_resolve_uses_configured_attribute_names(
 async def test_resolve_defaults_to_af_attribute_names(
     settings: Settings, fake_admin: _FakeKeycloakAdmin
 ) -> None:
-    """Settings() without overrides reproduces the old hardcoded uid/gid/unixname behavior."""
+    """Settings() without overrides reproduces the default uid/gid/unixname attribute names."""
     assert settings.posix_uid_attribute == "uid"
     assert settings.posix_gid_attribute == "gid"
     assert settings.posix_unixname_attribute == "unixname"

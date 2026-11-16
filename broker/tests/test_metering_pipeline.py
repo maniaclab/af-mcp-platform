@@ -318,7 +318,7 @@ async def test_inline_backend_measures_and_writes_synchronously(audit_buffer) ->
 # ---------------------------------------------------------------------------
 # MeteringBackend seam -- the transport is a config-selected implementation
 # behind an ABC, so a distributed backend can be added without touching the
-# hot path. Only "in_process" exists today.
+# hot path. Only "in_process" is implemented.
 # ---------------------------------------------------------------------------
 
 

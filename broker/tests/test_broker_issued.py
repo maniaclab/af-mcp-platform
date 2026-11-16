@@ -286,8 +286,8 @@ def test_rotation_overlap_old_token_verifies_against_new_jwks(
     rsa_key: rsa.RSAPrivateKey,
 ) -> None:
     """The documented rotation procedure: a token signed by the retiring key
-    must keep verifying against a JWKS whose active key is the new one, as
-    long as the old public key is still published alongside it."""
+    must keep verifying against a JWKS whose active key is the successor, as
+    long as the retiring public key is still published alongside it."""
     old_key = _make_rsa_key()
     old_issuer = BrokerTokenIssuer(
         private_key_pem=_private_pem(old_key), issuer=ISSUER_URL

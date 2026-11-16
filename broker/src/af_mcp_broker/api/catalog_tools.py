@@ -187,7 +187,7 @@ async def list_service_tools(
     caps = get_principal_permissions(principal, policy)
 
     # Same pre-fetch gate /v1/catalog's status derivation applies (issue #60,
-    # now per-tool-aware): if the caller holds none of the permissions this
+    # per-tool-aware): if the caller holds none of the permissions this
     # service could possibly require, no tool of it could be visible either
     # -- skip the fetch entirely rather than probing the service (or the
     # cache) just to filter everything back out.

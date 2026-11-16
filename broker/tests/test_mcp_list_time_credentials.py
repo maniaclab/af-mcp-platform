@@ -204,7 +204,7 @@ async def aggregator_server(
     dead_backend_url: str,
     static_principal_cache: Any,
 ) -> AsyncIterator[ASGIServer]:
-    # Each test persona minted via _token_for below now gets its own JWT
+    # Each test persona minted via _token_for below gets its own JWT
     # `sub` (issue #144 step 3b: POSIX identity comes from the directory,
     # keyed by subject, so two principals sharing a subject would be unable
     # to have distinct uids at all) -- give each of them "atlas" on the
@@ -273,7 +273,7 @@ def _bearer_client(server: ASGIServer, token: str) -> Client:
 
 # The fixed set of test personas this file's tests mint tokens for -- each
 # needs its own JWT `sub` (issue #144 step 3b: POSIX identity, like groups,
-# is a directory fact keyed by subject, so distinct principals can no longer
+# is a directory fact keyed by subject, so distinct principals cannot
 # share one), pre-registered on the test-controlled directory by the
 # aggregator_server fixture above.
 _TEST_PERSONAS: tuple[tuple[int, int, str], ...] = (
@@ -536,7 +536,7 @@ async def test_unlinked_listing_does_not_poison_a_linked_callers_authorized_call
 async def test_list_then_call_on_healthy_backend_survives_a_sibling_401_during_list(
     aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
-    """Attempted regression coverage for issue #58's "Session terminated"
+    """Attempted regression coverage for issue #128's "Session terminated"
     report: production showed a single MCP session doing tools/list (which
     succeeds -- some backends 401 during listing and are dropped per
     provider_error_strategy="warn", exactly like "secure" is for carol
@@ -551,7 +551,7 @@ async def test_list_then_call_on_healthy_backend_survives_a_sibling_401_during_l
     ProxyProvider/AggregateProvider exception-containment path already
     isolates "secure"'s listing failure from "open"'s tools/call in this
     exact scenario. It is kept as a regression guard for that isolation
-    property, not as a confirmed repro of #58 -- see the issue for the
+    property, not as a confirmed repro of #128 -- see the issue for the
     investigation into what in-process reproduction could and couldn't
     establish.
     """
@@ -595,8 +595,8 @@ async def test_replica_split_session_continuity(
     routing one logical session's requests across replicas. Parametrized
     over both modes: stateless must succeed (no server-side session state is
     ever consulted), stateful must fail with 404 (replica 2 never minted
-    that session id) -- proving this test would actually have caught #128
-    before the fix, not just exercising a codepath that always passes.
+    that session id) -- proving this test would actually catch #128
+    were it reintroduced, not just exercising a codepath that always passes.
     """
     principal_cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
@@ -857,7 +857,7 @@ async def test_linked_caller_lists_a_mint_and_inject_backend_with_identity_heade
 async def test_unlinked_caller_calling_an_unlisted_tool_gets_the_not_linked_error(
     mint_and_inject_env: _MintAndInjectEnv, sig_key: Any, prime_jwks: Any
 ) -> None:
-    """Issue #311's guarantee, for a tool that is no longer listed: the
+    """Issue #311's guarantee, for a tool that is not listed: the
     friendly, actionable not-linked error, never "Unknown tool"."""
     prime_jwks([sig_key.jwk])
     env = mint_and_inject_env

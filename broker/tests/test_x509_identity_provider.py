@@ -1,11 +1,11 @@
 """Tests for the first-class x509 `identity_providers` entry.
 
-x509 used to be the one credential source with no `identity_providers`
-config of its own: the voms-token-service URL was a global env var
-(`VOMS_TOKEN_SERVICE_URL`), the catalog alias a hardcoded "x509" string, and
-the Identities row a synthetic entry. Normalizing it into an
-`X509ProviderConfig` entry (type "x509") removes those special cases while
-keeping the wire behavior — backend-side proxy redemption — unchanged.
+x509 is an `identity_providers` entry (an `X509ProviderConfig`, type
+"x509") like every other credential source: the voms-token-service URL, the
+catalog alias and the Identities row all come from that entry, not from a
+global env var (`VOMS_TOKEN_SERVICE_URL`), a hardcoded "x509" string or a
+synthetic row. The wire behavior — backend-side proxy redemption — is
+independent of that.
 
 Every `auth_type: x509` backend needs an explicit `identity_providers`
 entry carrying the voms-token-service `service_url`, full stop — there is no
@@ -180,8 +180,8 @@ class TestBootWiring:
         tmp_path: Path,
         app_client_factory: Callable[..., Any],
     ) -> None:
-        """The entry's service_url/voms/valid/audience — not the deprecated
-        global settings — reach VomsTokenServiceClient."""
+        """The entry's service_url/voms/valid/audience — not any global
+        settings — reach VomsTokenServiceClient."""
         _set_backends(monkeypatch, tmp_path)
         _set_identity_providers(
             monkeypatch,

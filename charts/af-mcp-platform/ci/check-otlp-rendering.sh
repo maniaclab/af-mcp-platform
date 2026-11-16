@@ -115,7 +115,7 @@ literal=$(render -f "$ci/otel-metrics-values.yaml" \
 expect_has "literal header" "name: OTEL_EXPORTER_OTLP_HEADERS" "$literal"
 expect_has "literal header" 'value: "x-mlflow-experiment-id=3"' "$literal"
 
-# The renamed keys fail with a message naming the new ones.
+# The keys the chart does not accept fail with a message naming the ones to use.
 expect_fails "old broker.tracing.endpoint" "set broker.otlp.endpoint" \
   -f "$ci/test-values.yaml" --set broker.tracing.endpoint=http://x:4318
 expect_fails "old broker.tracing.networkPolicy" "networkPolicy.egress.endpoints" \

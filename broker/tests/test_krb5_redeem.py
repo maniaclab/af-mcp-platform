@@ -246,7 +246,7 @@ class TestRedeemAuth:
     ) -> None:
         """Security-relevant: since krb5_audiences is empty until a real
         services.yaml consumer is configured, this 403 is the ONLY outcome
-        this route reaches in any real deployment today -- it must not be
+        this route reaches in any deployment without one -- it must not be
         audit-silent. Mirrors x509's audience-not-mapped audit record
         (credentials.py's inline AuditRecord at the top of
         redeem_x509_proxy) shape-for-shape, action renamed for krb5."""

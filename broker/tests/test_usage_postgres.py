@@ -97,7 +97,7 @@ async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
 
 
 async def test_start_renames_the_legacy_tool_column(postgres_dsn: str) -> None:
-    """A table created before the Elwood rename (column `tool`) is migrated
+    """A table whose column is still named `tool` (the Elwood-era schema) is migrated
     in place by start(): column renamed to `method`, data preserved, and the
     migration is idempotent (a second start() is a no-op)."""
     conn = await asyncpg.connect(postgres_dsn)

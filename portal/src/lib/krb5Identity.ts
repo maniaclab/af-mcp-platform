@@ -46,8 +46,7 @@ export function krb5LinkErrorMessage(err: unknown): string {
  * anything, actually happened rather than looking identical whether it hit
  * cache or genuinely renewed/reminted (af-mcp-platform#286 UI follow-up).
  *
- * Returns '' for `null` (a ticket minted before the broker started
- * returning this field) or any value this card doesn't recognize --
+ * Returns '' for `null` (a ticket whose record carries no source) or any value this card doesn't recognize --
  * rendering nothing is always safe, unlike guessing at unknown tiers.
  */
 export function describeKrb5Source(source: string | null): string {

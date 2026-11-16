@@ -68,8 +68,8 @@ from af_mcp_broker.principal_directory import (
 from af_mcp_broker.vault_kv import VaultKV
 
 # fastmcp v4's camelCase compat bridge (mcp_camelcase_compat, default True)
-# lets legacy reads like `tool.inputSchema`/`result.isError` keep working
-# after mcp SDK v2's rename to snake_case, each emitting a
+# lets camelCase reads like `tool.inputSchema`/`result.isError` keep working
+# alongside mcp SDK v2's snake_case names, each emitting a
 # FastMCPDeprecationWarning. Disabled for the whole test session (issue
 # #238 B.2/B.10) to prove no camelCase read survives anywhere in the
 # broker or its tests: with the bridge off, a lingering camelCase access
@@ -99,9 +99,8 @@ TEST_SERVICES.write_text(
 # Default `identity_providers` entry `app_client_factory` configures below —
 # one keycloak-brokered provider bound to the historic default OIDCProvider
 # targets, so `bearer`-auth backends (e.g. "rucio" in TEST_SERVICES) still
-# resolve to an OIDCProvider instance the way they did before issue #66 PR4
-# replaced the single `oidc_idp_alias`-derived singleton with per-entry
-# `identity_providers` config; plus an x509 entry covering TEST_SERVICES'
+# resolve to an OIDCProvider instance, as the per-entry `identity_providers`
+# config of issue #66 PR4 does; plus an x509 entry covering TEST_SERVICES'
 # "ami" — every `auth_type: x509` backend must be covered by an explicit
 # entry or the broker refuses to start (wiring/checks.py's
 # `validate_x509_provider_targets`), so this fixture supplies the minimal
@@ -809,7 +808,7 @@ def app_client_factory(
     # Ephemeral metrics port so test runs never collide on 9090.
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_DEFAULT_IDENTITY_PROVIDERS))
-    # Issue #144 step 3: app.py's lifespan now refuses to start without a
+    # Issue #144 step 3: app.py's lifespan refuses to start without a
     # configured Keycloak admin service account (dev bypass aside) --
     # KeycloakPrincipalDirectory only derives an admin-API base URL from
     # OIDC_ISSUER at construction time (no network call), so fake

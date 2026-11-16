@@ -64,7 +64,7 @@ broker:
       enables: "Example JupyterHub server management"
     # Exercises the broker-issued identityProviders branch (issue #162) so a
     # broken IDENTITY_PROVIDERS render is caught by `helm template`. Per-target
-    # aud/POSIX options now live on the service entry (audience/requires_posix
+    # aud/POSIX options live on the service entry (audience/requires_posix
     # on filesystem-example below, issue #257), not here.
     - type: broker-issued
       alias: af-native-example
@@ -73,7 +73,7 @@ broker:
       enables: "Example filesystem access via af-filesystem-mcp"
     # Exercises the krb5-token identityProviders branch (issue #274) so a
     # broken IDENTITY_PROVIDERS render is caught by `helm template`. No
-    # downstream aggregator.services consumer is defined yet, so targets is
+    # downstream aggregator.services consumer is defined, so targets is
     # empty, matching the commented-out example in values.yaml.
     - type: krb5-token
       alias: krb5-example

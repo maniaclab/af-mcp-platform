@@ -261,11 +261,11 @@ def _not_linked_error(
     Shared by ``_bearer_call_client`` and ``_identity_token_call_client`` (via
     ``_require_linked``) so the message text -- and the portal deep link it
     names -- can never drift between the two ``auth_type`` branches (stage 1
-    of the elicitation/link-identity design: today's LLM clients already
-    relay a URL from a tool error reliably, so this is deliberately plain
-    text). Stage 2a (``_require_linked`` below) now tries a real MCP
-    elicitation first and falls back to this exact error when that isn't
-    possible or the caller doesn't complete it.
+    of the elicitation/link-identity design: LLM clients already relay a URL
+    from a tool error reliably, so this is deliberately plain text). Stage 2a
+    (``_require_linked`` below) tries a real MCP elicitation first and falls
+    back to this exact error when that isn't possible or the caller doesn't
+    complete it.
 
     *alias* is the identity-provider alias servicing this service
     (``target_to_alias.get(spec.name)``), used to deep-link straight to that
@@ -624,9 +624,9 @@ def _make_client_factory(
     the backend side without telemetry enabled there too), but worth
     knowing if telemetry is ever toggled off selectively.
 
-    **Correction from fastmcp v4: non-trace ``_meta`` keys are no longer
-    universally blocked.** ``ProxyTool.run()``'s own
-    ``_forwardable_request_meta`` (``server/providers/proxy.py``) now
+    **Non-trace ``_meta`` keys are not universally blocked (fastmcp v4).**
+    ``ProxyTool.run()``'s own
+    ``_forwardable_request_meta`` (``server/providers/proxy.py``)
     forwards the inbound request's progress-token, task, and
     application-metadata ``_meta`` keys verbatim to the backend -- only the
     three connection-owned keys (protocol version, client info, client
@@ -635,8 +635,8 @@ def _make_client_factory(
     ``Client``/``client_factory`` this function builds, and applies
     regardless of ``auth_type``. Not a security regression for anything
     this module gates (no credential or header data rides in application
-    ``_meta``), but it means a caller can now pass arbitrary ``_meta``
-    through to a backend that reads it, which was not previously possible.
+    ``_meta``), but it means a caller can pass arbitrary ``_meta``
+    through to a backend that reads it.
 
     ``auth_type`` selects the branch:
       - "none": no credential is resolved at all; the service needs no
@@ -653,7 +653,7 @@ def _make_client_factory(
         separately" shape as "x509" above, just against
         POST /v1/credentials/krb5/redeem instead -- no krb5 ccache ever
         transits the aggregator either. No ``services.yaml`` entry declares
-        this ``auth_type`` yet (plumbing only, per the krb5-credentials-
+        this ``auth_type`` (plumbing only, per the krb5-credentials-
         redeem plan).
       - "bearer" (default): resolves the caller's Principal from the
         current request context, mints a credential in-process the same
@@ -681,18 +681,17 @@ def _make_client_factory(
     (``_might_be_entitled``) is skipped the same way, with
     ``NotEntitledForListingError``, for every auth type below.
 
-    For "bearer", that same "wasteful and wrong" framing used to justify
-    skipping credential resolution entirely during a listing -- until issue
-    #121: a service whose MCP endpoint itself requires a bearer token to
-    respond to ``tools/list`` (rucio-mcp) then 401s on every listing and
-    becomes permanently invisible to every caller, with no user-facing
-    error at all. Resolved by attempting a *best-effort* mint during a
-    listing too, gated on the caller holding at least one of the service's
+    For "bearer", skipping credential resolution entirely during a listing
+    would be "wasteful and wrong" in the way described above: a service whose
+    MCP endpoint itself requires a bearer token to respond to ``tools/list``
+    (rucio-mcp) would 401 on every listing and be permanently invisible to
+    every caller, with no user-facing error at all (issue #121). So the
+    factory attempts a *best-effort* mint during a listing too, gated on the caller holding at least one of the service's
     required permissions (``_might_be_entitled``, a coarser whole-service
     version of the per-tool check ``AuthorizationMiddleware`` uses) -- the
     in-process ``CredentialCache`` already makes repeat mints for the same
     ``(uid, target)`` cheap, so
-    "wasteful" no longer applies. A caller who has not linked the credential
+    the mint is not wasteful. A caller who has not linked the credential
     gets no listing at all, exactly like x509/krb5/servicex above: the
     factory raises ``NotLinkedForListingError`` before minting anything or
     contacting the backend (``_ObservableProxyProvider._get_tool`` then
@@ -746,8 +745,8 @@ def _make_client_factory(
 
 # Negative-cache TTL for a failed per-subject listing (issue #320): short
 # enough that an outage recovers quickly, long enough that a client hammering
-# tools/call (the SEP-2243 per-call listing path this cache originally
-# existed for) doesn't re-hit a backend that just 401'd or timed out on
+# tools/call (the SEP-2243 per-call listing path this cache exists
+# for) doesn't re-hit a backend that just 401'd or timed out on
 # every single call. Shared by all four listing kinds (tools, resources,
 # resource templates, prompts) -- a failed listing is a failed listing
 # regardless of which kind fetched it.
@@ -1167,8 +1166,8 @@ class _ObservableProxyProvider(ProxyProvider):
     async def _list_tools_uncached(self) -> Sequence[Tool]:
         """Do the actual upstream ``tools/list`` -- classify/log/record on failure, clear/warn-on-mismatch on success.
 
-        The pre-issue-#320 body of ``_list_tools()``, unchanged, now called
-        only on a per-subject cache miss (or when that cache is bypassed
+        The body of ``_list_tools()`` that runs upstream (issue #320's cache
+        wraps it), called only on a per-subject cache miss (or when that cache is bypassed
         entirely) rather than on every ``tools/list``.
         """
         try:
@@ -1386,7 +1385,7 @@ def build_aggregator(
     to ``self.middleware`` (default ``dereference_schemas=True``, before any
     of the three ``add_middleware`` calls below run), which technically wraps
     IdentityMiddleware from the outside -- "outermost among these three" above
-    is no longer "outermost, full stop". Confirmed benign: that middleware
+    is not "outermost, full stop". Confirmed benign: that middleware
     implements only ``on_list_tools``/``on_list_resource_templates``, purely
     inlining ``$ref`` in the already-built response schema after
     ``call_next`` returns (for client SDKs, e.g. VS Code Copilot, that don't
@@ -1407,7 +1406,7 @@ def build_aggregator(
     *backend_providers* is the holder the proxied backends are recorded in;
     omitted, the aggregator creates its own.
     """
-    # instructions is the model-facing "dual enforcement" layer (finding #6):
+    # instructions is the model-facing "dual enforcement" layer (re-review finding 6):
     # a platform preamble plus each service's agent_policy, surfaced to clients
     # in the MCP initialize response.
     mcp = Aggregator(

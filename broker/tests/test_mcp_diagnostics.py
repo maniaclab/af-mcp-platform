@@ -885,7 +885,7 @@ async def test_af_usage_days_parameter(
         settings, principal_cache, token, {"days": 30}, usage_store
     )
     body = wide.structured_content
-    # af_usage now meters itself (issue #240): the narrow call above shows up
+    # af_usage meters itself (issue #240): the narrow call above shows up
     # here as one af-mcp call -- an accepted, deliberately visible side
     # effect of routing af_* through the normal audit/metering path.
     per_service = {s["service"]: s for s in body["by_service"]}

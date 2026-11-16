@@ -2,7 +2,7 @@
 
 Real ephemeral postgres (see ``conftest.postgres_dsn``), no mocks. Covers the
 three deploy states the DDL must survive: a fresh database, a database created
-by the previous release's DDL (with data to backfill), and a previous-release
+by the earlier schema's DDL (with data to backfill), and a not-yet-updated
 replica still inserting parent rows without children during a rolling deploy.
 """
 
@@ -26,8 +26,8 @@ _ALL_TABLES = (
     "af_mcp_usage_event_content, af_mcp_usage_events"
 )
 
-# The previous release's DDL, verbatim: the schema a deployed database has
-# before this release's start() runs against it.
+# The earlier schema's DDL, verbatim: what an already-deployed database has
+# when start() runs against it.
 PREVIOUS_RELEASE_DDL = """
 DO $$
 BEGIN
@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS af_mcp_usage_daily_principal_day
     ON af_mcp_usage_daily (principal_sub, day);
 """
 
-# The previous release's insert: what a not-yet-updated replica keeps running
+# The earlier schema's insert: what a not-yet-updated replica keeps running
 # during a rolling deploy.
 PREVIOUS_RELEASE_INSERT = """
 INSERT INTO af_mcp_usage_events (
@@ -187,7 +187,7 @@ async def test_query_reports_the_breakdown_and_treats_childless_parents_as_unkno
     store = await _start(fresh_dsn)
     await store.record(_record(audit_id="a1", result_content=_IMAGE))
     await store.record(_record(audit_id="a2", result_content=_IMAGE))
-    # A parent with no children: a previous-release replica's row.
+    # A parent with no children: a not-yet-updated replica's row.
     await _execute(
         fresh_dsn,
         PREVIOUS_RELEASE_INSERT,

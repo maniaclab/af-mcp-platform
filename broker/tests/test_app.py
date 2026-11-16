@@ -31,9 +31,8 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
     """target_to_alias (issue #90) joins backend targets to whichever
     credential provider services them, uniformly from the configured
     `identity_providers` list: x509 targets get their entry's alias
-    (previously a hardcoded synthetic "x509" string — every auth_type: x509
-    backend now needs an explicit entry, so this helper no longer
-    special-cases x509 at all), keycloak-brokered/oauth21-direct targets get
+    (every auth_type: x509 backend needs an explicit entry, so this helper
+    does not special-case x509 at all), keycloak-brokered/oauth21-direct targets get
     their configured alias, and auth_type "none" targets (e.g. "docs") are
     simply absent — no user credential is needed for them.
     """
@@ -66,7 +65,7 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
 
 def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
     """An operator-chosen x509 alias flows through to /v1/catalog's
-    credential_provider — nothing hardcodes the "x509" string anymore."""
+    credential_provider — no synthetic "x509" alias is hardcoded."""
     mapping = build_target_to_alias(
         [
             X509ProviderConfig(

@@ -47,7 +47,7 @@ rendered=$(render -f "$ci/vault-values.yaml" --set broker.maintenanceMode.backen
 expect_lacks "no vault consumer" 'name: VAULT_ADDR' "$rendered"
 
 # The KV root is the only prefix setting; the broker derives every store's
-# prefix from it. A per-release root reaches the broker env, and the old
+# prefix from it. A per-release root reaches the broker env, and the
 # per-store prefix env vars are never rendered.
 rendered=$(render -f "$ci/vault-values.yaml")
 expect_has "kvRoot" 'name: VAULT_KV_ROOT' "$rendered"

@@ -144,7 +144,7 @@ plus clientId and `confidential` (true iff existingClientSecretSecret is set
 -- the secret itself is rendered separately as an env var by
 af-mcp-platform.oauth21ClientSecretEnv, never into this JSON),
 broker-issued entries carry nothing more -- each target's aud/POSIX options
-now live on the service entry (aggregator.services' audience/requires_posix,
+live on the service entry (aggregator.services' audience/requires_posix,
 issue #257), condor-token entries their serviceUrl/audience (issue #169),
 krb5-token entries their serviceUrl/audience (issue #274), x509 entries
 their serviceUrl (required)/voms/valid/audience (every
@@ -658,9 +658,9 @@ selector is "vault". The gate is af-mcp-platform.needsVault.
 {{- end }}
 
 {{/*
-Fails the render on OTLP configuration that cannot work: the pre-split
-broker.tracing.endpoint / broker.tracing.networkPolicy keys (renamed, no
-alias), a signal enabled with no collector endpoint, or both a literal and a
+Fails the render on OTLP configuration that cannot work: the
+broker.tracing.endpoint / broker.tracing.networkPolicy keys (not accepted;
+use broker.otlp.*), a signal enabled with no collector endpoint, or both a literal and a
 Secret for the collector headers. Emits nothing.
 */}}
 {{- define "af-mcp-platform.validateOtlp" -}}

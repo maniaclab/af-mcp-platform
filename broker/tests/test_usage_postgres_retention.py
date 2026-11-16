@@ -105,9 +105,9 @@ async def test_record_persists_token_id_and_trace_id(
 async def test_start_adds_token_and_trace_columns_to_an_existing_table(
     postgres_dsn: str,
 ) -> None:
-    """A table created before token_id/trace_id existed is altered in place by
-    start(): old rows keep their data with NULLs in the new columns, the
-    migration is idempotent, and new records populate the columns."""
+    """A table without the token_id/trace_id columns is altered in place by
+    start(): existing rows keep their data with NULLs in the added columns,
+    the migration is idempotent, and later records populate the columns."""
     conn = await asyncpg.connect(postgres_dsn)
     try:
         await conn.execute(

@@ -1,12 +1,10 @@
 """Durable storage for broker-issued identity PAT metadata (issue #115, adapted for #144 step 2a).
 
-Originally built for the RFC 8693 manual bearer-token bootstrap
-(``api/tokens.py``'s original design, issue #24/#116), this module is
-*adapted* -- not replaced -- for identity PATs (issue #144): the storage
-contract (ABC, Vault-backed with an in-memory fallback, revocation, and a
-sweep) is exactly the same shape, but the record it stores changes from "a
-Keycloak JWT's jti + who it was exchanged for" to "a PAT's lookup_id +
-secret hash + owning principal" -- see ``TokenRecord`` below.
+Built for the manual bearer-token bootstrap of issue #24/#116 and *adapted*
+-- not replaced -- for identity PATs (issue #144): the storage contract
+(ABC, Vault-backed with an in-memory fallback, revocation, and a sweep) is
+the shape that bootstrap needed, and the record it stores is "a PAT's
+lookup_id + secret hash + owning principal" -- see ``TokenRecord`` below.
 
 This is the **PAT store** in #144's three-concern split (PAT store /
 principal cache / permission engine): it answers "who is this token?" --
@@ -72,7 +70,7 @@ two records for the same principal may not share a name, compared
 case-insensitively. Only *live* records (``revoked_at`` unset and not yet
 past ``expires_at``, or never-expiring) count as a collision -- a name freed
 up by revocation or natural expiry can be reused without confusion, since the
-old record can no longer be mistaken for the new one. ``add()`` enforces
+dead record cannot be mistaken for the new one. ``add()`` enforces
 this itself (see ``_check_name_available`` and each backend's ``add()``)
 rather than leaving it to a caller-side check-then-write, because a
 caller-side check racing two concurrent mints (e.g. two broker replicas)
@@ -147,7 +145,7 @@ class TokenRecord:
     validation time from ``principal_cache.py``, never read off this record.
 
     ``permission_grant`` is the one deliberate exception (issue #144 step 4):
-    ``None`` for an identity PAT (today's default, and every PAT minted
+    ``None`` for an identity PAT (the default, and every PAT minted
     before this field existed), or an explicit, immutable set of permission
     names for a **permission PAT**. It is a RESTRICTION on top of the
     principal's current permissions, never a substitute for them --
@@ -486,14 +484,14 @@ def _record_to_fields(record: TokenRecord) -> dict[str, Any]:
 def _decode_permission_grant(fields: dict[str, Any]) -> frozenset[str] | None:
     """Decode ``permission_grant`` from raw KV *fields*, failing CLOSED on unmigrated records.
 
-    A record written before the capability->permission rename still keys its
-    grant ``capability_grant``. If that legacy key holds a non-null grant and
+    A record in the capability-era on-disk format keys its grant
+    ``capability_grant`` rather than ``permission_grant``. If that key holds a non-null grant and
     no ``permission_grant`` is present, the record is an unmigrated *scoped*
     PAT: decoding it as None would silently widen the restriction to
     "unrestricted", so it decodes as frozenset() (deny-all) until the
     one-time migration (scripts/migrate-pat-capability-grant.py) rewrites
     the key. A legacy ``capability_grant: null`` (an unscoped identity PAT)
-    decodes as None exactly as before -- nothing to widen.
+    decodes as None, same as an unscoped ``permission_grant`` -- nothing to widen.
     """
     if fields.get("permission_grant") is not None:
         return frozenset(fields["permission_grant"])
@@ -853,7 +851,7 @@ def build_token_registry_backend(
 # the shared store degrades to a per-replica count (FallbackSharedState)
 # rather than refusing mints. It stays out of the Vault KV record the
 # TokenRegistryBackend uses: that would add a durable write on every mint
-# attempt purely to guard a convenience threshold (issue #115 requirement 4).
+# attempt purely to guard a convenience threshold (the per-replica limit issue #115 describes).
 _MAX_MINTS_PER_HOUR = 10
 _MINT_RATE_WINDOW_SECONDS = 60 * 60
 

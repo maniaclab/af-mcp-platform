@@ -1,8 +1,8 @@
 /**
  * particleTracks.ts — the ATLAS event-display particle-track canvas shared
  * by the public landing page's hero (pages/index.astro) and the
- * authenticated Overview page's hero (pages/overview.astro). The two pages
- * used to carry byte-identical copies of this script; see DESIGN.md's
+ * authenticated Overview page's hero (pages/overview.astro). Both pages
+ * share this one script rather than carrying copies; see DESIGN.md's
  * "Particle-track canvas" entry for what it's meant to look like.
  *
  * A golden-angle-spaced radial event display: quadratic Bezier curves
@@ -68,7 +68,7 @@ export interface ParticleTrackPalette {
 }
 
 // The dark-mode originals — used as fallbacks if a variable is somehow
-// unset, so a missing token degrades to today's known-good look rather than
+// unset, so a missing token degrades to the known-good look rather than
 // drawing transparent/invisible tracks.
 const DEFAULT_PALETTE: ParticleTrackPalette = {
   a: '0 212 200',

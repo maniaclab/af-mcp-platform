@@ -1,8 +1,9 @@
 /**
  * tokenDisplay.ts — pure display-derivation helpers for TokensPage.vue's
  * token list: deriving an active/revoked/expired status and a compact
- * "token id" from a full lookup_id (issue #144 step 2a renamed the
- * identifier from `jti` -- a broker-issued PAT has no JWT, so no jti).
+ * "token id" from a full lookup_id (issue #144 step 2a: the
+ * identifier is `lookup_id`, not `jti` -- a broker-issued PAT has no JWT, so
+ * no jti).
  * Kept dependency-free (no DOM, no implicit Date.now() reads inside
  * tokenStatus) so they're trivially unit-testable -- the caller supplies
  * `now` explicitly rather than this module reading the clock itself.
@@ -77,21 +78,21 @@ export function shortLookupId(lookupId: string): string {
   return lookupId.length <= 8 ? lookupId : `${lookupId.slice(0, 8)}…`;
 }
 
-// The broker still allows notes up to 256 chars server-side (api/tokens.py's
-// _MAX_NOTE_LENGTH) -- unchanged; shrinking that limit would be an API
-// contract change breaking any existing caller (docs/connecting-a-client.md's
-// curl/Python snippets, CI scripts) with no correctness benefit, now that the
-// note is never squeezed into a fixed-width table cell (issue #152). This
-// constant is a UI-only cap: it's both the mint form's textarea `maxlength`
-// (TokensPage.vue) for newly-minted notes, and truncateNote's default below,
-// which keeps the (i) icon's hover/focus tooltip a modest size even for a
-// note minted before this cap existed (up to the old 256-char ceiling).
+// The broker allows notes up to 256 chars server-side (api/tokens.py's
+// _MAX_NOTE_LENGTH); shrinking that limit would be an API contract change
+// breaking any existing caller (docs/connecting-a-client.md's curl/Python
+// snippets, CI scripts) with no correctness benefit, since the note is never
+// squeezed into a fixed-width table cell (issue #152). This constant is a
+// UI-only cap: it's both the mint form's textarea `maxlength` (TokensPage.vue),
+// and truncateNote's default below, which keeps the (i) icon's hover/focus
+// tooltip a modest size even for a longer note minted through the API (up to
+// the 256-char ceiling).
 export const NOTE_MAX_LENGTH = 100;
 
 /**
  * Truncates a token's free-text note (issue #116) for display in the (i)
- * info icon's hover/focus tooltip (issue #152 -- previously rendered inline
- * under the token name, which stretched the name column while still
+ * info icon's hover/focus tooltip (issue #152 -- a tooltip rather than inline
+ * under the token name, which would stretch the name column while still
  * truncating the note). `null` (no note supplied) passes through unchanged.
  */
 export function truncateNote(

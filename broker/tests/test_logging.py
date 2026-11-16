@@ -1,9 +1,8 @@
 """Tests for logging.py's structlog contextvars helpers (issue #281).
 
-``configure_logging`` already wires ``structlog.contextvars.merge_contextvars``
-into the processor chain, but nothing previously called
-``structlog.contextvars.bind_contextvars`` -- these two helpers are the single
-place that now does, so every request-scoped log line can be tied back to a
+``configure_logging`` wires ``structlog.contextvars.merge_contextvars``
+into the processor chain; these two helpers are the single place that calls
+``structlog.contextvars.bind_contextvars``, so every request-scoped log line can be tied back to a
 ``correlation_id`` and (once identity resolves) a ``subject``.
 """
 

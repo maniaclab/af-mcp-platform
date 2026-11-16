@@ -3,7 +3,7 @@
 The broker already *advertises* its own CIMD document at ``/.well-known/cimd``
 (api/wellknown.py) so backend OAuth 2.1 authorization servers can identify it
 without Dynamic Client Registration. This module is the mirror image: the
-broker's own ``/v1/oauth/authorize`` (api/mcp_oauth.py) now acts as an
+broker's own ``/v1/oauth/authorize`` (api/mcp_oauth.py) acts as an
 authorization server for MCP clients, and those clients register the same
 way -- ``client_id`` is an ``https://`` URL the broker dereferences at
 authorize time, per ``draft-ietf-oauth-client-id-metadata-document``. There

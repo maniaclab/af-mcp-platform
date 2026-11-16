@@ -1,12 +1,12 @@
 """Regression tests for the in-process test harness.
 
-CI runs used to hang silently (until the 6-hour Actions job timeout) on the
-real-socket harness: a uvicorn server task that failed to start (the
-``find_available_port`` TOCTOU race), and an MCP client whose connection died
-mid-flight or went dead-but-open (modelcontextprotocol/python-sdk#1144), which
-a ``ClientSession`` patch used to bound. Servers now run through fastmcp's
-``asgi_server`` and the aggregator's backends through an in-process transport,
-so there is no port to lose and no connection to leave dead. These tests pin
+A real-socket harness can hang CI silently (until the 6-hour Actions job
+timeout): a uvicorn server task that fails to start (the
+``find_available_port`` TOCTOU race), or an MCP client whose connection dies
+mid-flight or goes dead-but-open (modelcontextprotocol/python-sdk#1144).
+Servers here run through fastmcp's ``asgi_server`` and the aggregator's
+backends through an in-process transport, so there is no port to lose and no
+connection to leave dead. These tests pin
 the two failure modes that remain expressible in-process -- a transport that
 dies mid-response, and a server that never answers -- and assert the client
 fails promptly instead of hanging. The ``timeout`` marks keep a regression

@@ -37,9 +37,9 @@ async def test_get_principal_selects_signing_key_when_listed_second(
 ):
     """Regression for JWKS key selection (bug 1).
 
-    The JWKS lists the encryption key FIRST and the signing key SECOND. The old
-    code decoded keys in list order and treated the first signature mismatch as
-    fatal, so auth failed. Selecting by the token's ``kid`` must succeed.
+    The JWKS lists the encryption key FIRST and the signing key SECOND. Decoding
+    keys in list order and treating the first signature mismatch as fatal
+    would fail auth. Selecting by the token's ``kid`` must succeed.
     """
     cache, _directory = static_principal_cache
     prime_jwks([enc_key.jwk, sig_key.jwk])
@@ -221,7 +221,7 @@ async def test_jwt_with_no_groups_claim_resolves_via_directory(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     """A JWT that carries no `groups` claim at all must still resolve real
-    permissions -- the directory, not the claim, is the only source now."""
+    permissions -- the directory, not the claim, is the only source."""
     cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = ["atlas"]
     prime_jwks([sig_key.jwk])
@@ -241,8 +241,8 @@ async def test_jwt_groups_claim_is_ignored_directory_is_authoritative(
     `groups` claim, it must be ignored entirely in favor of the directory's
     current answer. This is what makes removing someone from a Keycloak group
     a real kill switch regardless of which credential type they present --
-    before this change, a still-valid JWT's own claim would have kept working
-    right up until it expired."""
+    were the JWT's own claim honored, it would keep working right up until
+    it expired."""
     cache, directory = static_principal_cache
     directory.groups_by_subject["user-123"] = ["af-admins"]
     prime_jwks([sig_key.jwk])
@@ -257,9 +257,9 @@ async def test_jwt_groups_claim_is_ignored_directory_is_authoritative(
 async def test_cold_cache_directory_outage_raises_actionable_error(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
-    """Availability regression (issue #144 step 3): a JWT used to be
-    self-contained, so a Keycloak outage never blocked authentication. Now
-    groups always come from the directory, so a principal this cache has
+    """Availability regression (issue #144 step 3): a JWT alone is
+    self-contained, so a Keycloak outage would never block authentication.
+    Groups always come from the directory, so a principal this cache has
     never resolved before, hit while the directory is unreachable, has no
     last-known value to fall back on and cannot authenticate at all. The
     resulting error must tell the caller this is a platform outage, not a
@@ -353,7 +353,7 @@ async def test_jwt_and_pat_for_same_principal_get_identical_permissions(
 ):
     """The whole point of unifying groups resolution through the directory
     (issue #144 step 3): a JWT and an identity PAT for the *same* principal
-    must resolve to the exact same permission set, since both now derive
+    must resolve to the exact same permission set, since both derive
     their groups from the same PrincipalCache/PrincipalDirectory rather than
     a JWT and a PAT being able to disagree about what one user can do."""
     principal_cache, directory = static_principal_cache
@@ -404,7 +404,7 @@ async def test_jwt_with_no_posix_claim_resolves_via_directory(
     settings, sig_key, prime_jwks, static_principal_cache
 ):
     """A JWT that carries no `posix` claim at all must still resolve real
-    POSIX identity -- the directory, not the claim, is the only source now."""
+    POSIX identity -- the directory, not the claim, is the only source."""
     cache, directory = static_principal_cache
     directory.posix_by_subject["user-123"] = {
         "uid": 60001,
@@ -431,7 +431,7 @@ async def test_jwt_posix_claim_is_ignored_directory_is_authoritative(
     current answer -- mirroring
     test_jwt_groups_claim_is_ignored_directory_is_authoritative above. This
     is what makes the four POSIX mappers safe to delete: a still-valid JWT's
-    own claim can no longer keep serving a uid/gid/unixname the directory has
+    own claim cannot keep serving a uid/gid/unixname the directory has
     since moved on from."""
     cache, directory = static_principal_cache
     directory.posix_by_subject["user-123"] = {
@@ -479,7 +479,7 @@ async def test_jwt_and_pat_for_same_principal_get_identical_posix(
 ):
     """The POSIX counterpart to test_jwt_and_pat_for_same_principal_get_identical_permissions:
     a JWT and an identity PAT for the *same* principal must resolve to the
-    exact same uid/gid/unixname, since both now derive POSIX identity from
+    exact same uid/gid/unixname, since both derive POSIX identity from
     the same PrincipalCache/PrincipalDirectory rather than a JWT's own claim
     and a PAT being able to disagree about who one user is on the
     filesystem."""

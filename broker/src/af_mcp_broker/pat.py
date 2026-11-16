@@ -1,8 +1,8 @@
 """Broker-issued identity PAT (Personal Access Token) format and hashing (issue #144 step 2a).
 
-Replaces the RFC 8693 token-exchange bootstrap `POST /v1/tokens` used to
-mint (see ``api/tokens.py``): instead of exchanging the caller's Keycloak JWT
-for another JWT, the broker mints its own opaque, static credential.
+The credential `POST /v1/tokens` mints (see ``api/tokens.py``): rather than
+exchanging the caller's Keycloak JWT for another JWT (RFC 8693), the broker
+mints its own opaque, static credential.
 
 Format, GitHub/Stripe/OpenAI-style::
 

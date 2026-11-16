@@ -5,10 +5,9 @@ passphrase, or a minting-backend failure — recorded via
 ``record_failed_unlock()``) per uid to slow brute-force guessing against a
 colocated user's ``~/.globus``. Plain cache misses from ``get()`` do not
 count against this budget (issue #93) — see test_rate_limit_api.py for the
-end-to-end regression test of that fix. The thresholds used to be hardcoded
-module constants in ``cache.py``; these tests cover their promotion to
-``Settings`` fields (env-overridable) while keeping ``CredentialCache()``'s
-no-arg construction behaviourally unchanged.
+end-to-end regression test of that fix. The thresholds are ``Settings`` fields
+(env-overridable), and ``CredentialCache()``'s no-arg construction keeps the
+defaults; these tests cover both.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ TARGET = "rucio"
 
 
 def test_defaults_match_pre_lift_values():
-    """Settings() without any env override reproduces the old hardcoded values."""
+    """Settings() without any env override reproduces the documented default thresholds."""
     settings = Settings()
     assert settings.credential_unlock_max_failures == 5
     assert settings.credential_unlock_window_seconds == 900
@@ -87,9 +86,9 @@ async def test_record_failed_unlock_defaults_unchanged():
 async def test_get_never_counts_against_rate_limit():
     """Plain cache misses via ``get()`` never consume unlock budget (issue #93).
 
-    Before the fix, every miss -- including the ordinary "not cached yet, no
-    passphrase given" probe -- counted the same as a bad passphrase attempt,
-    so routine polling alone could exhaust the budget. Regardless of
+    Were every miss -- including the ordinary "not cached yet, no
+    passphrase given" probe -- to count like a bad passphrase attempt,
+    routine polling alone could exhaust the budget. Regardless of
     ``max_failed_unlocks``, ``get()`` must never raise ``UnlockRateLimitError``.
     """
     cache = CredentialCache(max_failed_unlocks=2, unlock_window_seconds=60)

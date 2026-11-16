@@ -186,7 +186,7 @@ class Krb5TokenServiceClient:
         return _parse_minted_ticket(resp.json())
 
     async def renew(self, *, subject: str, ccache_b64: str) -> MintedTicket:
-        """Renew a previously-minted ccache (``kinit -R``, no credential needed) on behalf of *subject*.
+        """Renew an already-minted ccache (``kinit -R``, no credential needed) on behalf of *subject*.
 
         Raises:
             Krb5TokenInvalidCcacheError: 422 -- the stored ccache was

@@ -1,8 +1,8 @@
 /**
  * usageContent.ts — display rows for GET /v1/usage's `by_content_type`.
  *
- * Calls recorded without a breakdown (measured before the breakdown existed,
- * or by an older replica) are in `totals` but in no by_content_type entry, so
+ * Calls recorded without a breakdown (measured without a breakdown, or by
+ * a replica that does not record one) are in `totals` but in no by_content_type entry, so
  * the entries can sum to less than the totals. That remainder is shown as an
  * explicit "Unattributed" row rather than dropped.
  */

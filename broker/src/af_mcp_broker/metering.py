@@ -28,7 +28,7 @@ Both helpers filter non-usage records and never raise.
 
 The transport between the hot path and the worker is a config-selected
 ``MeteringBackend`` (``METERING_BACKEND`` -> ``settings.metering_backend``);
-``in_process`` and ``inline`` exist today -- see the ABC's docstring. A
+``in_process`` and ``inline`` are the available backends -- see the ABC's docstring. A
 backend owns the usage store it feeds and the middleware owns the backend:
 nothing is installed process-wide.
 """
@@ -119,9 +119,9 @@ class MeteringBackend(abc.ABC):
     e.g. a future taskiq-backed backend whose worker runs in its own
     Deployment, selected by ``settings.metering_backend``. Design caveat for
     any out-of-process backend: it must serialize the result payload at
-    submit time, because the worker no longer shares the broker's memory --
+    submit time, because the worker does not share the broker's memory --
     the in-process backend passes an object reference across its queue,
-    which is exactly why it is the default and only backend today.
+    which is exactly why it is the default backend.
     """
 
     @property

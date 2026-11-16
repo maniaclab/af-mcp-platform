@@ -1,4 +1,4 @@
-"""Compose the aggregator's model-facing instructions (dual enforcement, #6).
+"""Compose the aggregator's model-facing instructions (dual enforcement, re-review finding 6).
 
 Enforcement on this platform is dual: a *technical* gate (the group-derived
 permission check in the authorization middleware, which denies unauthorized
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 # The platform preamble: guidance that applies to every call through the
 # gateway, independent of which service is targeted. The deny-is-policy and
 # missing-credential-is-policy paragraphs are the actual conceptual deliverable
-# of finding #6 -- they tell a cooperative agent how to interpret the two
+# of re-review finding 6 -- they tell a cooperative agent how to interpret the two
 # failure modes the technical gate produces.
 _PLATFORM_PREAMBLE = """\
 You are connected to the AF MCP gateway: a credential-brokering Model Context \

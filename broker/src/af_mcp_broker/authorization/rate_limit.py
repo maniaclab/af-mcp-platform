@@ -33,7 +33,7 @@ def tool_rate_limit_key(rule: RateLimitRule, subject: str) -> str:
 
     Keyed on the rule's content, not its position in ``rate_limits``: a store
     fixes a counter's window at its first increment, so a counter reused by an
-    edited or shifted rule would keep the old rule's count and window. An
+    edited or shifted rule would keep the earlier rule's count and window. An
     edited rule gets a fresh counter; a reordered one keeps its own.
     """
     canonical = json.dumps(

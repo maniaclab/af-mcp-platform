@@ -366,7 +366,7 @@ def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
 # Trust tier (Elwood v5 / Shannon) as structured data -- docs/architecture.md's
 # "Trust tiers" section defines the vocabulary; ServiceSpec.trust_tier lets
 # services.yaml/the chart *declare* a service's posture machine-checkably
-# (re-review finding #5). The authoritative per-deployment assignment still
+# (re-review finding 5). The authoritative per-deployment assignment still
 # lives in the GitOps repo; this field is the
 # declaration, not the policy.
 # ---------------------------------------------------------------------------
@@ -488,7 +488,7 @@ def test_shipped_services_declare_trust_tier(name: str, tier: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Model-facing per-service policy (agent_policy) -- the "dual enforcement"
-# (Elwood v5 re-review finding #6) model-facing half. DISTINCT from the
+# (Elwood v5 re-review finding 6) model-facing half. DISTINCT from the
 # technical permission gate: agent_policy is guidance the LLM agent reads and
 # reasons over, NOT an access-control boundary. It is also distinct from
 # `description` (user-facing catalog UX).
@@ -893,7 +893,7 @@ def test_required_permission_for_disabled_without_default_or_match() -> None:
 def test_required_permission_for_open_when_field_omitted_entirely() -> None:
     """Distinct from the disabled case above: an omitted required_permission
     (not a dict at all) means the credential layer is the gate -- always
-    open at the permission-check step, exactly as today."""
+    open at the permission-check step."""
     registry = ServiceRegistry()
     spec = _condor_spec(None)
     registry.register(spec)

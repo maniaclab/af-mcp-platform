@@ -57,11 +57,11 @@ def _make_record(**overrides: Any) -> TokenRecord:
 
 
 # ---------------------------------------------------------------------------
-# Fake Vault KV-v2 HTTP API. Originally get/write_cas only -- the registry
-# didn't remove entries, only set revoked_at. sweep_expired() (the expired-
-# token janitor) needs LIST (to enumerate by-principal) and DELETE (metadata)
-# too, so this fake now mirrors test_vault_kv.py's _FakeVault for those two
-# verbs.
+# Fake Vault KV-v2 HTTP API. The registry never removes entries
+# on revoke, only sets revoked_at, so get/write_cas cover it. sweep_expired()
+# (the expired-token janitor) additionally needs LIST (to enumerate
+# by-principal) and DELETE (metadata), so this fake mirrors
+# test_vault_kv.py's _FakeVault for those two verbs.
 # ---------------------------------------------------------------------------
 
 
@@ -344,7 +344,7 @@ async def test_add_permission_grant_absent_by_default(
 
 
 # ---------------------------------------------------------------------------
-# Legacy on-disk records from before the capability->permission rename. A
+# Records in the capability-era on-disk format. A
 # scoped record still keyed ``capability_grant`` must fail CLOSED: decoding
 # it as None would silently widen a restricted PAT to unrestricted, so the
 # guard decodes it as a deny-all frozenset() until the one-time migration
@@ -530,8 +530,8 @@ async def test_add_allows_name_that_collides_with_a_revoked_token(
     backend: TokenRegistryBackend,
 ) -> None:
     """Collisions with dead (revoked or expired) tokens would be confusing to
-    reject -- the name is effectively free again once the old token can no
-    longer be mistaken for the new one."""
+    reject -- the name is effectively free again once the dead token cannot
+    be mistaken for the new one."""
     await backend.add(
         _make_record(lookup_id="lookup-1", principal_id="p1", name="claude-desktop")
     )

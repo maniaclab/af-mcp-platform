@@ -1212,7 +1212,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         # (same inline AuditRecord shape, action renamed for krb5) -- this is
         # security-relevant on its own: krb5_audiences is empty until a real
         # services.yaml consumer is configured, so this 403 is the ONLY
-        # outcome this route reaches in any real deployment today.
+        # outcome this route reaches in any deployment without one.
         await write_audit(
             AuditRecord(
                 principal_sub=subject,
@@ -1373,7 +1373,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         # renamed for servicex) -- this is security-relevant on its own:
         # servicex_audiences is empty until a real services.yaml consumer
         # is configured, so this 403 is the ONLY outcome this route reaches
-        # in any real deployment today.
+        # in any deployment without one.
         await write_audit(
             AuditRecord(
                 principal_sub=subject,

@@ -183,8 +183,8 @@ def build_identity_targets(
     # redeem endpoint would keep assuming aud == target name, which the
     # name/audience split invalidated -- the 2026-08-27 x509 proxy 403. The
     # krb5 and servicex maps are plumbing for a future backend (no shipped
-    # services.yaml declares one yet; see af-mcp-platform#295), mirrored
-    # exactly so that endpoint's resolution works the day one does.
+    # services.yaml declares one; see af-mcp-platform#295), mirrored
+    # exactly so that endpoint's resolution works as soon as one does.
     x509_audiences = _audiences(services, "x509")
     krb5_audiences = _audiences(services, "krb5")
     servicex_audiences = _audiences(services, "servicex")

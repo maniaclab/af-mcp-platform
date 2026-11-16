@@ -207,9 +207,9 @@ async def test_permission_pat_grant_carried_through_onto_principal(
 async def test_identity_pat_has_no_permission_grant(
     settings, pat_backend, principal_cache, directory, tracker
 ) -> None:
-    """An identity PAT (no permission_grant on the record, today's default
-    for every PAT minted before this field existed) must resolve to
-    Principal.permission_grant=None -- behaving exactly as before."""
+    """An identity PAT (no permission_grant on the record, the default
+    for a PAT minted without one) must resolve to
+    Principal.permission_grant=None -- i.e. unrestricted."""
     directory.responses["kc-sub-1"] = PrincipalAttributes(
         uid=1, gid=1, unixname="u", groups=["atlas"], email=""
     )

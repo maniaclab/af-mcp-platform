@@ -36,8 +36,8 @@ oidc:
   # (config.json's oidc.issuer, Authorization Code + PKCE) validate/present
   # against this one realm — it must be the same realm for both, so it is
   # configured once here rather than as broker.oidc.issuer/portal.oidc.issuer
-  # separately. Those used to have to be kept in sync by hand; letting them
-  # drift meant the portal minted tokens whose `iss` the broker rejected,
+  # separately. Two values would have to be kept in sync by hand; letting them
+  # drift means the portal mints tokens whose `iss` the broker rejects,
   # presenting as "login works, every API call 401s" with nothing obviously
   # wrong in either config (issue #143). REQUIRED — set in your deploying
   # values overlay (e.g. a HelmRelease), there is no safe cross-institution
@@ -133,14 +133,12 @@ broker:
   # Settings.keycloak_login_client_id/_secret): the broker's own
   # `/v1/oauth/authorize` redirects the browser to Keycloak using this
   # client, then exchanges the resulting code at Keycloak's token endpoint to
-  # learn who logged in, before minting a PAT for the MCP client. This is the
-  # same "confidential client + sealed secret" shape issue #144 step 2a's RFC
-  # 8693 token-exchange design originally needed this client for (hence the
-  # `tokenMint` name, kept rather than renamed to avoid an unnecessary
-  # values-key churn) -- that design was replaced by broker-issued identity
-  # PATs and left this client configured-but-unread until this flow
-  # repurposed it, for a different grant type (authorization_code instead of
-  # token-exchange) and without needing Standard Token Exchange permission.
+  # learn who logged in, before minting a PAT for the MCP client. The
+  # `tokenMint` name comes from the RFC 8693 token-exchange design that issue
+  # #144 step 2a replaced with broker-issued identity PATs; the same
+  # "confidential client + sealed secret" shape serves a different grant type
+  # here (authorization_code instead of token-exchange) and needs no Standard
+  # Token Exchange permission.
   tokenMint:
     # Client id of the confidential client. Not a secret -- a plain value,
     # like portal.oidc.clientId above. Deliberately a separate client from
@@ -160,8 +158,8 @@ broker:
   # + `query-groups` ONLY -- a deliberate, narrowly-scoped privilege
   # increase, not a footnote). KEYCLOAK_ADMIN_CLIENT_ID/
   # KEYCLOAK_ADMIN_CLIENT_SECRET are each omitted when their source value
-  # below is empty. As of issue #144 step 3 this is REQUIRED for every
-  # deployment (JWT auth included, not just identity PATs): the broker
+  # below is empty. This is REQUIRED for every deployment (JWT auth
+  # included, not just identity PATs; issue #144 step 3): the broker
   # refuses to start with both unset, since the local-dev bypass this would
   # otherwise degrade to is never set via chart values (see the broker
   # section's own dev-bypass warning, if any, and docs/local-development.md).
@@ -300,7 +298,7 @@ broker:
   #   alias: krb5
   #   displayName: "CERN Kerberos ticket"
   #   enables: "Kerberos-authenticated access via <some-downstream-service>"
-  #   # No downstream aggregator.services consumer is defined yet (issue
+  #   # No downstream aggregator.services consumer is defined (issue
   #   # #274) -- leave targets empty until one is chosen.
   #   targets: []
   #   # Base URL of the krb5-token-service deployment (the broker appends
@@ -920,7 +918,7 @@ networkPolicy:
   enabled: true
 
   # Address families the pods use. Every ipBlock the chart renders (the
-  # public-internet rule today) is emitted once per family listed, and
+  # public-internet rule) is emitted once per family listed, and
   # `egress.external.exceptCidrs` are split by family automatically (an IPv4
   # CIDR only on the IPv4 block, an IPv6 CIDR only on the IPv6 block).
   # Pods on a dual-stack cluster need both: an IPv6 destination not allowed

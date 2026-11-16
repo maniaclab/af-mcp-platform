@@ -831,7 +831,7 @@ async def test_maintenance_middleware_passes_non_http_scopes_through(settings):
 
 
 # ---------------------------------------------------------------------------
-# IdentityMiddleware -- now a thin hand-off inside FastMCP's own middleware
+# IdentityMiddleware -- a thin hand-off inside FastMCP's own middleware
 # pipeline. It does no JWT validation; it only republishes the Principal
 # AsgiAuthMiddleware already stashed on the ASGI scope (reachable here via
 # fastmcp's get_http_request().state) as FastMCP Context state, and fails

@@ -130,7 +130,7 @@ def test_mint_duplicate_name_allowed_after_first_token_revoked(
     app_client: tuple[TestClient, dict],
 ) -> None:
     """Collisions with dead (revoked) tokens are allowed -- rejecting them
-    would be confusing, since the old token can no longer be mistaken for
+    would be confusing, since the dead token cannot be mistaken for
     the new one."""
     client, _ = app_client
     first = _mint(client, name="claude-desktop")

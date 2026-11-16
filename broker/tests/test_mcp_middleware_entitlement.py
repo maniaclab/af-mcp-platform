@@ -396,7 +396,7 @@ async def test_unmapped_tool_is_recorded_as_drift(registry, policy, make_princip
 
 
 async def test_stale_key_is_recorded_as_drift(registry, policy, make_principal):
-    """query_jobs is mapped but the backend now only advertises other_tool."""
+    """query_jobs is mapped but the backend only advertises other_tool."""
     mw = entitlement_middleware(registry, policy)
 
     await _list(mw, make_principal, [_tool("condor_other_tool")])
@@ -495,7 +495,7 @@ _OLD_AOS_KEYS = {
 @pytest.fixture
 def renamed_backend_registry() -> ServiceRegistry:
     """The production config that broke: prefix atlas_opensearch, no
-    namespacing, per-tool keys under the old names -- while the backend
+    namespacing, per-tool keys under names the backend no longer advertises -- while the backend
     advertises aos_* instead (as its provider has recorded)."""
     reg = ServiceRegistry()
     reg.register(

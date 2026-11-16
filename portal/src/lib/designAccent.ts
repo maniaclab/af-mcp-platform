@@ -61,7 +61,7 @@ export function applyLocalAccent(
 }
 
 /**
- * applyLocalAccent now with the current choice, and again after every theme
+ * Applies the local accent immediately with the current choice, and again after every theme
  * change, so the choice is re-derived for the new theme. Returns a cleanup.
  */
 export function watchLocalAccent(

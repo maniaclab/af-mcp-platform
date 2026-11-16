@@ -293,7 +293,7 @@ describe('permission badge', () => {
     // A dict-form required_permission in services.yaml with no "__default__"
     // has no single representative value -- GET /v1/catalog reports that as
     // permission: null (see api/permissions.py's default_permission_label
-    // docstring). Rendering that null straight into the old badge produced
+    // docstring). Rendering that null straight into the badge would produce
     // an empty box with a "Requires permission: " tooltip and nothing after
     // the colon.
     const wrapper = mount(ServiceCard, {

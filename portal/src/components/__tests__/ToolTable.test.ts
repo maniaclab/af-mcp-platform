@@ -1,6 +1,6 @@
 /**
  * Component tests for ToolTable.vue's per-method rendering: the read/write
- * badge's tooltip now names the tool's specific permission (not just
+ * badge's tooltip names the tool's specific permission (not just
  * read/write), and a docstring with more than a one-paragraph summary
  * collapses behind a "Show more" toggle so a service with many methods stays
  * scannable instead of turning into a wall of prose.

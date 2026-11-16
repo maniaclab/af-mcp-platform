@@ -22,9 +22,9 @@ class CredentialKind(StrEnum):
     # the backend redeems the PEM via POST /v1/credentials/x509/redeem.
     X509_PROXY_REDEEM = "x509_proxy_redeem"
     # A Kerberos credential cache (ccache), base64-encoded in the payload.
-    # No aggregator delivery branch exists yet -- issue #274 covers only the
+    # No aggregator delivery branch exists -- issue #274 covers only the
     # provider-type plumbing; the downstream aggregator.services consumer is
-    # a separate, not-yet-made decision (see the provider-type's own docs).
+    # a separate decision (see the provider-type's own docs).
     KRB5_CCACHE = "krb5_ccache"
     # A ServiceX access token persisted in Vault (issue #295): no local
     # file, redeemed by the backend via POST /v1/credentials/servicex/redeem

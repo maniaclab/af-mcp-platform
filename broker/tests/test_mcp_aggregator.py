@@ -106,7 +106,7 @@ def _mcp_error(code: int, message: str) -> McpError:
 
 # Every direct _make_client_factory() call below cares about credential
 # resolution, not entitlement -- _bearer_factory's list-time branch (see
-# aggregator.py) now also gates on check_entitlement(), but that check takes
+# aggregator.py) also gates on check_entitlement(), but that check takes
 # the required permission straight from the spec (ServiceSpec.
 # required_permission, see issue #60) rather than looking it up in
 # policy.yaml, and _spec()'s default of "__none__" already keeps the gate a
@@ -353,7 +353,7 @@ def test_build_aggregator_wires_identity_before_entitlement_before_authorization
 
 
 def test_build_aggregator_composes_model_facing_instructions(settings: Any) -> None:
-    """Dual enforcement (re-review finding #6): the built FastMCP instance
+    """Dual enforcement (re-review finding 6): the built FastMCP instance
     carries non-empty model-facing instructions -- the platform preamble plus
     each service's agent_policy."""
     registry = ServiceRegistry()
@@ -815,7 +815,7 @@ async def test_client_factory_bearer_list_time_falls_back_when_no_provider_regis
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A tools/list schema-cache refresh reuses the same client_factory as a
-    real call, and now attempts a best-effort mint too (issue #121) -- but an
+    real call, and attempts a best-effort mint too (issue #121) -- but an
     empty registry (no provider configured for this target at all) must
     still fall back to an uncredentialed connection rather than raising,
     exactly like a "none" backend would."""
@@ -897,7 +897,7 @@ async def test_client_factory_bearer_list_time_mints_when_entitled_and_linked(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The actual fix for issue #121: a tools/list-time connection for a
-    linked, entitled caller now carries a minted credential, not just an
+    linked, entitled caller carries a minted credential, not just an
     authorized tools/call."""
     policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
     principal = make_principal(groups=["atlas"])
@@ -941,9 +941,9 @@ async def test_client_factory_bearer_list_time_skips_mint_when_not_entitled(
 async def test_observable_proxy_provider_records_list_failure_on_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_ObservableProxyProvider now also records the classified tools/list
+    """_ObservableProxyProvider also records the classified tools/list
     failure reason onto the ServiceRegistry (ServiceRegistry.
-    record_list_failure), alongside the existing structured
+    record_list_failure), alongside the structured
     'aggregator.service_list_failed' log -- so /v1/catalog's per-backend
     status derivation (issue #123) can factor in a recent listing failure
     without an extra live probe of its own."""
@@ -968,13 +968,12 @@ async def test_observable_proxy_provider_records_list_failure_on_registry(
 async def test_observable_proxy_provider_clears_list_failure_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A backend that previously failed tools/list and has since recovered
-    must not stay reported "unavailable" forever -- record_list_failure() had
-    no counterpart to un-record a stale reason, so /v1/catalog and
-    af_list_mcp_servers kept surfacing a backend as unavailable for the rest
-    of the broker pod's uptime even once its /mcp endpoint was answering
-    fine again. A successful _list_tools() must clear any reason previously
-    recorded for this backend."""
+    """A backend whose tools/list failed earlier and has since recovered
+    must not stay reported "unavailable" forever -- otherwise a stale reason
+    would keep /v1/catalog and af_list_mcp_servers surfacing a backend as
+    unavailable for the rest of the broker pod's uptime even once its /mcp
+    endpoint answers fine again. A successful _list_tools() must clear any
+    reason recorded for this backend."""
     monkeypatch.setattr(
         aggregator.ProxyProvider, "_list_tools", AsyncMock(return_value=[])
     )
@@ -2098,7 +2097,7 @@ async def test_invalidate_subject_clears_only_that_subjects_list_failure_record(
 # Per-(subject, service) listing cache generalized to every kind
 # (tools/resources/resource templates/prompts) -- production symptom:
 # resources/prompts fanned out to every backend uncached on every reconnect,
-# exactly like tools/list before issue #320's cache. All four kinds now share
+# exactly like tools/list before issue #320's cache. All four kinds share
 # one mechanism (_ObservableProxyProvider._cached_list); these tests pin that
 # resources/resource-templates/prompts get identical semantics to tools
 # without re-testing every tools-specific edge case four times over -- the
@@ -2322,7 +2321,7 @@ async def test_client_factory_x509_injects_broker_identity_jwt(
     issuer = _make_issuer()
     spec = _spec(auth_type="x509")
     # A linked provider registered for this target -- the not-linked gate
-    # added below (mirroring _bearer_factory's) now runs before minting, so
+    # in the factory (mirroring _bearer_factory's) runs before minting, so
     # an authorized-call test that only cares about JWT injection needs a
     # linked provider on record for the resolve()/is_linked() check to pass.
     registry = CredentialRegistry()
@@ -2387,7 +2386,7 @@ async def test_client_factory_x509_call_time_aud_uses_effective_audience(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When a service's name and audience diverge (issue #257), the call-time
-    x509 mint stamps the backend's `audience`, NOT the (renamed) `name` -- so a
+    x509 mint stamps the backend's `audience`, NOT the (differing) `name` -- so a
     service can be renamed without moving the aud every backend validates."""
     _patch_context(monkeypatch, make_principal(subject="sub-abc"))
     issuer = _make_issuer()
@@ -2435,8 +2434,8 @@ async def test_client_factory_x509_not_linked_raises_friendly_error(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The x509 branch gets the same not-linked gate _bearer_factory already
-    has (before this fix it minted a broker identity token unconditionally
-    and let the backend's own redeem call 404 instead) -- an unlinked x509
+    has (minting a broker identity token unconditionally would let the
+    backend's own redeem call 404 instead) -- an unlinked x509
     caller must be told to link, at the broker, before any token is minted."""
     _patch_context(monkeypatch, make_principal(subject="sub-abc"))
     issuer = _make_issuer()
@@ -2451,7 +2450,7 @@ async def test_client_factory_x509_not_linked_raises_friendly_error(
         )()
 
     # Same close-the-loop requirement as the bearer branch's not-linked
-    # error (issue #153) -- and now also names af_link_identity so the
+    # error (issue #153) -- and also names af_link_identity so the
     # caller doesn't have to guess it exists.
     assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
     assert LIST_MCP_SERVERS_TOOL_NAME in str(excinfo.value)
@@ -2779,7 +2778,7 @@ async def test_client_factory_krb5_call_time_aud_uses_effective_audience(
     settings: Any, make_principal, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mirrors x509's audience/name split (issue #257) -- the call-time krb5
-    mint stamps the backend's `audience`, NOT the (renamed) `name`."""
+    mint stamps the backend's `audience`, NOT the (differing) `name`."""
     _patch_context(monkeypatch, make_principal(subject="sub-abc"))
     issuer = _make_issuer()
     spec = _spec(name="krb5_service", auth_type="krb5", audience="krb5-mcp")
@@ -3135,14 +3134,14 @@ async def test_client_factory_x509_elicitation_accepted_now_linked_proceeds(
 
 
 class TestClassifyFailureUnavailable:
-    """issue #280 / B.3: a request that never got a correlated response used
-    to be distinguished as "timeout" from a connection-level "unavailable"
-    via ``McpError.error.code == httpx2.codes.REQUEST_TIMEOUT``. fastmcp v4 /
-    mcp SDK v2 no longer produce that code at all -- every proxy transport
+    """issue #280 / B.3: a request that never got a correlated response is not
+    distinguished as "timeout" from a connection-level "unavailable" via
+    ``McpError.error.code == httpx2.codes.REQUEST_TIMEOUT``. fastmcp v4 /
+    mcp SDK v2 do not produce that code at all -- every proxy transport
     failure, timeouts included, normalizes to a plain ``INTERNAL_ERROR``
-    (``_proxy_upstream_error``) -- so that probe is gone and every case
-    below (including what used to be the "timeout" cases) is "unavailable"
-    now. See classify_failure's docstring for the full removal rationale."""
+    (``_proxy_upstream_error``) -- so there is no such probe and every case
+    below (timeouts included) is "unavailable". See classify_failure's
+    docstring for the rationale."""
 
     def test_mcp_error_is_unavailable(self) -> None:
         exc = _mcp_error(
@@ -3183,13 +3182,13 @@ class TestClassifyFailureUnavailable:
 class TestClassifyFailureChainedWrapping:
     """fastmcp v4 wraps a proxy transport failure as a plain chained
     exception (``raise _proxy_upstream_error(error) from error``), not a
-    ``BaseExceptionGroup`` like fastmcp's client I/O failures today --
+    ``BaseExceptionGroup`` like fastmcp's client I/O failures --
     ``_iter_leaf_exceptions`` must walk ``__cause__``/``__context__`` too, or
     a 401 (or any other leaf classification cares about) reachable only via
     a chain stays invisible to ``classify_failure``. These tests build the
     chained shape directly rather than depending on a real v4 proxy call, so
-    they already pass on fastmcp 3.4.7 today; after B.3/B.4 they are the
-    regression guard for the real thing."""
+    they pass on fastmcp 3.4.7 as well as v4, and are the regression guard
+    for the real thing."""
 
     def test_401_reachable_only_via_cause_chain_is_detected(self) -> None:
         request = httpx2.Request("GET", "http://example.invalid")
@@ -3243,13 +3242,12 @@ async def test_observable_proxy_provider_method_not_found_is_empty_not_a_failure
     listing failure: fastmcp's ``ProxyProvider._list_tools()`` already
     catches exactly this code and returns an empty list rather than raising.
 
-    Verified against the installed fastmcp 3.4.7 source this is already
-    true today, not a new behavior mcp SDK v2/fastmcp v4 introduces (a
-    correction to this plan step's original framing, which claimed it was
-    new in v4). Pinning it regardless: no exception ever reaches
+    Verified against the fastmcp 3.4.7 source, this behavior predates
+    mcp SDK v2/fastmcp v4 rather than being introduced by them. Pinning it
+    regardless: no exception ever reaches
     ``_ObservableProxyProvider`` for this case, so ``record_list_failure``
-    must never fire and any previously recorded failure must still clear,
-    identically before and after the SDK bump."""
+    must never fire and any recorded failure must still clear,
+    identically under either SDK version."""
     registry = ServiceRegistry()
     registry.register(_spec())
     registry.record_list_failure("example", "unavailable", "alice")

@@ -184,7 +184,7 @@ async def test_valid_bearer_tools_list_and_call_unchanged(
     aggregator_server: ASGIServer, sig_key: Any, prime_jwks: Any
 ) -> None:
     """No behavior change for an authenticated caller: both tools/list and
-    tools/call succeed exactly as before this fix."""
+    tools/call succeed as they do without the gate."""
     prime_jwks([sig_key.jwk])
     token = sig_key.sign(make_claims(groups=[]))
 
@@ -206,7 +206,7 @@ async def test_pat_round_trip_tools_list_and_call(
     same TokenRecord shape POST /v1/tokens produces, present it as a real
     Bearer against a live aggregator, and confirm it resolves a working
     Principal all the way through tools/list and tools/call -- both
-    credential types now work on /mcp side by side (this test) and neither
+    credential types work on /mcp side by side (this test) and neither
     disturbs the other (every JWT-path test above is unmodified). The
     call's audit line must also attribute to this PAT's public lookup_id
     (issue #247) without leaking any secret material."""
