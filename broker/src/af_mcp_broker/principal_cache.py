@@ -160,13 +160,19 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
+from af_mcp_broker.config import InMemoryBackendConfig, VaultBackendConfig
 from af_mcp_broker.constants import MAX_CAS_RETRIES
-from af_mcp_broker.errors import BrokerError, require
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.principal_directory import (
     PrincipalAttributes,
     PrincipalNotActiveError,
 )
-from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
+from af_mcp_broker.vault_kv import (
+    CasConflictError,
+    VaultConnections,
+    VaultError,
+    VaultKV,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
@@ -603,24 +609,22 @@ class PrincipalCache:
 
 
 def build_principal_cache_backend(
-    settings: Settings, vault_kv: VaultKV | None
+    settings: Settings, vaults: VaultConnections
 ) -> PrincipalCacheBackend:
     """Build the persistence backend selected by ``settings.principal_cache_backend``.
 
-    *vault_kv* is the process-wide Vault transport, present whenever
-    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
-    ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    *vaults* hands out the process-wide Vault transport for the
+    ``VaultConfig`` the selected backend carries. The ``match`` is exhaustive
+    over the config union: ``assert_never`` makes
     mypy fail when a backend name is added without a branch here.
     """
-    backend = settings.principal_cache_backend
+    backend = settings.principal_cache
     match backend:
-        case "in_memory":
+        case InMemoryBackendConfig():
             return InMemoryPrincipalCacheBackend()
-        case "vault":
+        case VaultBackendConfig(vault=vault):
             return VaultPrincipalCacheBackend(
-                vault_kv=require(
-                    vault_kv, "principal_cache_backend=vault requires a Vault client"
-                ),
+                vault_kv=vaults.connect(vault),
                 kv_path_prefix=settings.vault_kv_paths.principal_cache,
             )
         case _:

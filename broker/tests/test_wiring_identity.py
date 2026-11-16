@@ -22,14 +22,14 @@ from af_mcp_broker.token_registry import (
     TokenRegistry,
     VaultTokenRegistryBackend,
 )
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.vault_kv import VaultConnections, VaultKV
 from af_mcp_broker.wiring.identity import (
     build_dev_bypass_principal,
     build_mcp_auth_code_store,
     build_principal_cache,
     build_token_registry,
 )
-from af_mcp_broker.wiring.vault import build_vault_kv
+from af_mcp_broker.wiring.vault import build_vault_connections
 
 _DEV_PRINCIPAL = json.dumps(
     {
@@ -53,15 +53,8 @@ def _settings(**overrides: Any) -> Settings:
 
 
 @pytest.fixture
-def vault_kv() -> VaultKV:
-    return VaultKV(
-        addr="https://vault.invalid",
-        auth_mount="kubernetes",
-        auth_role="r",
-        kv_mount="secret",
-        sa_token_path="/nonexistent",
-        http_client=httpx2.AsyncClient(),
-    )
+def vaults() -> VaultConnections:
+    return VaultConnections(httpx2.AsyncClient())
 
 
 class TestBuildDevBypassPrincipal:
@@ -116,13 +109,18 @@ class TestBuildPrincipalCache:
         )
 
         cache = build_principal_cache(
-            settings, None, httpx2.AsyncClient(), dev_bypass_active=False
+            settings,
+            VaultConnections(httpx2.AsyncClient()),
+            httpx2.AsyncClient(),
+            dev_bypass_active=False,
         )
 
         assert isinstance(cache, PrincipalCache)
         assert isinstance(cache._backend, InMemoryPrincipalCacheBackend)
 
-    def test_uses_the_vault_backend_when_selected(self, vault_kv: VaultKV) -> None:
+    def test_uses_the_vault_backend_when_selected(
+        self, vaults: VaultConnections
+    ) -> None:
         settings = _settings(
             keycloak_admin_client_id="admin",
             keycloak_admin_client_secret="s",
@@ -130,7 +128,7 @@ class TestBuildPrincipalCache:
         )
 
         cache = build_principal_cache(
-            settings, vault_kv, httpx2.AsyncClient(), dev_bypass_active=False
+            settings, vaults, httpx2.AsyncClient(), dev_bypass_active=False
         )
 
         assert cache is not None
@@ -139,7 +137,10 @@ class TestBuildPrincipalCache:
     def test_is_none_under_the_dev_bypass_without_an_admin_account(self) -> None:
         assert (
             build_principal_cache(
-                _settings(), None, httpx2.AsyncClient(), dev_bypass_active=True
+                _settings(),
+                VaultConnections(httpx2.AsyncClient()),
+                httpx2.AsyncClient(),
+                dev_bypass_active=True,
             )
             is None
         )
@@ -149,7 +150,10 @@ class TestBuildPrincipalCache:
             RuntimeError, match="KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET"
         ):
             build_principal_cache(
-                _settings(), None, httpx2.AsyncClient(), dev_bypass_active=False
+                _settings(),
+                VaultConnections(httpx2.AsyncClient()),
+                httpx2.AsyncClient(),
+                dev_bypass_active=False,
             )
 
     def test_refusal_names_the_fix_without_issue_history(self) -> None:
@@ -165,15 +169,19 @@ class TestBuildPrincipalCache:
 
 class TestBuildTokenRegistry:
     def test_wraps_the_in_memory_backend_by_default(self) -> None:
-        built = build_token_registry(_settings(), None, InMemorySharedState())
+        built = build_token_registry(
+            _settings(), VaultConnections(httpx2.AsyncClient()), InMemorySharedState()
+        )
 
         assert isinstance(built.backend, InMemoryTokenRegistryBackend)
         assert isinstance(built.registry, TokenRegistry)
 
-    def test_wraps_the_vault_backend_when_selected(self, vault_kv: VaultKV) -> None:
+    def test_wraps_the_vault_backend_when_selected(
+        self, vaults: VaultConnections
+    ) -> None:
         settings = _settings(token_registry_backend="vault")
 
-        built = build_token_registry(settings, vault_kv, InMemorySharedState())
+        built = build_token_registry(settings, vaults, InMemorySharedState())
 
         assert isinstance(built.backend, VaultTokenRegistryBackend)
 
@@ -192,9 +200,21 @@ class TestBuildMcpAuthCodeStore:
         assert isinstance(store, McpAuthCodeStore)
 
 
-class TestBuildVaultKv:
-    async def test_is_none_when_no_subsystem_uses_vault(self) -> None:
-        assert await build_vault_kv(_settings(), httpx2.AsyncClient()) is None
+class TestBuildVaultConnections:
+    async def test_authenticates_nothing_when_no_subsystem_uses_vault(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[VaultKV] = []
+
+        async def _authenticate(self: VaultKV) -> str:
+            calls.append(self)
+            return "token"
+
+        monkeypatch.setattr(VaultKV, "_authenticate", _authenticate)
+
+        await build_vault_connections(_settings(), httpx2.AsyncClient())
+
+        assert calls == []
 
     async def test_authenticates_once_at_startup_when_a_subsystem_uses_vault(
         self, monkeypatch: pytest.MonkeyPatch
@@ -207,12 +227,11 @@ class TestBuildVaultKv:
 
         monkeypatch.setattr(VaultKV, "_authenticate", _authenticate)
 
-        built = await build_vault_kv(
-            _settings(maintenance_mode_backend="vault"), httpx2.AsyncClient()
-        )
+        settings = _settings(maintenance_mode_backend="vault")
+        built = await build_vault_connections(settings, httpx2.AsyncClient())
 
-        assert built is not None
-        assert calls == [built]
+        assert settings.vault is not None
+        assert calls == [built.connect(settings.vault)]
 
     async def test_a_failed_trial_authentication_refuses_to_boot(
         self, monkeypatch: pytest.MonkeyPatch
@@ -225,7 +244,7 @@ class TestBuildVaultKv:
         with pytest.raises(
             RuntimeError, match="Vault K8s auth failed at startup: SA token unreadable"
         ):
-            await build_vault_kv(
+            await build_vault_connections(
                 _settings(token_registry_backend="vault"), httpx2.AsyncClient()
             )
 

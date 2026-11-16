@@ -44,6 +44,10 @@ entitlements:
 broker:
   # Keycloak group whose members administer the broker.
   adminGroup: /example/admins
+  # Confidential client the broker reads group and POSIX attributes with.
+  keycloakAdmin:
+    clientId: example-keycloak-admin-client
+    existingClientSecretSecret: example-keycloak-admin-client-secret
   vault:
     # Root of the KV v2 prefix every Vault-backed store lives under
     # ({kvRoot}/x509, {kvRoot}/token-registry, ...).

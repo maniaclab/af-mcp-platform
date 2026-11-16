@@ -142,7 +142,7 @@ Create each Secret in the release namespace before installing. The names are you
 
 | Values key naming the Secret | Required key in the Secret | Needed when |
 | --- | --- | --- |
-| `broker.keycloakAdmin.existingClientSecretSecret` | `keycloak-admin-client-secret` | always (the broker will not start without it) |
+| `broker.keycloakAdmin.existingClientSecretSecret` | `keycloak-admin-client-secret` | always (the broker will not start without it; the chart schema requires the value) |
 | `broker.tokenMint.existingClientSecretSecret` | `token-mint-client-secret` | the MCP OAuth bootstrap client is configured |
 | `broker.oauth21.existingStateKeySecret` | `broker-state-key` | an `oauth21-direct` identity provider or the bootstrap client |
 | `broker.identityToken.existingSigningKeySecret` | `signing-key.pem` | any `broker-issued`, `condor-token`, `krb5-token`, `servicex-token` or `x509` provider |
@@ -178,6 +178,7 @@ Start from [`examples/example-values.yaml`](https://github.com/maniaclab/af-mcp-
 | `oidc.issuer` | The realm URL, shared by the broker and the portal. |
 | `portal.oidc.clientId` | The portal's public client. |
 | `portal.brokerOrigin` | Usually `https://<mcpHost>`; also the portal's CSP `connect-src`. |
+| `broker.keycloakAdmin.clientId`, `broker.keycloakAdmin.existingClientSecretSecret` | The admin service account from step 3 of the Keycloak setup; the broker refuses to start without it. |
 | `aggregator.services` | At least one service entry. |
 | `entitlements.group_permissions` | At least one group. |
 | `ingress.mcpHost`, `ingress.portalHost` | While `ingress.enabled` is true. |
@@ -188,8 +189,7 @@ The "Caught by" column says where each combination is refused. A render failure 
 
 | Condition | Required | Caught by |
 | --- | --- | --- |
-| always | `broker.keycloakAdmin.clientId` and its Secret | broker start |
-| `broker.replicaCount` above 1 | `broker.sharedState.url` or `existingSecret.name`, or `allowPerReplicaState: true` | chart render and broker start |
+| `broker.replicaCount` above 1 | `broker.sharedState.url` or `existingSecret.name`, or `allowPerReplicaState: true` | chart render (`values.schema.json`, with a template check as backstop) and broker start |
 | any Vault-backed store, or an x509, krb5-token or servicex-token provider | `broker.vault.kvRoot`, `broker.oauth21.tokenStore.vault.addr` and `authRole` | chart render |
 | `broker.usage.backend: postgres` | `broker.usage.postgres.existingSecret.name` and `networkPolicy.podSelector` | chart render |
 | `broker.maintenanceMode.backend: postgres` | `broker.maintenanceMode.postgres.existingSecret.name`, or `broker.usage.backend: postgres` with its secret (the DSN is reused) | chart render (template, since it spans two selectors) |
@@ -335,7 +335,7 @@ Removed values that now fail, and what replaced them:
 | --- | --- |
 | every `kvPathPrefix` key (token store, token registry, principal cache, maintenance mode) and `x509KvPathPrefix`, `krb5KvPathPrefix`, `servicexKvPathPrefix`, `credmonKvPathPrefix` | one `broker.vault.kvRoot` (records under the old prefixes are not moved; copy them in Vault if they must survive) |
 | `networkPolicy.broker.servicePorts`, and the `clusterName` and `namespaceSelector` keys of the Postgres and shared-state `networkPolicy` blocks | `networkPolicy.egress.endpoints` with `podSelector` and `targetPort`; `broker.usage.postgres.networkPolicy` and `broker.sharedState.networkPolicy` take the same peer shape |
-| `broker.tracing.endpoint`, `broker.tracing.networkPolicy` | `broker.otlp.endpoint`, shared by every OTLP signal (these two keys fail the render with a message naming the replacement) |
+| `broker.tracing.endpoint`, `broker.tracing.networkPolicy` | `broker.otlp.endpoint`, shared by every OTLP signal (the schema rejects these two keys as unknown; the collector egress rule is generated from `broker.otlp.endpoint`, with the collector pods declared under `networkPolicy.egress.endpoints`) |
 | built-in facility defaults for hosts, TLS Secret names, cert-manager issuer, home-directory PVC and Grafana namespace | set them in your values (`ingress.*`, `grafanaDashboard.namespace`); TLS Secret names derive from the release when left empty |
 
 ## Failure modes
