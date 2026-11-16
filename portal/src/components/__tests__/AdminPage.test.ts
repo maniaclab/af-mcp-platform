@@ -121,6 +121,7 @@ const USAGE: UsageResponse = {
   },
   by_service: [],
   by_day: [],
+  by_content_type: [],
 };
 
 const OBSERVED_AT = 1_700_000_000;
