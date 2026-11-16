@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 
 from af_mcp_broker.credentials import KrbTokenProvider
@@ -55,7 +54,7 @@ async def _fake_authenticate(self: VaultKV) -> str:
 
 @pytest.fixture
 def krb5_token_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, broker_signing_key_file: Path
 ) -> Callable[..., None]:
     """Point the app at a krb5-token identity provider and (optionally) a real signing key on disk and a stubbed Vault connection.
 
@@ -74,9 +73,7 @@ def krb5_token_env(
         monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_KRB5_TOKEN_PROVIDERS))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         if with_signing_key:
-            key_file = tmp_path / "signing-key.pem"
-            key_file.write_bytes(_private_pem(_make_rsa_key()))
-            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
         else:
             monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
         if with_vault:

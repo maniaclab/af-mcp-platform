@@ -29,7 +29,7 @@ from mcp.types import Prompt as McpPrompt
 from mcp.types import Resource as McpResource
 from mcp.types import ResourceTemplate as McpResourceTemplate
 from mcp.types import Tool as McpTool
-from test_broker_issued import _make_rsa_key, _private_pem
+from signing_keys import make_rsa_key, private_pem
 
 from af_mcp_broker import metrics
 from af_mcp_broker.authorization import EntitlementPolicy
@@ -2308,7 +2308,7 @@ async def test_list_cache_bypass_logs_debug_event_when_no_context(
 def _make_issuer():
 
     return BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()),
+        private_key_pem=private_pem(make_rsa_key()),
         issuer="https://mcp.example.com",
         ttl_seconds=600,
     )

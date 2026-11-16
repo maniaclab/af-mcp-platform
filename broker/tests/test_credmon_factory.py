@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
-from _credmon_fake_vault import FakeVault, make_vault_kv
-from test_broker_issued import ISSUER_URL, _make_rsa_key, _private_pem
+from test_broker_issued import ISSUER_URL
+from vault_fakes import FakeVault, make_vault_kv
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials.base import CredentialRegistry
@@ -45,14 +45,12 @@ def _settings_and_api(
 
 
 @pytest.fixture
-def issuer() -> BrokerTokenIssuer:
-    return BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()), issuer=ISSUER_URL
-    )
+def issuer(broker_signing_key_pem: bytes) -> BrokerTokenIssuer:
+    return BrokerTokenIssuer(private_key_pem=broker_signing_key_pem, issuer=ISSUER_URL)
 
 
 async def test_refuses_without_signing_key(
-    tmp_path: Path, static_principal_cache
+    tmp_path: Path, static_principal_cache, sa_token_path: Path
 ) -> None:
     cache, _ = static_principal_cache
     with pytest.raises(RuntimeError, match="BROKER_SIGNING_KEY_FILE"):
@@ -62,7 +60,7 @@ async def test_refuses_without_signing_key(
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
             store_prefixes={},
-            vault_kv=make_vault_kv(FakeVault(), tmp_path),
+            vault_kv=make_vault_kv(FakeVault(), sa_token_path),
             principal_cache=cache,
             http_client=httpx2.AsyncClient(),
         )
@@ -85,7 +83,9 @@ async def test_refuses_without_vault(
         )
 
 
-async def test_refuses_without_principal_directory(tmp_path: Path, issuer) -> None:
+async def test_refuses_without_principal_directory(
+    tmp_path: Path, issuer, sa_token_path: Path
+) -> None:
     with pytest.raises(RuntimeError, match="principal directory"):
         await build_credmon_sync(
             *_settings_and_api(tmp_path),
@@ -93,14 +93,14 @@ async def test_refuses_without_principal_directory(tmp_path: Path, issuer) -> No
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
             store_prefixes={},
-            vault_kv=make_vault_kv(FakeVault(), tmp_path),
+            vault_kv=make_vault_kv(FakeVault(), sa_token_path),
             principal_cache=None,
             http_client=httpx2.AsyncClient(),
         )
 
 
 async def test_refuses_unreadable_token_file(
-    tmp_path: Path, issuer, static_principal_cache
+    tmp_path: Path, issuer, static_principal_cache, sa_token_path: Path
 ) -> None:
     cache, _ = static_principal_cache
     with pytest.raises(RuntimeError, match="CREDMON_HTCONDOR_API_TOKEN_FILE"):
@@ -112,14 +112,14 @@ async def test_refuses_unreadable_token_file(
             credential_registry=CredentialRegistry(),
             targets_by_kind={},
             store_prefixes={},
-            vault_kv=make_vault_kv(FakeVault(), tmp_path),
+            vault_kv=make_vault_kv(FakeVault(), sa_token_path),
             principal_cache=cache,
             http_client=httpx2.AsyncClient(),
         )
 
 
 async def test_kinds_without_targets_are_skipped(
-    tmp_path: Path, issuer, static_principal_cache
+    tmp_path: Path, issuer, static_principal_cache, sa_token_path: Path
 ) -> None:
     cache, _ = static_principal_cache
     sync = await build_credmon_sync(
@@ -128,7 +128,7 @@ async def test_kinds_without_targets_are_skipped(
         credential_registry=CredentialRegistry(),
         targets_by_kind={"x509": [], "krb5": [], "servicex": []},
         store_prefixes={},
-        vault_kv=make_vault_kv(FakeVault(), tmp_path),
+        vault_kv=make_vault_kv(FakeVault(), sa_token_path),
         principal_cache=cache,
         http_client=httpx2.AsyncClient(),
     )

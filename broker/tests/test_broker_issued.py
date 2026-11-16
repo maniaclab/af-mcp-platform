@@ -19,14 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import (
-    Encoding,
-    NoEncryption,
-    PrivateFormat,
-    PublicFormat,
-)
 from jwt.algorithms import RSAAlgorithm
+from signing_keys import make_rsa_key, private_pem, public_pem
 
 from af_mcp_broker import metrics
 from af_mcp_broker.config import Settings
@@ -44,6 +38,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
 ISSUER_URL = "https://mcp.example.com"
 
 # The documented claim set (issue #162) -- identity assertion, nothing more.
@@ -51,20 +47,6 @@ ISSUER_URL = "https://mcp.example.com"
 # a group, anything) is a design failure, not an additive change.
 _BASE_CLAIMS = frozenset({"iss", "sub", "aud", "exp", "iat", "jti"})
 _POSIX_CLAIMS = _BASE_CLAIMS | {"uid", "gid", "unixname"}
-
-
-def _make_rsa_key() -> rsa.RSAPrivateKey:
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-
-def _private_pem(key: rsa.RSAPrivateKey) -> bytes:
-    return key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-
-
-def _public_pem(key: rsa.RSAPrivateKey) -> bytes:
-    return key.public_key().public_bytes(
-        Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
-    )
 
 
 def _rfc7638_thumbprint(key: rsa.RSAPrivateKey) -> str:
@@ -103,14 +85,14 @@ def verify_against_jwks(
 
 
 @pytest.fixture
-def rsa_key() -> rsa.RSAPrivateKey:
-    return _make_rsa_key()
+def rsa_key(broker_signing_key: rsa.RSAPrivateKey) -> rsa.RSAPrivateKey:
+    return broker_signing_key
 
 
 @pytest.fixture
 def issuer(rsa_key: rsa.RSAPrivateKey) -> BrokerTokenIssuer:
     return BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key),
+        private_key_pem=private_pem(rsa_key),
         issuer=ISSUER_URL,
         ttl_seconds=600,
     )
@@ -198,7 +180,7 @@ def test_mint_jti_is_unique_per_token(issuer: BrokerTokenIssuer) -> None:
 
 def test_mint_respects_configured_ttl(rsa_key: rsa.RSAPrivateKey) -> None:
     issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key), issuer=ISSUER_URL, ttl_seconds=42
+        private_key_pem=private_pem(rsa_key), issuer=ISSUER_URL, ttl_seconds=42
     )
     token, expires_at = issuer.mint("user-123", "jupyter-mcp")
     claims = jwt.decode(token, options={"verify_signature": False})
@@ -231,7 +213,7 @@ def test_mint_per_call_ttl_overrides_configured_ttl(
 
 
 def test_kid_is_the_rfc7638_thumbprint(rsa_key: rsa.RSAPrivateKey) -> None:
-    issuer = BrokerTokenIssuer(private_key_pem=_private_pem(rsa_key), issuer=ISSUER_URL)
+    issuer = BrokerTokenIssuer(private_key_pem=private_pem(rsa_key), issuer=ISSUER_URL)
 
     assert issuer.kid == _rfc7638_thumbprint(rsa_key)
 
@@ -239,7 +221,7 @@ def test_kid_is_the_rfc7638_thumbprint(rsa_key: rsa.RSAPrivateKey) -> None:
 def test_kid_is_stable_across_loads_of_the_same_key(
     rsa_key: rsa.RSAPrivateKey,
 ) -> None:
-    pem = _private_pem(rsa_key)
+    pem = private_pem(rsa_key)
     first = BrokerTokenIssuer(private_key_pem=pem, issuer=ISSUER_URL)
     second = BrokerTokenIssuer(private_key_pem=pem, issuer=ISSUER_URL)
 
@@ -268,11 +250,11 @@ def test_jwks_publishes_public_material_only(issuer: BrokerTokenIssuer) -> None:
 def test_jwks_includes_additional_rotation_keys(
     rsa_key: rsa.RSAPrivateKey,
 ) -> None:
-    old_key = _make_rsa_key()
+    old_key = make_rsa_key()
     issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key),
+        private_key_pem=private_pem(rsa_key),
         issuer=ISSUER_URL,
-        additional_public_key_pems=[_public_pem(old_key)],
+        additional_public_key_pems=[public_pem(old_key)],
     )
     jwks = issuer.jwks()
 
@@ -288,16 +270,16 @@ def test_rotation_overlap_old_token_verifies_against_new_jwks(
     """The documented rotation procedure: a token signed by the retiring key
     must keep verifying against a JWKS whose active key is the successor, as
     long as the retiring public key is still published alongside it."""
-    old_key = _make_rsa_key()
+    old_key = make_rsa_key()
     old_issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(old_key), issuer=ISSUER_URL
+        private_key_pem=private_pem(old_key), issuer=ISSUER_URL
     )
     token, _ = old_issuer.mint("user-123", "condor-token-service")
 
     new_issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key),
+        private_key_pem=private_pem(rsa_key),
         issuer=ISSUER_URL,
-        additional_public_key_pems=[_public_pem(old_key)],
+        additional_public_key_pems=[public_pem(old_key)],
     )
 
     claims = verify_against_jwks(
@@ -331,9 +313,9 @@ def test_consumer_rejects_wrong_audience(issuer: BrokerTokenIssuer) -> None:
 
 
 def _write_key_files(tmp_path: Path) -> tuple[rsa.RSAPrivateKey, Path]:
-    key = _make_rsa_key()
+    key = make_rsa_key()
     key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(key))
+    key_file.write_bytes(private_pem(key))
     return key, key_file
 
 
@@ -361,10 +343,10 @@ def test_load_builds_issuer_from_key_file(tmp_path: Path) -> None:
 
 def test_load_reads_additional_public_keys_dir(tmp_path: Path) -> None:
     _, key_file = _write_key_files(tmp_path)
-    old_key = _make_rsa_key()
+    old_key = make_rsa_key()
     extra_dir = tmp_path / "additional"
     extra_dir.mkdir()
-    (extra_dir / "old-key.pem").write_bytes(_public_pem(old_key))
+    (extra_dir / "old-key.pem").write_bytes(public_pem(old_key))
     # Non-*.pem files (e.g. a mounted Secret's hidden ..data plumbing) are
     # ignored rather than parsed.
     (extra_dir / "README").write_text("not a key")
@@ -640,7 +622,7 @@ def test_verify_rejects_garbage(issuer: BrokerTokenIssuer) -> None:
 
 def test_verify_rejects_expired(rsa_key: rsa.RSAPrivateKey) -> None:
     short_issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key),
+        private_key_pem=private_pem(rsa_key),
         issuer=ISSUER_URL,
         ttl_seconds=-10,
     )
@@ -653,7 +635,7 @@ def test_verify_rejects_foreign_issuer(
     issuer: BrokerTokenIssuer, rsa_key: rsa.RSAPrivateKey
 ) -> None:
     other = BrokerTokenIssuer(
-        private_key_pem=_private_pem(rsa_key),
+        private_key_pem=private_pem(rsa_key),
         issuer="https://evil.example",
         ttl_seconds=600,
     )
@@ -663,9 +645,9 @@ def test_verify_rejects_foreign_issuer(
 
 
 def test_verify_rejects_foreign_key(issuer: BrokerTokenIssuer) -> None:
-    other_key = _make_rsa_key()
+    other_key = make_rsa_key()
     other = BrokerTokenIssuer(
-        private_key_pem=_private_pem(other_key),
+        private_key_pem=private_pem(other_key),
         issuer=ISSUER_URL,
         ttl_seconds=600,
     )

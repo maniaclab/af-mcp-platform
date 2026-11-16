@@ -9,16 +9,16 @@ technique as ``test_oauth21_vault.py``).
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx2
 import pytest
 import structlog
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+from vault_fakes import AUTH_ROLE, FakeVault, make_vault_kv
 
 from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.token_registry import (
@@ -31,12 +31,8 @@ from af_mcp_broker.token_registry import (
     VaultTokenRegistryBackend,
     _record_from_fields,
 )
-from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
+from af_mcp_broker.vault_kv import CasConflictError, VaultError
 
-ADDR = "https://vault.invalid"
-AUTH_MOUNT = "kubernetes"
-AUTH_ROLE = "af-mcp-broker"
-KV_MOUNT = "secret"
 KV_PATH_PREFIX = "mcp/token-registry"
 
 
@@ -56,127 +52,10 @@ def _make_record(**overrides: Any) -> TokenRecord:
     return TokenRecord(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# Fake Vault KV-v2 HTTP API. The registry never removes entries
-# on revoke, only sets revoked_at, so get/write_cas cover it. sweep_expired()
-# (the expired-token janitor) additionally needs LIST (to enumerate
-# by-principal) and DELETE (metadata), so this fake mirrors
-# test_vault_kv.py's _FakeVault for those two verbs.
-# ---------------------------------------------------------------------------
-
-
-class _FakeRegistryVault:
-    def __init__(self, *, login_lease_duration: int = 3600) -> None:
-        self.entries: dict[str, dict[str, Any]] = {}
-        self.login_calls: list[dict[str, Any]] = []
-        self.login_lease_duration = login_lease_duration
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path.removeprefix("/v1/")
-
-        if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            body = json.loads(request.content.decode())
-            self.login_calls.append(body)
-            return httpx2.Response(
-                200,
-                json={
-                    "auth": {
-                        "client_token": "vault-test-token",
-                        "lease_duration": self.login_lease_duration,
-                        "renewable": True,
-                    }
-                },
-                request=request,
-            )
-
-        data_prefix = f"{KV_MOUNT}/data/"
-        meta_prefix = f"{KV_MOUNT}/metadata/"
-
-        if path.startswith(data_prefix):
-            key = path[len(data_prefix) :]
-            is_metadata = False
-        elif path.startswith(meta_prefix):
-            key = path[len(meta_prefix) :]
-            is_metadata = True
-        else:
-            return httpx2.Response(
-                404, json={"errors": ["unknown path"]}, request=request
-            )
-
-        if request.method == "GET" and not is_metadata:
-            entry = self.entries.get(key)
-            if entry is None:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(
-                200,
-                json={
-                    "data": {
-                        "data": entry["data"],
-                        "metadata": {"version": entry["version"]},
-                    }
-                },
-                request=request,
-            )
-
-        if request.method == "POST" and not is_metadata:
-            body = json.loads(request.content.decode())
-            cas = body["options"]["cas"]
-            current_version = self.entries.get(key, {}).get("version", 0)
-            if cas != current_version:
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-            new_version = current_version + 1
-            self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx2.Response(
-                200, json={"data": {"version": new_version}}, request=request
-            )
-
-        if request.method == "LIST" and is_metadata:
-            keys = sorted(
-                {
-                    k[len(key) :].lstrip("/").split("/")[0]
-                    for k in self.entries
-                    if k.startswith(key)
-                }
-            )
-            if not keys:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(200, json={"data": {"keys": keys}}, request=request)
-
-        if request.method == "DELETE" and is_metadata:
-            self.entries.pop(key, None)
-            return httpx2.Response(204, request=request)
-
-        return httpx2.Response(
-            404, json={"errors": ["unhandled"]}, request=request
-        )  # pragma: no cover
-
-
-@pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
-
 def _make_vault_backend(
-    fake: _FakeRegistryVault, sa_token_path: Path
+    fake: FakeVault, sa_token_path: Path
 ) -> VaultTokenRegistryBackend:
-    vault_kv = VaultKV(
-        addr=ADDR,
-        auth_mount=AUTH_MOUNT,
-        auth_role=AUTH_ROLE,
-        kv_mount=KV_MOUNT,
-        sa_token_path=str(sa_token_path),
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
-    )
+    vault_kv = make_vault_kv(fake, sa_token_path)
     return VaultTokenRegistryBackend(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
@@ -191,7 +70,7 @@ def backend(
 ) -> TokenRegistryBackend:
     if request.param == "in_memory":
         return InMemoryTokenRegistryBackend()
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     return _make_vault_backend(fake, sa_token_path)
 
 
@@ -723,7 +602,7 @@ async def test_sweep_owners_removed_for_vault_backend(sa_token_path: Path) -> No
     lookup-owner index entry -- owner_principal_id() must forget the
     lookup_id once its record is gone, not just leave a dangling ownership
     pointer."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     now = time.time()
     await backend.add(
@@ -747,7 +626,7 @@ async def test_sweep_emptied_principal_path_can_be_recreated(
     """Vault-specific: emptying a by-principal path leaves an empty entry
     (written with CAS, never deleted -- see ``_remove_records``), and a
     subsequent add() for that principal still works against it."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     now = time.time()
     await backend.add(
@@ -776,7 +655,7 @@ async def test_sweep_emptied_principal_path_can_be_recreated(
 
 
 async def test_mint_on_one_replica_visible_on_another(sa_token_path: Path) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
 
@@ -787,7 +666,7 @@ async def test_mint_on_one_replica_visible_on_another(sa_token_path: Path) -> No
 
 
 async def test_revoke_on_one_replica_visible_on_another(sa_token_path: Path) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     await replica_a.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
@@ -802,7 +681,7 @@ async def test_revoke_on_one_replica_visible_on_another(sa_token_path: Path) -> 
 async def test_records_survive_reconstructing_the_backend(sa_token_path: Path) -> None:
     """A fresh VaultTokenRegistryBackend pointed at the same fake KV models a
     broker pod restart -- the object is new, but persisted state is not."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend_before = _make_vault_backend(fake, sa_token_path)
     await backend_before.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
 
@@ -817,7 +696,7 @@ async def test_add_retries_on_concurrent_cas_conflict(sa_token_path: Path) -> No
     lookup_ids) must both succeed -- the read-modify-write CAS loop must
     retry on a version conflict rather than silently dropping one of the two
     writes."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
 
@@ -843,7 +722,7 @@ async def test_add_cas_retry_reevaluates_name_uniqueness_against_the_winner(
     CAS write forces a loser to retry -- and that retry must re-read the
     winner's data and re-run the uniqueness check against it, not just retry
     the blind write."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
 
@@ -868,7 +747,7 @@ async def test_add_cas_retry_reevaluates_name_uniqueness_against_the_winner(
 
 
 async def test_vault_authenticates_once_and_caches_token(sa_token_path: Path) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
 
     await backend.add(_make_record())
@@ -888,7 +767,7 @@ _PRINCIPAL_KEY = f"{KV_PATH_PREFIX}/by-principal/p1"
 async def test_vault_revoke_is_one_write_to_the_principal_entry(
     sa_token_path: Path,
 ) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
     version_before = fake.entries[_PRINCIPAL_KEY]["version"]
@@ -904,7 +783,7 @@ async def test_vault_revoked_pat_is_rejected_by_the_record_alone(
 ) -> None:
     """``pat_auth.resolve_pat_principal`` rejects on ``record.revoked_at``
     from ``get_by_lookup_id`` -- the very next lookup after revoke() sees it."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
 
@@ -916,7 +795,7 @@ async def test_vault_revoked_pat_is_rejected_by_the_record_alone(
 
 
 async def test_vault_concurrent_revokes_both_land(sa_token_path: Path) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     await replica_a.add(
@@ -1009,7 +888,7 @@ async def test_delete_inactive_for_unknown_principal_returns_empty(
 async def test_vault_delete_inactive_of_last_record_allows_re_adding(
     sa_token_path: Path,
 ) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     await backend.add(_make_record(lookup_id="lookup-1", principal_id="p1"))
     await backend.revoke("p1", "lookup-1", revoked_at=1.0)
@@ -1027,7 +906,7 @@ async def test_vault_delete_inactive_of_last_record_allows_re_adding(
 async def test_vault_delete_inactive_retries_on_concurrent_cas_conflict(
     sa_token_path: Path,
 ) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
@@ -1074,7 +953,7 @@ async def test_vault_delete_of_last_row_keeps_a_mint_that_lands_mid_delete(
     """Deleting a principal's last revoked row while minting elsewhere must
     not lose the new record: emptying the entry is a CAS write, so the mint
     either wins and is re-read, or conflicts and is retried."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     await replica_a.add(_make_record(lookup_id="dead", principal_id="p1", name="dead"))
@@ -1097,7 +976,7 @@ async def test_vault_delete_of_last_row_keeps_a_mint_that_lands_mid_delete(
 async def test_vault_sweep_keeps_a_mint_that_lands_mid_sweep(
     sa_token_path: Path,
 ) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     now = time.time()
@@ -1155,7 +1034,7 @@ async def test_revoke_all_for_unknown_principal_returns_empty(
 
 
 async def test_vault_revoke_all_is_one_write(sa_token_path: Path) -> None:
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     await backend.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
     await backend.add(_make_record(lookup_id="b", principal_id="p1", name="b"))
@@ -1172,7 +1051,7 @@ async def test_vault_revoke_all_retries_on_concurrent_cas_conflict(
 ) -> None:
     """A revoke_all() racing an add() must not drop the concurrently added
     record's write, nor miss a record the winner just wrote."""
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     replica_a = _make_vault_backend(fake, sa_token_path)
     replica_b = _make_vault_backend(fake, sa_token_path)
     await replica_a.add(_make_record(lookup_id="a", principal_id="p1", name="a"))
@@ -1331,7 +1210,7 @@ async def test_vault_cas_loop_retries_repeated_conflicts_then_succeeds(
     case: str, sa_token_path: Path
 ) -> None:
     seed, operation, state_after, _, _ = _CAS_CASES[case]
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     await seed(backend)
     attempts = _conflict_on_principal_writes(
@@ -1350,7 +1229,7 @@ async def test_vault_cas_loop_gives_up_after_the_retry_budget(
     case: str, sa_token_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     seed, operation, _, state_unchanged, raises = _CAS_CASES[case]
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     backend = _make_vault_backend(fake, sa_token_path)
     await seed(backend)
     attempts = _conflict_on_principal_writes(backend, _PRINCIPAL_KEY, MAX_CAS_RETRIES)

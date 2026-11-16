@@ -13,13 +13,12 @@ contract.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import httpx2
 import pytest
 import structlog.testing
+from vault_fakes import FakeVault, make_vault_kv
 
 from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.principal_cache import (
@@ -38,7 +37,7 @@ from af_mcp_broker.principal_directory import (
     PrincipalNotActiveError,
     PrincipalNotFoundError,
 )
-from af_mcp_broker.vault_kv import VaultError, VaultKV
+from af_mcp_broker.vault_kv import VaultError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -479,105 +478,13 @@ async def test_expired_rejections_are_pruned(monkeypatch: pytest.MonkeyPatch) ->
     assert set(cache._rejections) == {"p2"}
 
 
-# ---------------------------------------------------------------------------
-# Fake Vault KV-v2 HTTP API for VaultPrincipalCacheBackend -- get/write_cas
-# only, same technique as test_token_registry.py's _FakeRegistryVault, pared
-# down since this backend needs no LIST/DELETE (no secondary indices).
-# ---------------------------------------------------------------------------
-
-ADDR = "https://vault.invalid"
-AUTH_MOUNT = "kubernetes"
-AUTH_ROLE = "af-mcp-broker"
-KV_MOUNT = "secret"
 KV_PATH_PREFIX = "mcp/principal-cache"
 
 
-class _FakePrincipalCacheVault:
-    def __init__(self, *, login_lease_duration: int = 3600) -> None:
-        self.entries: dict[str, dict[str, Any]] = {}
-        self.login_lease_duration = login_lease_duration
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path.removeprefix("/v1/")
-
-        if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx2.Response(
-                200,
-                json={
-                    "auth": {
-                        "client_token": "vault-test-token",
-                        "lease_duration": self.login_lease_duration,
-                        "renewable": True,
-                    }
-                },
-                request=request,
-            )
-
-        data_prefix = f"{KV_MOUNT}/data/"
-        if not path.startswith(data_prefix):
-            return httpx2.Response(
-                404, json={"errors": ["unknown path"]}, request=request
-            )
-        key = path[len(data_prefix) :]
-
-        if request.method == "GET":
-            entry = self.entries.get(key)
-            if entry is None:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(
-                200,
-                json={
-                    "data": {
-                        "data": entry["data"],
-                        "metadata": {"version": entry["version"]},
-                    }
-                },
-                request=request,
-            )
-
-        if request.method == "POST":
-            body = json.loads(request.content.decode())
-            cas = body["options"]["cas"]
-            current_version = self.entries.get(key, {}).get("version", 0)
-            if cas != current_version:
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-            new_version = current_version + 1
-            self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx2.Response(
-                200, json={"data": {"version": new_version}}, request=request
-            )
-
-        return httpx2.Response(
-            404, json={"errors": ["unhandled"]}, request=request
-        )  # pragma: no cover
-
-
-@pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
-
 def _make_vault_backend(
-    fake: _FakePrincipalCacheVault, sa_token_path: Path
+    fake: FakeVault, sa_token_path: Path
 ) -> VaultPrincipalCacheBackend:
-    vault_kv = VaultKV(
-        addr=ADDR,
-        auth_mount=AUTH_MOUNT,
-        auth_role=AUTH_ROLE,
-        kv_mount=KV_MOUNT,
-        sa_token_path=str(sa_token_path),
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
-    )
+    vault_kv = make_vault_kv(fake, sa_token_path)
     return VaultPrincipalCacheBackend(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
@@ -593,7 +500,7 @@ def cache_backend(
 ) -> PrincipalCacheBackend:
     if request.param == "in_memory":
         return InMemoryPrincipalCacheBackend()
-    fake = _FakePrincipalCacheVault()
+    fake = FakeVault()
     return _make_vault_backend(fake, sa_token_path)
 
 
@@ -655,7 +562,7 @@ async def test_vault_backend_survives_reconstructing_the_backend(
 ) -> None:
     """A fresh VaultPrincipalCacheBackend pointed at the same fake KV models a
     broker pod restart -- the object is new, but persisted state is not."""
-    fake = _FakePrincipalCacheVault()
+    fake = FakeVault()
     backend_before = _make_vault_backend(fake, sa_token_path)
     await backend_before.put(
         "p1", PersistedPrincipalRecord(attributes=_attrs(), resolved_at=42.0)
@@ -1370,38 +1277,11 @@ class TestPerPrincipalLocking:
 # ---------------------------------------------------------------------------
 
 
-class _ConflictingVault(_FakePrincipalCacheVault):
-    """Rejects the next *conflicts* writes with a CAS mismatch, as a concurrent writer would."""
-
-    def __init__(self, conflicts: int) -> None:
-        super().__init__()
-        self.conflicts = conflicts
-        self.write_attempts = 0
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        if request.method == "POST" and request.url.path.startswith(
-            f"/v1/{KV_MOUNT}/data/"
-        ):
-            self.write_attempts += 1
-            if self.conflicts > 0:
-                self.conflicts -= 1
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-        return super().handle(request)
-
-
 class TestVaultPutCasRetries:
     async def test_a_cas_conflict_is_retried_and_the_record_lands(
         self, sa_token_path: Path
     ) -> None:
-        fake = _ConflictingVault(conflicts=2)
+        fake = FakeVault(cas_conflicts=2)
         backend = _make_vault_backend(fake, sa_token_path)
 
         await backend.put(
@@ -1416,7 +1296,7 @@ class TestVaultPutCasRetries:
     async def test_exhausting_the_retry_budget_raises_vault_error(
         self, sa_token_path: Path
     ) -> None:
-        fake = _ConflictingVault(conflicts=MAX_CAS_RETRIES + 1)
+        fake = FakeVault(cas_conflicts=MAX_CAS_RETRIES + 1)
         backend = _make_vault_backend(fake, sa_token_path)
 
         with pytest.raises(VaultError, match="exceeded retry budget"):
@@ -1431,7 +1311,7 @@ class TestVaultPutCasRetries:
     async def test_record_fields_roundtrip_through_vault(
         self, sa_token_path: Path
     ) -> None:
-        backend = _make_vault_backend(_FakePrincipalCacheVault(), sa_token_path)
+        backend = _make_vault_backend(FakeVault(), sa_token_path)
         record = PersistedPrincipalRecord(
             attributes=_attrs(uid=None, gid=None, unixname=None, groups=[], email=""),
             resolved_at=5.0,

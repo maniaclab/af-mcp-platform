@@ -22,7 +22,6 @@ import jwt
 import pytest
 import structlog
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.errors import (
@@ -44,10 +43,8 @@ _REDEEM_RESPONSE = {"access_token": "fake-access-token", "expires_in": 3600}
 
 
 @pytest.fixture
-def issuer() -> BrokerTokenIssuer:
-    return BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()), issuer=_ISSUER_URL
-    )
+def issuer(broker_signing_key_pem: bytes) -> BrokerTokenIssuer:
+    return BrokerTokenIssuer(private_key_pem=broker_signing_key_pem, issuer=_ISSUER_URL)
 
 
 @pytest.fixture

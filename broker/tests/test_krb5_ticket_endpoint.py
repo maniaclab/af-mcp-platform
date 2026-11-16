@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from pydantic import SecretStr
 from rate_limited_helpers import assert_rate_limited_shape
-from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore
 from test_request_logging import _capturing_info
 
@@ -119,6 +118,7 @@ def krb5_app(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_client_factory: Callable[..., Any],
+    broker_signing_key_file: Path,
 ):
     """Boot the real app with a krb5-token entry, then swap the resolved
     provider's client for a scriptable fake -- see the module docstring."""
@@ -127,9 +127,7 @@ def krb5_app(
     monkeypatch.setenv("SERVICES_FILE", str(services_file))
     monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_KRB5_TOKEN_PROVIDERS))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
     # A krb5-token entry always requires Vault (config.py's
     # _validate_vault_config -- its optional "remember" feature persists
     # there with no in-memory fallback); stub the trial auth the same way

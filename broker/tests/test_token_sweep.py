@@ -10,11 +10,10 @@ the module logger directly, same technique.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 import httpx2
-import pytest
+from vault_fakes import ADDR, AUTH_MOUNT, AUTH_ROLE, KV_MOUNT, FakeVault
 
 from af_mcp_broker import token_sweep
 from af_mcp_broker.config import Settings
@@ -23,126 +22,12 @@ from af_mcp_broker.vault_kv import VaultKV
 if TYPE_CHECKING:
     from pathlib import Path
 
-ADDR = "https://vault.invalid"
-AUTH_MOUNT = "kubernetes"
-AUTH_ROLE = "af-mcp-broker"
-KV_MOUNT = "secret"
+    import pytest
+
 KV_PATH_PREFIX = "mcp/token-registry"
 
 
-# ---------------------------------------------------------------------------
-# Fake Vault KV-v2 HTTP API -- same shape as test_token_registry.py's
-# _FakeRegistryVault (GET/POST/LIST/DELETE), plus an injectable status code
-# to simulate a Vault-side failure for the VaultError exit-code test.
-# ---------------------------------------------------------------------------
-
-
-class _FakeVault:
-    def __init__(
-        self, *, login_lease_duration: int = 3600, kv_status: int | None = None
-    ) -> None:
-        self.entries: dict[str, dict[str, Any]] = {}
-        self.login_lease_duration = login_lease_duration
-        self.kv_status = kv_status
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path.removeprefix("/v1/")
-
-        if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx2.Response(
-                200,
-                json={
-                    "auth": {
-                        "client_token": "vault-test-token",
-                        "lease_duration": self.login_lease_duration,
-                        "renewable": True,
-                    }
-                },
-                request=request,
-            )
-
-        data_prefix = f"{KV_MOUNT}/data/"
-        meta_prefix = f"{KV_MOUNT}/metadata/"
-        if path.startswith(data_prefix):
-            key = path[len(data_prefix) :]
-            is_metadata = False
-        elif path.startswith(meta_prefix):
-            key = path[len(meta_prefix) :]
-            is_metadata = True
-        else:
-            return httpx2.Response(
-                404, json={"errors": ["unknown path"]}, request=request
-            )
-
-        if self.kv_status is not None:
-            return httpx2.Response(
-                self.kv_status, json={"errors": ["internal error"]}, request=request
-            )
-
-        if request.method == "GET" and not is_metadata:
-            entry = self.entries.get(key)
-            if entry is None:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(
-                200,
-                json={
-                    "data": {
-                        "data": entry["data"],
-                        "metadata": {"version": entry["version"]},
-                    }
-                },
-                request=request,
-            )
-
-        if request.method == "POST" and not is_metadata:
-            body = json.loads(request.content.decode())
-            cas = body["options"]["cas"]
-            current_version = self.entries.get(key, {}).get("version", 0)
-            if cas != current_version:
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-            new_version = current_version + 1
-            self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx2.Response(
-                200, json={"data": {"version": new_version}}, request=request
-            )
-
-        if request.method == "LIST" and is_metadata:
-            keys = sorted(
-                {
-                    k[len(key) :].lstrip("/").split("/")[0]
-                    for k in self.entries
-                    if k.startswith(key)
-                }
-            )
-            if not keys:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(200, json={"data": {"keys": keys}}, request=request)
-
-        if request.method == "DELETE" and is_metadata:
-            self.entries.pop(key, None)
-            return httpx2.Response(204, request=request)
-
-        return httpx2.Response(
-            404, json={"errors": ["unhandled"]}, request=request
-        )  # pragma: no cover
-
-
-@pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
-
-def _patch_vault_kv(monkeypatch: pytest.MonkeyPatch, fake: _FakeVault) -> None:
+def _patch_vault_kv(monkeypatch: pytest.MonkeyPatch, fake: FakeVault) -> None:
     """Make token_sweep's VaultKV construction route through *fake* instead
     of a real HTTP connection, by injecting a MockTransport-backed client."""
     real_vault_kv = VaultKV
@@ -207,7 +92,7 @@ async def test_run_refusal_logs_the_reason(monkeypatch: pytest.MonkeyPatch) -> N
 async def test_run_returns_zero_on_success(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
-    fake = _FakeVault()
+    fake = FakeVault()
     _patch_vault_kv(monkeypatch, fake)
     settings = _vault_settings(sa_token_path)
 
@@ -219,7 +104,7 @@ async def test_run_returns_zero_on_success(
 async def test_run_logs_sweep_stats_on_success(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
-    fake = _FakeVault()
+    fake = FakeVault()
     _patch_vault_kv(monkeypatch, fake)
     settings = _vault_settings(sa_token_path)
 
@@ -250,7 +135,7 @@ async def test_run_logs_sweep_stats_on_success(
 async def test_run_returns_nonzero_on_vault_error(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
-    fake = _FakeVault(kv_status=500)
+    fake = FakeVault(kv_status=500)
     _patch_vault_kv(monkeypatch, fake)
     settings = _vault_settings(sa_token_path)
 
@@ -262,7 +147,7 @@ async def test_run_returns_nonzero_on_vault_error(
 async def test_run_logs_failure_on_vault_error(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
-    fake = _FakeVault(kv_status=500)
+    fake = FakeVault(kv_status=500)
     _patch_vault_kv(monkeypatch, fake)
     settings = _vault_settings(sa_token_path)
 

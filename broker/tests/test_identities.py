@@ -30,7 +30,6 @@ import httpx2
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
 from x509_fakes import FakeX509Store
 
 from af_mcp_broker.app import app as broker_app
@@ -40,6 +39,7 @@ from af_mcp_broker.credentials.oidc import OIDCLinkStatus, OIDCProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from fastapi.testclient import TestClient
 
@@ -458,13 +458,11 @@ def test_broker_issued_link_mechanism_is_none(
     monkeypatch: pytest.MonkeyPatch,
     app_client_factory: Callable[..., object],
     tmp_path,
+    broker_signing_key_file: Path,
 ) -> None:
     """AF-native entries have no linking step at all — the broker is
     authoritative, so there is no portal action to start."""
-
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",
@@ -589,15 +587,13 @@ def test_explicit_x509_entry_renders_from_its_config(
     monkeypatch: pytest.MonkeyPatch,
     app_client_factory: Callable[..., object],
     tmp_path,
+    broker_signing_key_file: Path,
 ) -> None:
     """An operator-written x509 entry is an ordinary registry row: its own
     alias/display_name/enables, the passphrase mechanism, no link_url (here
     the entry still needs the signing key, which this test mounts -- see
     app.py's lifespan)."""
-
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
     monkeypatch.setenv(
         "IDENTITY_PROVIDERS",

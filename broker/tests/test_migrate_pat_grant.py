@@ -15,20 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pytest
 from test_token_registry import (
     KV_PATH_PREFIX,
-    _FakeRegistryVault,
     _make_vault_backend,
 )
-
-
-@pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
+from vault_fakes import FakeVault
 
 _SCRIPT = (
     Path(__file__).resolve().parents[2] / "scripts" / "migrate-pat-capability-grant.py"
@@ -63,22 +54,20 @@ def _fields(lookup_id: str, **extra: Any) -> dict[str, Any]:
     return fields
 
 
-def _seed(
-    fake: _FakeRegistryVault, principal_id: str, *records: dict[str, Any]
-) -> None:
+def _seed(fake: FakeVault, principal_id: str, *records: dict[str, Any]) -> None:
     fake.entries[f"{KV_PATH_PREFIX}/by-principal/{principal_id}"] = {
         "data": {fields["lookup_id"]: fields for fields in records},
         "version": 1,
     }
 
 
-def _stored(fake: _FakeRegistryVault, principal_id: str) -> dict[str, Any]:
+def _stored(fake: FakeVault, principal_id: str) -> dict[str, Any]:
     return fake.entries[f"{KV_PATH_PREFIX}/by-principal/{principal_id}"]["data"]
 
 
 async def test_apply_migrates_scoped_record(sa_token_path: Path) -> None:
     script = _load_script()
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     _seed(fake, "p1", _fields("scoped", capability_grant=["read_data", "admin"]))
     backend = _make_vault_backend(fake, sa_token_path)
 
@@ -99,7 +88,7 @@ async def test_apply_migrates_null_record_preserving_null(
     sa_token_path: Path,
 ) -> None:
     script = _load_script()
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     _seed(fake, "p1", _fields("unscoped", capability_grant=None))
     backend = _make_vault_backend(fake, sa_token_path)
 
@@ -120,7 +109,7 @@ async def test_already_migrated_record_is_counted_and_untouched(
     sa_token_path: Path,
 ) -> None:
     script = _load_script()
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     _seed(fake, "p1", _fields("done", permission_grant=["read_data"]))
     backend = _make_vault_backend(fake, sa_token_path)
 
@@ -142,7 +131,7 @@ async def test_record_with_both_keys_is_refused_untouched(
     sa_token_path: Path,
 ) -> None:
     script = _load_script()
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     _seed(
         fake,
         "p1",
@@ -170,7 +159,7 @@ async def test_record_with_both_keys_is_refused_untouched(
 
 async def test_dry_run_writes_nothing(sa_token_path: Path) -> None:
     script = _load_script()
-    fake = _FakeRegistryVault()
+    fake = FakeVault()
     _seed(fake, "p1", _fields("scoped", capability_grant=["read_data"]))
     backend = _make_vault_backend(fake, sa_token_path)
 

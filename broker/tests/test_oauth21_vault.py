@@ -21,18 +21,15 @@ from conftest import TEST_SERVICES
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from vault_fakes import ADDR, AUTH_ROLE, FakeVault, make_vault_kv
 
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials.errors import VersionConflictError
 from af_mcp_broker.credentials.oauth21 import StoredOAuthCredential
 from af_mcp_broker.credentials.vault import VaultTokenStore
-from af_mcp_broker.vault_kv import VaultError, VaultKV
+from af_mcp_broker.vault_kv import VaultError
 
-ADDR = "https://vault.invalid"
-AUTH_MOUNT = "kubernetes"
-AUTH_ROLE = "af-mcp-broker"
-KV_MOUNT = "secret"
 KV_PATH_PREFIX = "mcp/tokens"
 
 SUBJECT = "kc-subject-123"
@@ -56,131 +53,8 @@ def _make_cred(**overrides: Any) -> StoredOAuthCredential:
     return StoredOAuthCredential(**defaults)
 
 
-class _FakeVault:
-    """In-memory fake of the subset of Vault's HTTP API this store uses.
-
-    ``entries`` maps ``(subject, alias)`` -> ``{"data": dict, "version": int}``.
-    A key absent from ``entries`` behaves as Vault does for a path that has
-    never been written to *or* whose metadata has been destroyed: GET 404s,
-    and a CAS write with ``cas=0`` succeeds (current version is 0). The
-    broker only ever destroys via the metadata endpoint (never a bare
-    soft-delete on ``data``), so collapsing "destroyed" and "never written"
-    into one absent-key state matches exactly what production code exercises.
-    """
-
-    def __init__(
-        self, *, login_lease_duration: int = 3600, kv_status: int | None = None
-    ):
-        self.entries: dict[tuple[str, str], dict[str, Any]] = {}
-        self.login_calls: list[dict[str, Any]] = []
-        self.login_lease_duration = login_lease_duration
-        # When set, every KV data/metadata request responds with this status
-        # instead of running the normal CAS logic -- for error-mapping tests.
-        self.kv_status = kv_status
-
-    def _kv_key_from_path(self, path: str) -> tuple[str, str] | None:
-        # path looks like "secret/data/mcp/tokens/<subject>/<alias>" or
-        # "secret/metadata/mcp/tokens/<subject>/<alias>".
-        prefix = f"{KV_MOUNT}/data/{KV_PATH_PREFIX}/"
-        meta_prefix = f"{KV_MOUNT}/metadata/{KV_PATH_PREFIX}/"
-        if path.startswith(prefix):
-            rest = path[len(prefix) :]
-        elif path.startswith(meta_prefix):
-            rest = path[len(meta_prefix) :]
-        else:
-            return None
-        subject, _, alias = rest.partition("/")
-        return subject, alias
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path.removeprefix("/v1/")
-
-        if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            body = _json_body(request)
-            self.login_calls.append(body)
-            return httpx2.Response(
-                200,
-                json={
-                    "auth": {
-                        "client_token": "vault-test-token",
-                        "lease_duration": self.login_lease_duration,
-                        "renewable": True,
-                    }
-                },
-                request=request,
-            )
-
-        key = self._kv_key_from_path(path)
-        if key is None:
-            return httpx2.Response(
-                404, json={"errors": ["unknown path"]}, request=request
-            )
-
-        if self.kv_status is not None:
-            return httpx2.Response(
-                self.kv_status, json={"errors": ["internal error"]}, request=request
-            )
-
-        is_metadata = path.startswith(f"{KV_MOUNT}/metadata/")
-
-        if request.method == "GET":
-            entry = self.entries.get(key)
-            if entry is None:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(
-                200,
-                json={
-                    "data": {
-                        "data": entry["data"],
-                        "metadata": {"version": entry["version"]},
-                    }
-                },
-                request=request,
-            )
-
-        if request.method == "POST" and not is_metadata:
-            body = _json_body(request)
-            cas = body["options"]["cas"]
-            current_version = self.entries.get(key, {}).get("version", 0)
-            if cas != current_version:
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-            new_version = current_version + 1
-            self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx2.Response(
-                200, json={"data": {"version": new_version}}, request=request
-            )
-
-        if request.method == "DELETE" and is_metadata:
-            self.entries.pop(key, None)
-            return httpx2.Response(204, request=request)
-
-        return httpx2.Response(
-            404, json={"errors": ["unhandled"]}, request=request
-        )  # pragma: no cover
-
-
-def _json_body(request: httpx2.Request) -> dict[str, Any]:
-
-    return json.loads(request.content.decode())
-
-
-def _make_store(fake: _FakeVault, sa_token_path: Path) -> VaultTokenStore:
-    vault_kv = VaultKV(
-        addr=ADDR,
-        auth_mount=AUTH_MOUNT,
-        auth_role=AUTH_ROLE,
-        kv_mount=KV_MOUNT,
-        sa_token_path=str(sa_token_path),
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),
-    )
+def _make_store(fake: FakeVault, sa_token_path: Path) -> VaultTokenStore:
+    vault_kv = make_vault_kv(fake, sa_token_path)
     return VaultTokenStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
@@ -193,27 +67,20 @@ def _broker_signing_key(
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
 
 
-@pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
-
 # ---------------------------------------------------------------------------
 # get
 # ---------------------------------------------------------------------------
 
 
 async def test_get_returns_none_on_404(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
 
     assert await store.get(SUBJECT, ALIAS) is None
 
 
 async def test_get_round_trips_secret_str_values(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     cred = _make_cred()
 
@@ -230,13 +97,13 @@ async def test_get_round_trips_secret_str_values(sa_token_path: Path) -> None:
     assert got_cred.subject == SUBJECT
 
     # The wire payload must never carry pydantic's masked SecretStr rendering.
-    stored_data = fake.entries[(SUBJECT, ALIAS)]["data"]
+    stored_data = fake.entries[f"{SUBJECT}/{ALIAS}"]["data"]
     assert stored_data["access_token"] == "access-token-1"
     assert stored_data["refresh_token"] == "refresh-token-1"
 
 
 async def test_get_round_trips_credential_without_expiry(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
 
     await store.write_cas(
@@ -256,10 +123,10 @@ async def test_get_reads_a_record_stored_without_rejected_at(
 ) -> None:
     """Records linked before ``rejected_at`` existed must still load, as not
     rejected -- otherwise every existing link would break on upgrade."""
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
-    fake.entries[(SUBJECT, ALIAS)]["data"].pop("rejected_at")
+    fake.entries[f"{SUBJECT}/{ALIAS}"]["data"].pop("rejected_at")
 
     got = await store.get(SUBJECT, ALIAS)
 
@@ -273,7 +140,7 @@ async def test_get_reads_a_record_stored_without_rejected_at(
 
 
 async def test_write_cas_none_creates_when_missing(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
 
     version = await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
@@ -282,7 +149,7 @@ async def test_write_cas_none_creates_when_missing(sa_token_path: Path) -> None:
 
 
 async def test_write_cas_none_conflicts_when_existing(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
 
@@ -291,7 +158,7 @@ async def test_write_cas_none_conflicts_when_existing(sa_token_path: Path) -> No
 
 
 async def test_write_cas_with_matching_version_succeeds(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)  # v1
 
@@ -306,7 +173,7 @@ async def test_write_cas_with_matching_version_succeeds(sa_token_path: Path) -> 
 
 
 async def test_write_cas_with_stale_version_conflicts(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)  # v1
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=1)  # v2
@@ -321,7 +188,7 @@ async def test_write_cas_with_stale_version_conflicts(sa_token_path: Path) -> No
 
 
 async def test_delete_existing_then_get_returns_none(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
 
@@ -335,7 +202,7 @@ async def test_delete_then_write_cas_none_succeeds_again(sa_token_path: Path) ->
     a subsequent create (``expected_version=None`` -> ``cas=0``) would fail
     forever against Vault's soft-delete semantics.
     """
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
     await store.write_cas(SUBJECT, ALIAS, _make_cred(), expected_version=None)
     await store.delete(SUBJECT, ALIAS)
@@ -346,7 +213,7 @@ async def test_delete_then_write_cas_none_succeeds_again(sa_token_path: Path) ->
 
 
 async def test_delete_nonexistent_is_idempotent(sa_token_path: Path) -> None:
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
 
     await store.delete(SUBJECT, ALIAS)  # must not raise
@@ -358,7 +225,7 @@ async def test_delete_nonexistent_is_idempotent(sa_token_path: Path) -> None:
 
 
 async def test_get_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
-    fake = _FakeVault(kv_status=500)
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX, kv_status=500)
     store = _make_store(fake, sa_token_path)
 
     with pytest.raises(VaultError, match="vault"):
@@ -366,7 +233,7 @@ async def test_get_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 
 
 async def test_write_cas_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
-    fake = _FakeVault(kv_status=500)
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX, kv_status=500)
     store = _make_store(fake, sa_token_path)
 
     with pytest.raises(VaultError, match="vault"):
@@ -374,7 +241,7 @@ async def test_write_cas_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 
 
 async def test_delete_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
-    fake = _FakeVault(kv_status=500)
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX, kv_status=500)
     store = _make_store(fake, sa_token_path)
 
     with pytest.raises(VaultError, match="vault"):
@@ -448,7 +315,7 @@ def test_lifespan_boots_with_vault_backend_on_successful_trial_auth(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
     _bootstrap_oauth21_vault_env(monkeypatch, sa_token_path)
-    fake = _FakeVault()
+    fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     monkeypatch.setattr(
         "af_mcp_broker.app.build_http_client",
         lambda _stack: httpx2.AsyncClient(transport=httpx2.MockTransport(fake.handle)),

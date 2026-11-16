@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import httpx2
 import pytest
+from vault_fakes import FakeVault, make_vault_kv
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.maintenance import (
@@ -19,11 +18,12 @@ from af_mcp_broker.maintenance import (
     VaultMaintenanceModeStore,
     check_not_maintenance,
 )
-from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from af_mcp_broker.vault_kv import VaultKV
 
 
 async def test_default_state_is_disabled():
@@ -55,111 +55,17 @@ async def test_set_overwrites_previous_non_default_state():
     assert await store.get() == second
 
 
-# ---------------------------------------------------------------------------
-# Fake Vault KV-v2 HTTP API for VaultMaintenanceModeStore -- get/write_cas
-# only, same technique as test_principal_cache.py's _FakePrincipalCacheVault
-# (pared down like that one, since this store needs no LIST/DELETE either).
-# ---------------------------------------------------------------------------
-
-ADDR = "https://vault.invalid"
-AUTH_MOUNT = "kubernetes"
-AUTH_ROLE = "af-mcp-broker"
-KV_MOUNT = "secret"
 KV_PATH_PREFIX = "mcp/maintenance-mode"
 
 
-class _FakeMaintenanceVault:
-    def __init__(self, *, login_lease_duration: int = 3600) -> None:
-        self.entries: dict[str, dict[str, Any]] = {}
-        self.login_lease_duration = login_lease_duration
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path.removeprefix("/v1/")
-
-        if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx2.Response(
-                200,
-                json={
-                    "auth": {
-                        "client_token": "vault-test-token",
-                        "lease_duration": self.login_lease_duration,
-                        "renewable": True,
-                    }
-                },
-                request=request,
-            )
-
-        data_prefix = f"{KV_MOUNT}/data/"
-        if not path.startswith(data_prefix):
-            return httpx2.Response(
-                404, json={"errors": ["unknown path"]}, request=request
-            )
-        key = path[len(data_prefix) :]
-
-        if request.method == "GET":
-            entry = self.entries.get(key)
-            if entry is None:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(
-                200,
-                json={
-                    "data": {
-                        "data": entry["data"],
-                        "metadata": {"version": entry["version"]},
-                    }
-                },
-                request=request,
-            )
-
-        if request.method == "POST":
-            body = json.loads(request.content.decode())
-            cas = body["options"]["cas"]
-            current_version = self.entries.get(key, {}).get("version", 0)
-            if cas != current_version:
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-            new_version = current_version + 1
-            self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx2.Response(
-                200, json={"data": {"version": new_version}}, request=request
-            )
-
-        return httpx2.Response(
-            404, json={"errors": ["unhandled"]}, request=request
-        )  # pragma: no cover
+@pytest.fixture
+def fake_vault() -> FakeVault:
+    return FakeVault()
 
 
 @pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
-
-@pytest.fixture
-def fake_vault() -> _FakeMaintenanceVault:
-    return _FakeMaintenanceVault()
-
-
-@pytest.fixture
-def vault_kv(fake_vault: _FakeMaintenanceVault, sa_token_path: Path) -> VaultKV:
-    return VaultKV(
-        addr=ADDR,
-        auth_mount=AUTH_MOUNT,
-        auth_role=AUTH_ROLE,
-        kv_mount=KV_MOUNT,
-        sa_token_path=str(sa_token_path),
-        http_client=httpx2.AsyncClient(
-            transport=httpx2.MockTransport(fake_vault.handle)
-        ),
-    )
+def vault_kv(fake_vault: FakeVault, sa_token_path: Path) -> VaultKV:
+    return make_vault_kv(fake_vault, sa_token_path)
 
 
 async def test_vault_default_state_is_disabled(vault_kv: VaultKV):
@@ -189,7 +95,7 @@ async def test_vault_set_overwrites_previous_non_default_state(vault_kv: VaultKV
 
 
 async def test_vault_set_raises_conflict_on_concurrent_write(
-    vault_kv: VaultKV, fake_vault: _FakeMaintenanceVault
+    vault_kv: VaultKV, fake_vault: FakeVault
 ):
     store = VaultMaintenanceModeStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
     # Seed an initial state so set()'s internal get() has an existing

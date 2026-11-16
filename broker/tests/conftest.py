@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Self
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
+    from cryptography.hazmat.primitives.asymmetric import rsa
     from fastmcp import FastMCP
 
     from af_mcp_broker.maintenance import MaintenanceModeStore
@@ -28,18 +29,13 @@ import httpx2
 import jwt
 import pytest
 import structlog
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import (
-    Encoding,
-    NoEncryption,
-    PrivateFormat,
-)
 from fastapi.testclient import TestClient
 from fastmcp.utilities.asgi_transport import StreamingASGITransport, run_asgi_lifespan
 from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import ASGIServer, asgi_server
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
+from signing_keys import make_rsa_key, private_pem
 from x509_fakes import FakeX509Store
 
 from af_mcp_broker import backend_client, identity, lint_observations
@@ -230,9 +226,7 @@ class RsaKey:
 
 
 def _make_key(kid: str) -> RsaKey:
-    return RsaKey(
-        kid=kid, private=rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    )
+    return RsaKey(kid=kid, private=make_rsa_key())
 
 
 # Session-scoped: a 2048-bit keygen costs ~40ms, and well over a hundred
@@ -252,15 +246,34 @@ def enc_key() -> RsaKey:
 
 # Session-scoped for the same reason as sig_key/enc_key: the shipped
 # services need the broker to sign AF Broker Identity Tokens, and every
-# app_client_factory boot loads this one on-disk key.
+# app_client_factory boot loads this one on-disk key. Tests that only need
+# *a* valid signing key (as an object, as PEM bytes or as a file) share it;
+# tests that need a second, distinct key call ``signing_keys.make_rsa_key``.
 @pytest.fixture(scope="session")
-def broker_signing_key_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def broker_signing_key() -> rsa.RSAPrivateKey:
+    return make_rsa_key()
+
+
+@pytest.fixture(scope="session")
+def broker_signing_key_pem(broker_signing_key: rsa.RSAPrivateKey) -> bytes:
+    return private_pem(broker_signing_key)
+
+
+@pytest.fixture(scope="session")
+def broker_signing_key_file(
+    tmp_path_factory: pytest.TempPathFactory, broker_signing_key_pem: bytes
+) -> Path:
     key_file = tmp_path_factory.mktemp("broker-signing-key") / "signing-key.pem"
-    key_file.write_bytes(
-        key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-    )
+    key_file.write_bytes(broker_signing_key_pem)
     return key_file
+
+
+@pytest.fixture
+def sa_token_path(tmp_path: Path) -> Path:
+    """A service-account token file, as ``VaultKV`` reads it for the K8s auth login."""
+    path = tmp_path / "sa-token"
+    path.write_text("fake-sa-jwt\n")
+    return path
 
 
 async def _fake_vault_authenticate(self: VaultKV) -> str:

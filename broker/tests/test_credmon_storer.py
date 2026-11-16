@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import jwt
 import pytest
-from test_broker_issued import ISSUER_URL, _make_rsa_key, _private_pem
+from test_broker_issued import ISSUER_URL
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credmon import storer as storer_module
@@ -62,10 +62,8 @@ def _linked(subjects: set[str]):  # type: ignore[no-untyped-def]
 
 
 @pytest.fixture
-def issuer() -> BrokerTokenIssuer:
-    return BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()), issuer=ISSUER_URL
-    )
+def issuer(broker_signing_key_pem: bytes) -> BrokerTokenIssuer:
+    return BrokerTokenIssuer(private_key_pem=broker_signing_key_pem, issuer=ISSUER_URL)
 
 
 @pytest.fixture

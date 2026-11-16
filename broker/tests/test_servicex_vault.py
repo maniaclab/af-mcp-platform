@@ -12,24 +12,18 @@ conventions. A fake Vault HTTP API is built with ``httpx2.MockTransport``
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import httpx2
 import pytest
 from pydantic import SecretStr
+from vault_fakes import FakeVault, make_vault_kv
 
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
-from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-ADDR = "https://vault.invalid"
-AUTH_MOUNT = "kubernetes"
-AUTH_ROLE = "af-mcp-broker"
-KV_MOUNT = "secret"
 KV_PATH_PREFIX = "mcp/servicex"
 
 SUBJECT = "kc-subject-123"
@@ -38,117 +32,14 @@ _REFRESH_TOKEN = "a-servicex-refresh-token"
 _ACCESS_TOKEN = "a-servicex-access-token"
 
 
-class _FakeVault:
-    """In-memory fake of the subset of Vault's HTTP API this store uses.
-
-    ``entries`` maps the KV path under the prefix (i.e. ``{subject}/servicex``)
-    to ``{"data": dict, "version": int}``. Absent keys behave as Vault does
-    for never-written or metadata-destroyed paths: GET 404s, and a CAS write
-    with ``cas=0`` succeeds.
-    """
-
-    def __init__(self) -> None:
-        self.entries: dict[str, dict[str, Any]] = {}
-
-    def _kv_key_from_path(self, path: str) -> str | None:
-        for verb in ("data", "metadata"):
-            prefix = f"{KV_MOUNT}/{verb}/{KV_PATH_PREFIX}/"
-            if path.startswith(prefix):
-                return path[len(prefix) :]
-        return None
-
-    def handle(self, request: httpx2.Request) -> httpx2.Response:
-        path = request.url.path.removeprefix("/v1/")
-
-        if path == f"auth/{AUTH_MOUNT}/login" and request.method == "POST":
-            return httpx2.Response(
-                200,
-                json={
-                    "auth": {
-                        "client_token": "vault-test-token",
-                        "lease_duration": 3600,
-                        "renewable": True,
-                    }
-                },
-                request=request,
-            )
-
-        key = self._kv_key_from_path(path)
-        if key is None:
-            return httpx2.Response(
-                404, json={"errors": ["unknown path"]}, request=request
-            )
-
-        is_metadata = path.startswith(f"{KV_MOUNT}/metadata/")
-
-        if request.method == "GET":
-            entry = self.entries.get(key)
-            if entry is None:
-                return httpx2.Response(404, json={"errors": []}, request=request)
-            return httpx2.Response(
-                200,
-                json={
-                    "data": {
-                        "data": entry["data"],
-                        "metadata": {"version": entry["version"]},
-                    }
-                },
-                request=request,
-            )
-
-        if request.method == "POST" and not is_metadata:
-            body = json.loads(request.content.decode())
-            cas = body["options"]["cas"]
-            current_version = self.entries.get(key, {}).get("version", 0)
-            if cas != current_version:
-                return httpx2.Response(
-                    400,
-                    json={
-                        "errors": [
-                            "check-and-set parameter did not match the current version"
-                        ]
-                    },
-                    request=request,
-                )
-            new_version = current_version + 1
-            self.entries[key] = {"data": body["data"], "version": new_version}
-            return httpx2.Response(
-                200, json={"data": {"version": new_version}}, request=request
-            )
-
-        if request.method == "DELETE" and is_metadata:
-            self.entries.pop(key, None)
-            return httpx2.Response(204, request=request)
-
-        return httpx2.Response(
-            404, json={"errors": ["unhandled"]}, request=request
-        )  # pragma: no cover
+@pytest.fixture
+def fake_vault() -> FakeVault:
+    return FakeVault(key_prefix=KV_PATH_PREFIX)
 
 
 @pytest.fixture
-def sa_token_path(tmp_path: Path) -> Path:
-    path = tmp_path / "sa-token"
-    path.write_text("fake-sa-jwt\n")
-    return path
-
-
-@pytest.fixture
-def fake_vault() -> _FakeVault:
-    return _FakeVault()
-
-
-@pytest.fixture
-def store(fake_vault: _FakeVault, sa_token_path: Path) -> VaultServiceXStore:
-    vault_kv = VaultKV(
-        addr=ADDR,
-        auth_mount=AUTH_MOUNT,
-        auth_role=AUTH_ROLE,
-        kv_mount=KV_MOUNT,
-        sa_token_path=str(sa_token_path),
-        http_client=httpx2.AsyncClient(
-            transport=httpx2.MockTransport(fake_vault.handle)
-        ),
-    )
+def store(fake_vault: FakeVault, sa_token_path: Path) -> VaultServiceXStore:
+    vault_kv = make_vault_kv(fake_vault, sa_token_path)
     return VaultServiceXStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 

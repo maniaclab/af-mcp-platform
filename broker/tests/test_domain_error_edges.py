@@ -21,7 +21,7 @@ from broker_state_helpers import asgi_auth_middleware
 from conftest import make_claims
 from fastmcp.exceptions import ToolError
 from rate_limited_helpers import assert_rate_limited_shape
-from test_broker_issued import _make_rsa_key, _private_pem
+from signing_keys import make_rsa_key, private_pem
 from test_condor_token import SERVICE_URL, _FakeCondorClient
 from test_mcp_aggregator import _OPEN_POLICY, _FakeProvider, _patch_context, _spec
 from test_mcp_middleware_identity import (
@@ -209,7 +209,7 @@ def _oidc_producer(status_code: int):
 def _condor_provider(http_client: Any) -> CondorTokenProvider:
     return CondorTokenProvider(
         issuer=BrokerTokenIssuer(
-            private_key_pem=_private_pem(_make_rsa_key()),
+            private_key_pem=private_pem(make_rsa_key()),
             issuer="https://broker.test",
             ttl_seconds=600,
         ),
@@ -251,7 +251,7 @@ def _condor_exchange_producer(response: httpx2.Response | Exception):
 async def _broker_issued_no_posix(make_principal) -> BaseException:
     provider = BrokerIssuedProvider(
         issuer=BrokerTokenIssuer(
-            private_key_pem=_private_pem(_make_rsa_key()),
+            private_key_pem=private_pem(make_rsa_key()),
             issuer="https://broker.test",
             ttl_seconds=600,
         ),
