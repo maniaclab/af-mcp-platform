@@ -106,10 +106,16 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import structlog
 
+from af_mcp_broker.config import InMemoryBackendConfig, VaultBackendConfig
 from af_mcp_broker.constants import MAX_CAS_RETRIES
-from af_mcp_broker.errors import BrokerError, require
+from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.shared_state import FallbackSharedState, InMemorySharedState
-from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
+from af_mcp_broker.vault_kv import (
+    CasConflictError,
+    VaultConnections,
+    VaultError,
+    VaultKV,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -816,24 +822,22 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
 
 
 def build_token_registry_backend(
-    settings: Settings, vault_kv: VaultKV | None
+    settings: Settings, vaults: VaultConnections
 ) -> TokenRegistryBackend:
     """Build the backend selected by ``settings.token_registry_backend``.
 
-    *vault_kv* is the process-wide Vault transport, present whenever
-    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
-    ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    *vaults* hands out the process-wide Vault transport for the
+    ``VaultConfig`` the selected backend carries. The ``match`` is exhaustive
+    over the config union: ``assert_never`` makes
     mypy fail when a backend name is added without a branch here.
     """
-    backend = settings.token_registry_backend
+    backend = settings.token_registry
     match backend:
-        case "in_memory":
+        case InMemoryBackendConfig():
             return InMemoryTokenRegistryBackend()
-        case "vault":
+        case VaultBackendConfig(vault=vault):
             return VaultTokenRegistryBackend(
-                vault_kv=require(
-                    vault_kv, "token_registry_backend=vault requires a Vault client"
-                ),
+                vault_kv=vaults.connect(vault),
                 kv_path_prefix=settings.vault_kv_paths.token_registry,
             )
         case _:

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials.base import CredentialRegistry
     from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
     from af_mcp_broker.principal_cache import PrincipalCache
-    from af_mcp_broker.vault_kv import VaultKV
+    from af_mcp_broker.vault_kv import VaultConnections
 
 log = structlog.get_logger(__name__)
 
@@ -44,7 +44,7 @@ async def build_credmon_sync(
     credential_registry: CredentialRegistry,
     targets_by_kind: Mapping[str, Sequence[str]],
     store_prefixes: Mapping[str, str],
-    vault_kv: VaultKV | None,
+    vaults: VaultConnections,
     principal_cache: PrincipalCache | None,
     http_client: httpx2.AsyncClient,
 ) -> CredmonSyncService:
@@ -66,17 +66,12 @@ async def build_credmon_sync(
             "CREDMON_ENABLED requires BROKER_SIGNING_KEY_FILE: credmon top "
             "tokens are AF Broker Identity Tokens."
         )
-    if vault_kv is None:
-        raise RuntimeError(
-            "CREDMON_ENABLED requires Vault: the storer enumerates linked users "
-            "from the Vault-backed identity stores and coordinates replicas "
-            "through a Vault lease."
-        )
     if principal_cache is None:
         raise RuntimeError(
             "CREDMON_ENABLED requires the Keycloak principal directory: credd "
             "stores credentials per POSIX unixname, resolved from it."
         )
+    vault_kv = vaults.connect(api.vault)
     token_file = Path(api.token_file)
     try:
         # Checked once here so a missing mount refuses to boot; the client
