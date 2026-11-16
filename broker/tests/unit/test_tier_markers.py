@@ -21,8 +21,10 @@ def test_each_collected_test_carries_exactly_its_directory_tier(
 ) -> None:
     mismatched = {}
     for item in request.session.items:
-        parts = item.path.relative_to(_TESTS_DIR).parts
-        if parts[0] in _TIERS and _tier_markers(item) != {parts[0]}:
+        if not item.path.is_relative_to(_TESTS_DIR):
+            continue  # another suite's tests (skills/, spikes/) in the same session
+        tier = item.path.relative_to(_TESTS_DIR).parts[0]
+        if tier in _TIERS and _tier_markers(item) != {tier}:
             mismatched[item.nodeid] = _tier_markers(item)
     assert mismatched == {}
 
