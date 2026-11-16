@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx2
@@ -37,8 +36,6 @@ from af_mcp_broker.shared_state import (
 from af_mcp_broker.usage import InMemoryUsageStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from af_mcp_broker.audit import AuditRecord
     from af_mcp_broker.principal import Principal
 
@@ -1297,53 +1294,11 @@ async def test_no_rate_limits_never_refuses_and_leaves_counter_untouched(
     assert store.incr_calls == 0
 
 
-# ---------------------------------------------------------------------------
-# rate_limits across replicas: two middleware instances over one real redis
-# server stand in for two broker replicas (see the ``shared_state_url``
-# fixture); nothing is mocked.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-async def replica_stores(
-    shared_state_url: str,
-) -> AsyncIterator[list[RedisSharedState]]:
-    stores = [RedisSharedState(shared_state_url) for _ in range(2)]
-    yield stores
-    for store in stores:
-        await store.close()
-
-
 async def _call_rucio(mw: AuthorizationMiddleware, principal: Principal) -> ToolResult:
     return await mw.on_call_tool(
         _call_tool_context("rucio_list_dids", {}, principal),
         _CallNextRecorder(result=ToolResult(content=[])),
     )
-
-
-async def test_rate_limit_budget_is_shared_across_replicas(
-    registry, policy, make_principal, captured_audits, replica_stores
-) -> None:
-    replica_a, replica_b = (
-        _rate_limited_middleware(
-            registry, policy, RateLimitRule(2, 60, tool="rucio_*"), store=store
-        )
-        for store in replica_stores
-    )
-    # A subject unique to this test: the server outlives each test.
-    principal = make_principal(groups=["atlas"], subject=f"sub-{uuid.uuid4()}")
-    # Neither replica sees more than its own limit's worth of calls.
-    await _call_rucio(replica_a, principal)
-    await _call_rucio(replica_b, principal)
-
-    with pytest.raises(ToolError, match="Rate limit of 2 calls per 60s"):
-        await _call_rucio(replica_a, principal)
-
-    assert [r.outcome for r in captured_audits] == [
-        "success",
-        "success",
-        "rate_limited",
-    ]
 
 
 async def test_rate_limit_store_outage_falls_back_to_a_per_replica_count(

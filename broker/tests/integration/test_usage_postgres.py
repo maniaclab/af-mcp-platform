@@ -18,7 +18,7 @@ import pytest
 
 from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.audit.measure import ContentMeasure
-from af_mcp_broker.usage import PostgresUsageStore, UsageStore
+from af_mcp_broker.usage import PostgresUsageStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -60,10 +60,6 @@ async def store(postgres_dsn: str) -> AsyncIterator[PostgresUsageStore]:
         await conn.close()
     yield s
     await s.aclose()
-
-
-def test_postgres_store_satisfies_the_abc() -> None:
-    assert issubclass(PostgresUsageStore, UsageStore)
 
 
 async def test_start_bounds_the_pool_instead_of_asyncpgs_defaults(

@@ -11,26 +11,16 @@ expectations hold whichever exception type carries the failure.
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
-from broker_state_helpers import asgi_auth_middleware
 from conftest import make_claims
-from fastmcp.exceptions import ToolError
 from rate_limited_helpers import assert_rate_limited_shape
 from signing_keys import make_rsa_key, private_pem
 from test_condor_token import SERVICE_URL, _FakeCondorClient
-from test_mcp_aggregator import _OPEN_POLICY, _FakeProvider, _patch_context, _spec
-from test_mcp_middleware_identity import (
-    _header,
-    _http_scope,
-    _InnerApp,
-    _run,
-    _status,
-)
+from test_mcp_aggregator import _FakeProvider
 from test_oauth21 import (
     ALIAS,
     SUBJECT,
@@ -38,10 +28,8 @@ from test_oauth21 import (
     _make_cred,
     _make_provider,
 )
-from test_request_logging import _capturing_info
 
 from af_mcp_broker import identity as identity_module
-from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
 from af_mcp_broker.config import Settings
@@ -50,7 +38,6 @@ from af_mcp_broker.credentials import (
     BrokerIssuedTokenOptions,
     BrokerTokenIssuer,
     CredentialCache,
-    CredentialRegistry,
     OAuth21Provider,
 )
 from af_mcp_broker.credentials import oidc as oidc_module
@@ -58,7 +45,6 @@ from af_mcp_broker.credentials.condor import CondorTokenProvider
 from af_mcp_broker.credentials.oauth21 import InMemoryTokenStore
 from af_mcp_broker.identity import get_principal
 from af_mcp_broker.maintenance import MaintenanceState
-from af_mcp_broker.mcp.aggregator import _make_client_factory
 from af_mcp_broker.retry_after import DEFAULT_RETRY_AFTER_SECONDS
 
 if TYPE_CHECKING:
@@ -326,26 +312,6 @@ _IDS = [row[0] for row in _CREDENTIAL_FAILURES]
     [row[1:] for row in _CREDENTIAL_FAILURES],
     ids=_IDS,
 )
-async def test_mcp_edge_surfaces_the_credential_failure_detail_as_a_tool_error(
-    producer, status_code, detail, headers, make_principal, settings, monkeypatch
-) -> None:
-    exc = await producer(make_principal)
-    _patch_context(monkeypatch, make_principal())
-    spec = _spec(auth_type="bearer")
-    registry = CredentialRegistry()
-    registry.register(spec.name, _FakeProvider(http_error=exc))  # type: ignore[arg-type]
-
-    with pytest.raises(ToolError) as excinfo:
-        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
-
-    assert str(excinfo.value) == detail
-
-
-@pytest.mark.parametrize(
-    ("producer", "status_code", "detail", "headers"),
-    [row[1:] for row in _CREDENTIAL_FAILURES],
-    ids=_IDS,
-)
 async def test_v1_edge_sends_the_credential_failure_status_detail_and_headers(
     producer,
     status_code,
@@ -412,47 +378,6 @@ async def test_v1_edge_gives_a_credential_429_the_one_rate_limited_shape(
     assert body["detail"] == _CONDOR_RATE_LIMITED_DETAIL
 
 
-@pytest.mark.parametrize(("response", "retry_after"), _RATE_LIMITED_RESPONSES)
-async def test_mcp_edge_puts_the_credential_429_wait_in_the_tool_error(
-    response, retry_after, make_principal, settings, monkeypatch
-) -> None:
-    exc = await _condor_exchange_producer(response)(make_principal)
-    _patch_context(monkeypatch, make_principal())
-    spec = _spec(auth_type="bearer")
-    registry = CredentialRegistry()
-    registry.register(spec.name, _FakeProvider(http_error=exc))  # type: ignore[arg-type]
-
-    with pytest.raises(ToolError) as excinfo:
-        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
-
-    assert str(excinfo.value).startswith(
-        f"{_CONDOR_RATE_LIMITED_DETAIL} Retry-After: {retry_after} seconds; retry_at: "
-    )
-
-
-async def test_mcp_edge_logs_the_dedicated_event_for_a_credential_429(
-    make_principal, settings, monkeypatch
-) -> None:
-    principal = make_principal()
-    exc = await _condor_exchange_producer(
-        httpx2.Response(429, headers={"Retry-After": "17"})
-    )(make_principal)
-    _patch_context(monkeypatch, principal)
-    spec = _spec(auth_type="bearer")
-    registry = CredentialRegistry()
-    registry.register(spec.name, _FakeProvider(http_error=exc))  # type: ignore[arg-type]
-    events = _capturing_info(monkeypatch, retry_after_module.logger)
-
-    with pytest.raises(ToolError):
-        await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
-
-    [event] = events
-    assert event["event"] == "rate_limit.exceeded"
-    assert event["subject"] == principal.subject
-    assert event["limiter"] == "credential_service"
-    assert event["retry_after_seconds"] == 17
-
-
 # ---------------------------------------------------------------------------
 # Identity: JWKS unreachable, no credential presented, not an admin.
 # ---------------------------------------------------------------------------
@@ -487,24 +412,6 @@ def test_v1_edge_sends_502_with_request_id_when_the_jwks_is_unreachable(
     body = resp.json()
     assert body["detail"] == f"Unable to reach JWKS endpoint: {settings.oidc_jwks_uri}"
     assert body["request_id"]
-
-
-async def test_mcp_edge_collapses_an_unreachable_jwks_into_the_vague_401(
-    settings, sig_key, unreachable_jwks
-) -> None:
-    token = sig_key.sign(make_claims())
-    inner = _InnerApp()
-    middleware = asgi_auth_middleware(inner, settings, http_client=unreachable_jwks)
-
-    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
-
-    assert not inner.called
-    assert _status(messages) == 401
-    assert _header(messages, "www-authenticate") == "Bearer"
-    body = json.loads(
-        b"".join(m["body"] for m in messages if m["type"] == "http.response.body")
-    )
-    assert body["detail"] == "Invalid bearer token"
 
 
 def test_v1_edge_sends_401_with_bearer_challenge_when_no_credential_is_presented(

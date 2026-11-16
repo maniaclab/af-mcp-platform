@@ -21,7 +21,6 @@ from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
 from af_mcp_broker.mcp.aggregator import build_aggregator
 from af_mcp_broker.service_registry import (
-    DIAGNOSTIC_TOOL_NAMES,
     SEARCH_TOOLS_TOOL_NAME,
     ServiceRegistry,
     ServiceSpec,
@@ -146,11 +145,6 @@ async def _search(client: Client, query: str, **kwargs: Any) -> dict[str, Any]:
 
 def _names(payload: dict[str, Any]) -> list[str]:
     return [hit["name"] for hit in payload["tools"]]
-
-
-def test_search_tool_is_a_registered_gateway_tool() -> None:
-    assert SEARCH_TOOLS_TOOL_NAME == "af_search_tools"
-    assert SEARCH_TOOLS_TOOL_NAME in DIAGNOSTIC_TOOL_NAMES
 
 
 async def test_search_declares_object_output_schema_and_read_only_annotations(

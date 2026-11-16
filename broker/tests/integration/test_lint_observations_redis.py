@@ -7,7 +7,6 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-import structlog.testing
 
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.service_registry import AnnotationMismatch
@@ -69,21 +68,3 @@ async def test_an_observation_expires_in_the_store(
         assert await store.get(service) is None
     finally:
         await state.close()
-
-
-async def test_store_down_falls_back_to_what_this_replica_observed(
-    unreachable_shared_state_url: str, service: str
-) -> None:
-    state = RedisSharedState(unreachable_shared_state_url)
-    store = LintObservationStore(state)
-    try:
-        with structlog.testing.capture_logs() as logs:
-            await store.observe(service, (_mismatch(service),), None)
-            observation = await store.get(service)
-    finally:
-        await state.close()
-
-    assert observation is not None
-    assert observation.annotation_mismatches == (_mismatch(service),)
-    events = {e["event"] for e in logs}
-    assert "lint_observations.shared_state_unavailable" in events

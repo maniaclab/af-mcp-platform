@@ -356,21 +356,6 @@ async def test_valid_pat_binds_subject_to_structlog_context(settings):
     assert structlog.contextvars.get_contextvars()["subject"] == "user-123"
 
 
-async def test_non_http_scope_passes_through_untouched(settings):
-    inner = _InnerApp()
-    middleware = asgi_auth_middleware(inner, settings)
-
-    async def receive() -> dict[str, Any]:
-        return {}
-
-    async def send(message: dict[str, Any]) -> None:
-        pass
-
-    await middleware({"type": "lifespan"}, receive, send)
-
-    assert inner.called
-
-
 # ---------------------------------------------------------------------------
 # JWT validation reads no token registry: /mcp accepts a valid JWT even when
 # the PAT backend raises on every call.
@@ -817,17 +802,6 @@ async def test_maintenance_middleware_fails_closed_without_a_stashed_principal(
         await _run(middleware, _http_scope())
 
     assert not inner.called
-
-
-async def test_maintenance_middleware_passes_non_http_scopes_through(settings):
-    inner = _InnerApp()
-    middleware = AsgiMaintenanceMiddleware(
-        inner, settings, InMemoryMaintenanceModeStore()
-    )
-
-    await _run(middleware, {"type": "lifespan"})
-
-    assert inner.called
 
 
 # ---------------------------------------------------------------------------

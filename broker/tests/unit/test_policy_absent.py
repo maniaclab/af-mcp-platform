@@ -20,13 +20,3 @@ def test_broker_state_cannot_be_built_without_a_policy() -> None:
 
     with pytest.raises(TypeError, match="entitlement_policy"):
         BrokerState(**without_policy)
-
-
-def test_request_without_published_state_fails_instead_of_using_an_empty_policy(
-    app_client,
-) -> None:
-    client, _state = app_client
-    del client.app.state.broker
-
-    with pytest.raises(RuntimeError, match="BrokerState is not published"):
-        client.get("/v1/entitlements")

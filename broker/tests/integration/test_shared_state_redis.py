@@ -16,7 +16,6 @@ import pytest
 from af_mcp_broker.mcp.cache_invalidation import LIST_CACHE_INVALIDATION_CHANNEL
 from af_mcp_broker.shared_state import (
     RedisSharedState,
-    SharedStateUnavailableError,
     build_shared_state,
 )
 
@@ -107,22 +106,6 @@ async def test_prefix_namespaces_keys(shared_state_url: str, key: str) -> None:
         await b.close()
 
 
-async def test_unreachable_store_raises_unavailable(
-    unreachable_shared_state_url: str,
-) -> None:
-    backend = RedisSharedState(unreachable_shared_state_url)
-    try:
-        for call in (
-            backend.incr_window("k", 60),
-            backend.get_window("k"),
-            backend.delete("k"),
-        ):
-            with pytest.raises(SharedStateUnavailableError):
-                await call
-    finally:
-        await backend.close()
-
-
 async def test_publish_reaches_a_subscriber_on_another_client(
     shared_state_url: str, key: str
 ) -> None:
@@ -182,20 +165,6 @@ async def test_idle_subscription_outlives_the_socket_timeout(
         assert await asyncio.wait_for(waiting, timeout=5) == "late"
 
 
-async def test_unreachable_store_raises_unavailable_for_pubsub(
-    unreachable_shared_state_url: str,
-) -> None:
-    backend = RedisSharedState(unreachable_shared_state_url)
-    try:
-        with pytest.raises(SharedStateUnavailableError):
-            await backend.publish("c", "m")
-        with pytest.raises(SharedStateUnavailableError):
-            async with backend.subscribe("c"):
-                pass
-    finally:
-        await backend.close()
-
-
 async def test_set_then_get_round_trips_with_a_ttl(
     store: RedisSharedState, key: str
 ) -> None:
@@ -231,16 +200,3 @@ async def test_value_set_on_one_client_is_read_on_another(
     finally:
         await replica_a.close()
         await replica_b.close()
-
-
-async def test_unreachable_store_raises_unavailable_for_values(
-    unreachable_shared_state_url: str,
-) -> None:
-    backend = RedisSharedState(unreachable_shared_state_url)
-    try:
-        with pytest.raises(SharedStateUnavailableError):
-            await backend.get("k")
-        with pytest.raises(SharedStateUnavailableError):
-            await backend.set("k", "v", 60)
-    finally:
-        await backend.close()

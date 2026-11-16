@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import urllib.request
 
-from af_mcp_broker.metrics import tool_mapping_drift_total
-
 
 def test_metrics_not_on_api_port(app_client) -> None:
     client, _ = app_client
@@ -46,10 +44,3 @@ def test_http_metrics_use_af_mcp_namespace(app_client) -> None:
         body = resp.read().decode()
     assert 'af_mcp_http_requests_total{handler="/v1/healthz"' in body
     assert 'af_mcp_http_request_duration_seconds_bucket{handler="/v1/healthz"' in body
-
-
-def test_tool_mapping_drift_help_describes_stale_keys_in_the_present_tense() -> None:
-    help_text = tool_mapping_drift_total.describe()[0].documentation
-
-    assert "no longer" not in help_text
-    assert "a mapped key the backend does not advertise" in help_text

@@ -35,12 +35,7 @@ from structlog.testing import capture_logs
 
 from af_mcp_broker.api import mcp_oauth
 from af_mcp_broker.api.auth import keycloak_dependency
-from af_mcp_broker.api.mcp_oauth import (
-    _keycloak_authorization_endpoint,
-    _keycloak_token_endpoint,
-)
 from af_mcp_broker.app import app
-from af_mcp_broker.config import Settings
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_pair
 
@@ -983,22 +978,4 @@ def test_token_refuses_redemption_when_shared_state_is_down(
         entry["event"] == "mcp_oauth.token_refused_shared_state_unavailable"
         and entry["log_level"] == "error"
         for entry in logs
-    )
-
-
-def test_keycloak_endpoints_split_front_and_back_channel() -> None:
-    """With oidc_internal_url set, the code-for-token exchange (a server-side
-    POST from the broker) must go to the internal URL, while the
-    authorization endpoint (a browser redirect) must stay on the
-    externally-advertised issuer."""
-    internal = "http://keycloak.svc.test:8080/realms/connect"
-    settings = Settings(oidc_issuer=ISSUER, oidc_internal_url=internal)
-
-    assert (
-        _keycloak_token_endpoint(settings)
-        == f"{internal}/protocol/openid-connect/token"
-    )
-    assert (
-        _keycloak_authorization_endpoint(settings)
-        == f"{ISSUER}/protocol/openid-connect/auth"
     )

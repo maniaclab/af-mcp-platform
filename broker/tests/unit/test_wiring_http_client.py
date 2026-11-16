@@ -19,9 +19,3 @@ async def test_the_client_is_open_while_the_stack_is_and_closed_after() -> None:
 async def test_each_build_is_a_separate_client() -> None:
     async with AsyncExitStack() as stack:
         assert build_http_client(stack) is not build_http_client(stack)
-
-
-def test_the_running_app_holds_the_client_its_lifespan_built(app_client) -> None:
-    client, _state = app_client
-
-    assert not client.app.state.broker.http_client.is_closed

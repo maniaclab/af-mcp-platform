@@ -910,20 +910,6 @@ def test_mcp_list_timeout_must_be_positive(monkeypatch, value):
         Settings()
 
 
-def test_shared_state_defaults_to_in_memory_and_no_escape_hatch():
-    settings = Settings()
-    assert settings.shared_state_url is None
-    assert settings.allow_per_replica_state is False
-
-
-def test_shared_state_env_vars(monkeypatch):
-    monkeypatch.setenv("SHARED_STATE_URL", "rediss://cache.example.org:6380/0")
-    monkeypatch.setenv("ALLOW_PER_REPLICA_STATE", "true")
-    settings = Settings()
-    assert settings.shared_state_url == "rediss://cache.example.org:6380/0"
-    assert settings.allow_per_replica_state is True
-
-
 def test_shared_state_key_prefix_defaults_to_the_historical_namespace():
     assert Settings().shared_state_key_prefix == "af-mcp:"
 

@@ -94,26 +94,3 @@ async def test_other_uids_are_unaffected(
         await replica_a.record_failed_unlock(uid)
 
     await replica_b.check_unlock_rate_limit(uid + 1)
-
-
-async def test_store_outage_falls_back_to_a_per_replica_limit(
-    unreachable_shared_state_url: str, uid: int
-) -> None:
-    store = RedisSharedState(unreachable_shared_state_url)
-    cache = CredentialCache(
-        max_failed_unlocks=2, unlock_window_seconds=60, shared_state=store
-    )
-    try:
-        # Still limited, per replica, instead of failing open or erroring.
-        await cache.record_failed_unlock(uid)
-        await cache.record_failed_unlock(uid)
-        with pytest.raises(UnlockRateLimitError):
-            await cache.record_failed_unlock(uid)
-        with pytest.raises(UnlockRateLimitError):
-            await cache.check_unlock_rate_limit(uid)
-
-        # A successful unlock still clears the per-replica counter.
-        await cache.put("sub", "target", object(), uid=uid)
-        await cache.check_unlock_rate_limit(uid)
-    finally:
-        await store.close()

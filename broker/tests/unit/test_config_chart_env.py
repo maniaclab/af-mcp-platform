@@ -9,19 +9,16 @@ The chart is rendered live with ``helm`` (a dev-environment dependency) on
 every run, so a chart change that alters the broker env fails here until the
 fixtures are regenerated on purpose. Regenerate them with
 ``UPDATE_CHART_ENV_FIXTURES=1 pixi run -e dev pytest
-broker/tests/test_config_chart_env.py`` and review the diff.
+broker/tests/integration/test_config_chart_env_integration.py`` and review the diff.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings
@@ -30,49 +27,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPO_ROOT / "charts" / "af-mcp-platform"
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "data" / "chart_env"
 _VALUES_FILES = sorted((_CHART / "ci").glob("*-values.yaml"))
-_UPDATE = os.environ.get("UPDATE_CHART_ENV_FIXTURES") == "1"
 
 
 def _fixture_path(values: Path) -> Path:
     return _FIXTURE_DIR / f"{values.name.removesuffix('-values.yaml')}.json"
-
-
-def _render_broker_env(values: Path) -> dict[str, str]:
-    """Render *values* with helm and return the broker container's env."""
-    rendered = subprocess.run(
-        [
-            "helm",
-            "template",
-            "af-mcp-platform",
-            str(_CHART),
-            "--set",
-            "image.broker.tag=sha-test",
-            "--set",
-            "image.portal.tag=sha-test",
-            "-f",
-            str(values),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    env: dict[str, str] = {}
-    for doc in yaml.safe_load_all(rendered):
-        if not doc or doc.get("kind") != "Deployment":
-            continue
-        if not doc["metadata"]["name"].endswith("broker"):
-            continue
-        for container in doc["spec"]["template"]["spec"]["containers"]:
-            if container["name"] != "broker":
-                continue
-            for var in container.get("env", []):
-                if "value" in var:
-                    env[var["name"]] = var["value"]
-                else:
-                    ref = var["valueFrom"]["secretKeyRef"]
-                    env[var["name"]] = f"<secret:{ref['name']}/{ref['key']}>"
-    assert env, f"no broker env rendered for {values.name}"
-    return env
 
 
 def _clear_settings_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
@@ -82,39 +40,6 @@ def _clear_settings_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) ->
             monkeypatch.delenv(name)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-
-
-def _parse(env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Parse *env* as the only settings source: ``{"settings": ...}`` or ``{"error": ...}``."""
-    _clear_settings_env(monkeypatch, env)
-    try:
-        return {"settings": Settings(_env_file=None).model_dump(mode="json")}
-    except ValidationError as exc:
-        return {"error": exc.errors()[0]["msg"]}
-
-
-@pytest.mark.parametrize("values", _VALUES_FILES, ids=lambda p: p.name)
-def test_chart_env_parses_to_pinned_settings(
-    values: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    env = _render_broker_env(values)
-    fixture = _fixture_path(values)
-    if _UPDATE:
-        fixture.write_text(
-            json.dumps(
-                {"env": env, **_parse(env, monkeypatch)}, indent=2, sort_keys=True
-            )
-            + "\n"
-        )
-        return
-
-    pinned: dict[str, Any] = json.loads(fixture.read_text())
-    assert env == pinned["env"], (
-        f"the chart's rendered broker env for {values.name} differs from "
-        f"{fixture.name}; regenerate with UPDATE_CHART_ENV_FIXTURES=1 and review"
-    )
-    parsed = _parse(env, monkeypatch)
-    assert parsed == {k: v for k, v in pinned.items() if k != "env"}
 
 
 def test_every_fixture_has_a_values_file() -> None:
