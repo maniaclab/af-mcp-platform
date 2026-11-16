@@ -101,9 +101,20 @@ spec:
             - name: BROKER_ADDITIONAL_PUBLIC_KEYS_DIR
               value: "/etc/af-mcp/identity-token-public-keys"
             {{- end }}
-            {{- if .Values.broker.identityToken.issuer }}
+            {{- /*
+            Consumers verify the `iss` against the origin that serves the
+            broker's JWKS (/.well-known/jwks.json), the MCP host, so that is
+            the default; broker.publicOrigin can be the portal origin and is
+            not a safe fallback. values.schema.json requires an explicit issuer
+            when there is no ingress to derive it from.
+            */}}
+            {{- $issuer := .Values.broker.identityToken.issuer }}
+            {{- if and (not $issuer) .Values.ingress.enabled }}
+            {{- $issuer = printf "https://%s" .Values.ingress.mcpHost }}
+            {{- end }}
+            {{- if $issuer }}
             - name: BROKER_TOKEN_ISSUER
-              value: {{ .Values.broker.identityToken.issuer | quote }}
+              value: {{ $issuer | quote }}
             {{- end }}
             {{- if .Values.broker.identityToken.ttlSeconds }}
             - name: BROKER_TOKEN_TTL_SECONDS

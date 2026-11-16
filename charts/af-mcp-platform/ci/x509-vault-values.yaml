@@ -23,6 +23,10 @@ broker:
   # opt-in; this file is not about shared state, so it opts in.
   sharedState:
     allowPerReplicaState: true
+  # Entries that mint broker-signed tokens need the signing key
+  # (values.schema.json).
+  identityToken:
+    existingSigningKeySecret: "example-broker-signing-key"
   identityProviders:
     - type: x509
       alias: x509-example

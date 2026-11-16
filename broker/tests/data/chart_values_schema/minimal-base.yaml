@@ -1,0 +1,26 @@
+# The smallest values that render: every store in-memory, no identity
+# providers, no optional integrations. The fail-fast rules in
+# test_chart_values_schema.py add one selector at a time on top of it.
+oidc:
+  issuer: "https://keycloak.example.com/realms/example"
+portal:
+  oidc:
+    clientId: "example-portal-client"
+    scope: "openid profile email example-audience"
+  brokerOrigin: "https://mcp.example.com"
+broker:
+  sharedState:
+    allowPerReplicaState: true
+aggregator:
+  services:
+    - name: docs-example
+      prefix: docs
+      url: "https://docs-mcp.example.com/mcp"
+      transport: http
+      required_permission: __none__
+entitlements:
+  group_permissions:
+    __authenticated__: [read_metadata]
+ingress:
+  mcpHost: "mcp.example.com"
+  portalHost: "mcp-portal.example.com"

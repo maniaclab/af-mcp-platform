@@ -352,11 +352,13 @@ broker:
     # retiring key here until every token it signed has expired. Every
     # Secret key named `*.pem` is published; other names are ignored.
     existingAdditionalPublicKeysSecret: ""
-    # `iss` claim minted into every token. Empty means "use
-    # broker.publicOrigin" — check that value before relying on the
-    # fallback: at AF, publicOrigin is the PORTAL origin while consumers
-    # verify iss against the mcp origin serving the JWKS, so this must be
-    # set explicitly (e.g. "https://mcp.af.example.org").
+    # `iss` claim minted into every token. Consumers verify it against the
+    # origin that serves the broker's JWKS, the MCP host. Empty means
+    # "https://<ingress.mcpHost>" when the ingress is enabled; with the
+    # ingress disabled and a signing key set it is required (the render
+    # fails). broker.publicOrigin is not a fallback: it can be the PORTAL
+    # origin. Set it explicitly when the JWKS is served from another origin
+    # (e.g. "https://mcp.af.example.org").
     issuer: ""
     # Token TTL in seconds. Empty means the broker default (600). Keep it
     # comfortably above the credential layer's 300s min-remaining floor —

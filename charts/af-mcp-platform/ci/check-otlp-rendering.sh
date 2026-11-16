@@ -122,9 +122,9 @@ expect_fails "old broker.tracing.networkPolicy" "networkPolicy.egress.endpoints"
   -f "$ci/test-values.yaml" --set broker.tracing.networkPolicy.port=4318
 
 # A signal with no collector, or two header sources, is refused.
-expect_fails "signal without endpoint" "broker.otlp.endpoint is required" \
+expect_fails "signal without endpoint" "/broker/otlp/endpoint" \
   -f "$ci/test-values.yaml" --set broker.metrics.otlp.enabled=true
-expect_fails "usage events without endpoint" "broker.otlp.endpoint is required" \
+expect_fails "usage events without endpoint" "/broker/otlp/endpoint" \
   -f "$ci/test-values.yaml" --set broker.usageEvents.otlp.enabled=true
 expect_fails "both header sources" "only one of broker.otlp.headers.value" \
   -f "$ci/otel-both-headers-values.yaml" --set broker.otlp.headers.value=a=b

@@ -518,6 +518,14 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 - name: MAINTENANCE_MODE_CACHE_TTL_SECONDS
   value: {{ .Values.broker.maintenanceMode.cacheTtlSeconds | quote }}
 {{- if eq .Values.broker.maintenanceMode.backend "postgres" }}
+{{- /*
+The DSN falls back to the usage store's, which is only rendered when the usage
+backend is postgres; a condition spanning two selectors, so the schema cannot
+express it.
+*/}}
+{{- if not (or .Values.broker.maintenanceMode.postgres.existingSecret.name (and (eq .Values.broker.usage.backend "postgres") .Values.broker.usage.postgres.existingSecret.name)) }}
+{{- fail "broker.maintenanceMode.postgres.existingSecret.name is required when broker.maintenanceMode.backend is postgres, unless broker.usage.backend is postgres with broker.usage.postgres.existingSecret.name set (its DSN is reused)" }}
+{{- end }}
 {{- if .Values.broker.maintenanceMode.postgres.existingSecret.name }}
 # asyncpg DSN for the postgres maintenance-mode store. Omit this secret
 # entirely to reuse broker.usage.postgres's DSN instead (Settings.
