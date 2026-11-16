@@ -367,7 +367,7 @@ def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
 # "Trust tiers" section defines the vocabulary; ServiceSpec.trust_tier lets
 # services.yaml/the chart *declare* a service's posture machine-checkably
 # (re-review finding #5). The authoritative per-deployment assignment still
-# lives in the GitOps repo (maniaclab/flux_apps#32); this field is the
+# lives in the GitOps repo; this field is the
 # declaration, not the policy.
 # ---------------------------------------------------------------------------
 

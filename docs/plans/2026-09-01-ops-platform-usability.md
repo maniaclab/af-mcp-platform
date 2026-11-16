@@ -3,7 +3,7 @@
 ## Background
 
 Bringing up `af-mcp-ops-platform` (a condor-only second front door, see the
-`flux_apps` repo's `docs/plans/2026-09-01-mcp-ops-platform-design.md`)
+the deployment's GitOps repository)
 surfaced two categories of friction: the portal is hardcoded to "AF MCP
 Platform" / "ATLAS Analysis Facility" branding with no way to identify a
 second deployment as distinct, and diagnosing a real audience-mismatch

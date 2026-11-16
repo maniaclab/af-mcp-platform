@@ -263,8 +263,8 @@ protocol's own client capabilities).
 ## Trust tiers
 
 Elwood v5 / Shannon defines three trust tiers. Each deployed app's tier is
-declared alongside its deployment manifests in the GitOps repo
-(maniaclab/flux_apps#32); this section declares the platform's own posture.
+declared alongside its deployment manifests in the GitOps repo;
+this section declares the platform's own posture.
 
 - **user-tier** — lowest privilege: acts only with per-user credentials.
 - **service-tier** — interacts with shared infrastructure; requires a

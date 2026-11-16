@@ -1,6 +1,6 @@
 # x509 backend deployment notes (issue #112)
 
-What an operator (the flux_apps side) needs in place for an x509 backend —
+What an operator (the deployment's GitOps side) needs in place for an x509 backend —
 ami-mcp is the first — to work end-to-end over `/mcp`. Code references:
 `mcp/aggregator.py`'s x509 branch, `api/credentials.py`'s redeem endpoint,
 `credentials/voms_service.py` + `credentials/x509_vault.py` (the
@@ -104,7 +104,7 @@ stamps differs from the URL ami-mcp reaches it at in-cluster.)
 The service lives in its own repository
 ([maniaclab/voms-token-service](https://github.com/maniaclab/voms-token-service);
 repo shape mirrors condor-token-service). Flux entries mirror
-`flux_apps/af/mcp-platform/`'s condor-token-service set:
+the deployment's GitOps repository's condor-token-service set:
 
 - Deployment + Service from `charts/voms-token-service`; the **homes PVC
   mounts on this pod only** (read-only), never on the broker.
