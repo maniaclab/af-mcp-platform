@@ -3,7 +3,7 @@
 One log record per tool-call usage record, emitted beside the usage store
 that stays authoritative (Postgres backs ``/v1/usage``, ``af_usage`` and the
 portal; the audit log is authoritative overall). A log record can carry
-``principal_sub``, ``token_id``, ``audit_id`` and ``trace_id`` without any
+``subject``, ``token_id``, ``audit_id`` and ``trace_id`` without any
 cardinality cost, which metrics cannot (see ``metrics.py``'s policy) and
 which sampled spans cannot guarantee. They join the audit log and traces by
 ``audit_id`` / ``trace_id``.
@@ -57,7 +57,7 @@ EVENT_NAME = "af_mcp.usage"
 EVENT_ATTRIBUTES = (
     "audit_id",
     "trace_id",
-    "principal_sub",
+    "subject",
     "token_id",
     "service",
     "method",
@@ -103,7 +103,7 @@ class OtelUsageEventEmitter:
         }
         attributes = {
             "audit_id": record.audit_id,
-            "principal_sub": record.principal_sub,
+            "subject": record.subject,
             "service": record.mcp_service,
             "method": record.action,
             "outcome": record.outcome,

@@ -318,7 +318,7 @@ async def test_entitled_call_proceeds_and_audits_success(
     assert record.action_type == "read"
     assert record.mcp_service == "rucio"
     assert record.principal_uid == principal.uid
-    assert record.principal_sub == principal.subject
+    assert record.subject == principal.subject
     # The client_factory (aggregator.py) reads this to distinguish a genuine
     # tools/call from a tools/list schema-cache refresh sharing the same
     # client_factory -- it must be set before call_next() reaches the
@@ -1058,7 +1058,7 @@ async def test_success_audit_flows_through_metering_pipeline(
     assert line["action"] == "rucio_list_dids"
     assert line["action_type"] == "read"
     assert line["mcp_service"] == "rucio"
-    assert line["principal_sub"] == principal.subject
+    assert line["subject"] == principal.subject
     assert line["principal_uid"] == principal.uid
     assert line["duration_ms"] >= 0.0
     assert line["result_bytes"] == len(b"hellohello")
@@ -1092,13 +1092,13 @@ async def test_denied_audit_written_inline_not_via_pipeline(
         await backend.aclose()
 
 
-async def test_audit_request_id_is_the_requests_correlation_id(
+async def test_audit_request_id_is_the_requests_request_id(
     registry, policy, make_principal, captured_audits
 ) -> None:
-    """The record's request_id is the request's bound correlation_id, so
+    """The record's request_id is the request's bound request_id, so
     the audit, request and usage lines of one tool call share one id."""
     structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(correlation_id="corr-42")
+    structlog.contextvars.bind_contextvars(request_id="corr-42")
     mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=["atlas"])
     context = _call_tool_context("rucio_list_dids", {}, principal)
@@ -1174,7 +1174,7 @@ async def test_rate_limited_call_is_refused_before_call_next_with_retry_info(
     assert record.target == "rucio"
     assert record.action == "rucio_list_dids"
     assert record.action_type == "read"
-    assert record.principal_sub == principal.subject
+    assert record.subject == principal.subject
     assert record.error is not None
     assert "Rate limit of 1 calls per 60s" in record.error
     assert record.duration_ms is None

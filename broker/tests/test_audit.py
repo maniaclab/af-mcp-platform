@@ -21,7 +21,7 @@ from af_mcp_broker.logging import (
 
 def _record(**overrides: object) -> AuditRecord:
     fields: dict[str, object] = {
-        "principal_sub": "sub-abc",
+        "subject": "sub-abc",
         "principal_uid": 1000,
         "permission": "submit_jobs",
         "target": "panda",
@@ -38,7 +38,7 @@ def _record(**overrides: object) -> AuditRecord:
 async def test_write_audit_emits_json_line(audit_buffer) -> None:
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -70,7 +70,7 @@ async def test_write_audit_metering_fields_default_none(audit_buffer) -> None:
     not 0, distinguishes "not measured" from "measured as zero"."""
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -91,7 +91,7 @@ async def test_write_audit_metering_fields_default_none(audit_buffer) -> None:
 async def test_write_audit_metering_fields_serialize_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -118,7 +118,7 @@ async def test_write_audit_token_id_defaults_none(audit_buffer) -> None:
     token to attribute -- still serializes, with an explicit null."""
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -137,7 +137,7 @@ async def test_write_audit_token_id_defaults_none(audit_buffer) -> None:
 async def test_write_audit_token_id_serializes_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -160,7 +160,7 @@ async def test_write_audit_nickname_defaults_none(audit_buffer) -> None:
     attribute -- still serializes, with an explicit null."""
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -179,7 +179,7 @@ async def test_write_audit_nickname_defaults_none(audit_buffer) -> None:
 async def test_write_audit_nickname_serializes_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission=None,
         target="ami",
@@ -226,9 +226,10 @@ async def test_write_audit_line_matches_the_shape_of_every_other_log_line(
     audit_buffer,
 ) -> None:
     """Audit lines go through structlog's processor chain: ISO timestamp,
-    level, logger name, and the request's correlation_id/subject."""
+    level, logger name, and the request's context (here the caller's
+    ``client_request_id``)."""
     structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(correlation_id="corr-123", subject="sub-abc")
+    structlog.contextvars.bind_contextvars(client_request_id="cli-123")
 
     await write_audit(_record(timestamp=1234.5))
 
@@ -236,7 +237,8 @@ async def test_write_audit_line_matches_the_shape_of_every_other_log_line(
     assert line["event"] == "audit"
     assert line["level"] == "info"
     assert line["logger"] == AUDIT_LOGGER_NAME
-    assert line["correlation_id"] == "corr-123"
+    assert line["client_request_id"] == "cli-123"
+    assert line["request_id"] == "req-1"
     assert line["subject"] == "sub-abc"
     # `timestamp` is the write time as an ISO string, like every other line;
     # the record's own epoch time is `recorded_at`.
@@ -289,7 +291,7 @@ async def test_stdout_destination_resolves_sys_stdout_at_write_time(
 async def test_write_audit_records_denied_outcome_and_error(audit_buffer) -> None:
 
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="submit_jobs",
         target="panda",
@@ -312,7 +314,7 @@ async def test_write_audit_carries_the_content_breakdown(audit_buffer) -> None:
     """The audit line is authoritative for usage: it carries the
     per-content-type breakdown, keyed by the real content-type string."""
     record = AuditRecord(
-        principal_sub="sub-abc",
+        subject="sub-abc",
         principal_uid=1000,
         permission="read_data",
         target="jhub",
@@ -340,7 +342,7 @@ async def test_write_audit_carries_the_content_breakdown(audit_buffer) -> None:
 async def test_write_audit_content_breakdown_defaults_none(audit_buffer) -> None:
     await write_audit(
         AuditRecord(
-            principal_sub="sub-abc",
+            subject="sub-abc",
             principal_uid=1000,
             permission="read_data",
             target="x",

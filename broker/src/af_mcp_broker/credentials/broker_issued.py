@@ -15,7 +15,7 @@ cost with no trust gain.
 The token is an identity assertion, nothing more: ``iss``/``sub``/``aud``/
 ``exp``/``iat``/``jti``, plus ``uid``/``gid``/``unixname`` only for targets
 whose config declares they need POSIX identity, and ``rid`` (the minting
-client request's correlation id) on tokens minted for a tool call.
+client request's request id) on tokens minted for a tool call.
 Deliberately absent:
 permissions, groups, or any authorization claim -- authorization is an
 attribute of the principal, decided per-call by the broker's entitlement
@@ -178,7 +178,7 @@ class BrokerTokenIssuer:
         per-target config) and ``rid`` when *request_id* is passed -- never a
         permission, group, or any other authorization claim (issue #162).
 
-        *request_id* is the ``correlation_id`` of the client request the
+        *request_id* is the ``request_id`` of the client request the
         token is minted for. It travels as the private ``rid`` claim so the
         redeem call a backend later makes with this token is logged with
         that request as its parent (``parent_request_id``). It identifies a

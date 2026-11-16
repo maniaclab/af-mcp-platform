@@ -300,10 +300,10 @@ def test_maintenance_mode_warning_does_not_fire_for_replica_visible_backend(
 # ---------------------------------------------------------------------------
 
 
-async def test_bind_request_logging_context_binds_a_fresh_correlation_id() -> None:
+async def test_bind_request_logging_context_binds_a_fresh_request_id() -> None:
     """Issue #281: the only /v1 middleware that runs before keycloak_dependency
     resolves identity, so this is where every request -- even one whose
-    credentials never validate -- gets a correlation_id to log by."""
+    credentials never validate -- gets a request_id to log by."""
     structlog.contextvars.clear_contextvars()
     # A SimpleNamespace stand-in for Request is enough here: issue #322's
     # http.request.received/finished logging (exercised in full by
@@ -320,7 +320,7 @@ async def test_bind_request_logging_context_binds_a_fresh_correlation_id() -> No
     result = await app_module._bind_request_logging_context(request, call_next)
 
     assert result is response
-    assert structlog.contextvars.get_contextvars()["correlation_id"]
+    assert structlog.contextvars.get_contextvars()["request_id"]
 
 
 def test_app_not_instrumented_by_default() -> None:

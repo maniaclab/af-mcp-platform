@@ -72,14 +72,14 @@ export class SessionExpiredError extends Error {
  * `detail.error === "insufficient_scope"` body) rather than a stale
  * session. Distinct from SessionExpiredError because reload/re-auth can't
  * fix it — it's permanent until an administrator grants the missing token
- * audience (see docs/auth.md's "cascading failure" section). `correlationId`
+ * audience (see docs/auth.md's "cascading failure" section). `requestId`
  * is the id to quote when contacting them, the same convention
  * `serviceStatus.ts` already uses for `permission_required`.
  */
 export class AccessDeniedError extends Error {
   constructor(
     message: string,
-    public readonly correlationId: string | null,
+    public readonly requestId: string | null,
   ) {
     super(message);
     this.name = 'AccessDeniedError';
@@ -113,8 +113,8 @@ async function throwForUnauthorized(res: Response): Promise<never> {
     typeof detail === 'object' &&
     (detail as { error?: unknown }).error === 'insufficient_scope'
   ) {
-    const { message, correlation_id } = detail as { message: string; correlation_id?: string };
-    throw new AccessDeniedError(message, correlation_id ?? null);
+    const { message, request_id } = detail as { message: string; request_id?: string };
+    throw new AccessDeniedError(message, request_id ?? null);
   }
   throwSessionExpired();
 }
@@ -432,7 +432,7 @@ export interface CatalogServer {
   /** Set only for admin-actionable statuses (permission_required,
    * misconfigured) -- quote it in a ticket so an admin can grep the audit
    * log. Null otherwise. */
-  correlation_id: string | null;
+  request_id: string | null;
   /** Why a link is required -- set only when `status` is "link_required".
    * The broker always sends it; there is deliberately no fallback for one
    * that omits it. */

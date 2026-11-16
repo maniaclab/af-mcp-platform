@@ -51,13 +51,13 @@ describe('krb5LinkErrorMessage', () => {
     expect(krb5LinkErrorMessage(err)).toMatch(/unavailable/i);
   });
 
-  it('includes the correlation_id on a 502 so it can be quoted to support (af-mcp-platform#288)', () => {
+  it('includes the request_id on a 502 so it can be quoted to support (af-mcp-platform#288)', () => {
     const err = new APIError(
       502,
       'Bad Gateway',
       JSON.stringify({
         detail: 'Kerberos ticket renewal is temporarily unavailable — retry later.',
-        correlation_id: 'abc123def456',
+        request_id: 'abc123def456',
       }),
     );
     expect(krb5LinkErrorMessage(err)).toContain('reference: abc123def456');

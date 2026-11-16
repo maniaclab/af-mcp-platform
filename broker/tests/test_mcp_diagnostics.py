@@ -675,7 +675,7 @@ async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
     assert line["target"] == "gateway_service"
     assert line["action"] == WHOAMI_TOOL_NAME
     assert line["permission"] == "__none__"
-    assert line["principal_sub"] == "user-123"
+    assert line["subject"] == "user-123"
     assert line["duration_ms"] >= 0.0
     # The success path measures the result exactly like a proxied call's --
     # af_whoami returned a non-empty structured payload, so both fields are
@@ -764,7 +764,7 @@ def usage_store() -> UsageStore:
 
 def _usage_record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
-        "principal_sub": "user-123",
+        "subject": "user-123",
         "principal_uid": 1000,
         "permission": "read_data",
         "target": "rucio",
@@ -826,9 +826,7 @@ async def test_af_usage_returns_only_the_callers_usage(
     await usage_store.record(
         _usage_record(outcome="error", result_bytes=10, result_tokens_est=None)
     )
-    await usage_store.record(
-        _usage_record(principal_sub="someone-else", result_tokens_est=7)
-    )
+    await usage_store.record(_usage_record(subject="someone-else", result_tokens_est=7))
 
     result = await _call_af_usage(settings, principal_cache, token, {}, usage_store)
 

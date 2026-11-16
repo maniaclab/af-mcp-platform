@@ -534,7 +534,7 @@ def register_diagnostic_tools(
         caps = get_principal_permissions(principal, policy)
         servers: list[DiagnosticMcpServer] = []
         for spec in registry.all_services():
-            status, status_detail, _correlation_id, link_state = await service_status(
+            status, status_detail, _request_id, link_state = await service_status(
                 spec, principal, caps, credential_registry, registry
             )
             granting_groups = granting_groups_for(spec, status, policy)

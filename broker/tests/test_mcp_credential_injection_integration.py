@@ -335,10 +335,10 @@ async def test_auth_type_none_skips_credential_resolution(
     assert provider.issue_calls == []
 
 
-async def test_backend_receives_the_brokers_correlation_id_not_the_clients(
+async def test_backend_receives_the_brokers_request_id_not_the_clients(
     monkeypatch, aggregator_app, sig_key, prime_jwks
 ) -> None:
-    """The backend's X-Request-ID is the broker's own correlation_id, so its
+    """The backend's X-Request-ID is the broker's own request_id, so its
     log lines join the broker's request lines; an id the client sent is
     recorded as ``client_request_id`` and never forwarded."""
     prime_jwks([sig_key.jwk])
@@ -365,7 +365,7 @@ async def test_backend_receives_the_brokers_correlation_id_not_the_clients(
             result = await client.call_tool("open_seen_request_id", {})
 
     received = [e for e in events if e["event"] == "http.request.received"]
-    call_ids = {e["correlation_id"] for e in received if e["client_request_id"]}
+    call_ids = {e["request_id"] for e in received if e["client_request_id"]}
     assert result.data in call_ids
     assert result.data != "client-chosen-id"
     assert {e["client_request_id"] for e in received} == {"client-chosen-id"}
@@ -590,7 +590,7 @@ async def _catalog_view(
     assert spec is not None
     credentials = CredentialRegistry()
     credentials.register("toy", provider)
-    status, _detail, _correlation_id, link_state = await service_status(
+    status, _detail, _request_id, link_state = await service_status(
         spec, principal, {"read_data"}, credentials, service_registry
     )
     return status, link_state

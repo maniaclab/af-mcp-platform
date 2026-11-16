@@ -33,7 +33,7 @@ def _sample(name: str) -> float:
 
 def _record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
-        "principal_sub": "sub-abc",
+        "subject": "sub-abc",
         "principal_uid": 1000,
         "permission": "read_data",
         "target": "rucio",
@@ -142,7 +142,7 @@ async def test_aggregates_split_by_service_method_and_outcome() -> None:
 async def test_query_is_scoped_to_the_subject() -> None:
     store = InMemoryUsageStore()
     await store.record(_record())
-    await store.record(_record(principal_sub="sub-other"))
+    await store.record(_record(subject="sub-other"))
 
     aggs = await store.query("sub-abc", days=30)
     assert sum(a.calls for a in aggs) == 1
@@ -165,9 +165,9 @@ async def test_query_excludes_records_outside_the_trailing_window() -> None:
 
 async def test_list_subjects_returns_distinct_subjects_in_window() -> None:
     store = InMemoryUsageStore()
-    await store.record(_record(principal_sub="alice"))
-    await store.record(_record(principal_sub="bob"))
-    await store.record(_record(principal_sub="alice"))
+    await store.record(_record(subject="alice"))
+    await store.record(_record(subject="bob"))
+    await store.record(_record(subject="alice"))
 
     subjects = await store.list_subjects(days=30)
 
@@ -179,9 +179,9 @@ async def test_list_subjects_dedups_a_subject_across_multiple_counter_keys() -> 
     -- one subject spread across multiple keys (here, two services) must
     still surface once, not once per key."""
     store = InMemoryUsageStore()
-    await store.record(_record(principal_sub="alice", mcp_service="rucio"))
+    await store.record(_record(subject="alice", mcp_service="rucio"))
     await store.record(
-        _record(principal_sub="alice", mcp_service="ami", action="ami_list_datasets")
+        _record(subject="alice", mcp_service="ami", action="ami_list_datasets")
     )
 
     assert await store.list_subjects(days=30) == ["alice"]
@@ -190,7 +190,7 @@ async def test_list_subjects_dedups_a_subject_across_multiple_counter_keys() -> 
 async def test_list_subjects_excludes_outside_window() -> None:
     store = InMemoryUsageStore()
     old_ts = (datetime.now(tz=UTC) - timedelta(days=90)).timestamp()
-    await store.record(_record(principal_sub="stale", timestamp=old_ts))
+    await store.record(_record(subject="stale", timestamp=old_ts))
 
     assert await store.list_subjects(days=30) == []
 

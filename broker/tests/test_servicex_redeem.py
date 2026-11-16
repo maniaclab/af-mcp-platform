@@ -16,6 +16,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+import jwt
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
@@ -199,7 +200,7 @@ class TestRedeemAuth:
         assert record.action == "servicex_token_release"
         assert record.outcome == "denied"
         assert record.target == "condor-token-service"
-        assert record.principal_sub == "sub-abc"
+        assert record.subject == "sub-abc"
         assert "not a configured servicex target" in (record.error or "")
 
     def test_redeem_maps_audience_to_target_when_name_differs(
@@ -398,7 +399,7 @@ class TestCredmonTopToken:
 
 
 class TestRedeemParentRequestId:
-    """A token's ``rid`` (the minting tool call) becomes the release line's ``parent_request_id``; ``request_id`` stays the token's ``jti``."""
+    """A token's ``rid`` (the minting tool call) becomes the release line's ``parent_request_id``; ``jti`` stays the token's id and ``request_id`` the redeem's own."""
 
     def _store_token(self, client: TestClient) -> None:
         store = _fake_vault_store(client)
@@ -431,7 +432,12 @@ class TestRedeemParentRequestId:
         lines = audit_lines(capsys.readouterr().out)
         assert [line["action"] for line in lines] == ["servicex_token_release"]
         assert lines[0]["parent_request_id"] == "tool-call-id"
-        assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
+        # request_id names the redeem request; jti names the token.
+        assert (
+            lines[0]["jti"]
+            == jwt.decode(token, options={"verify_signature": False})["jti"]
+        )
+        assert lines[0]["request_id"] not in {"tool-call-id", lines[0]["jti"]}
 
     def test_request_finished_line_names_the_minting_tool_call_as_parent(
         self,

@@ -618,7 +618,7 @@ class Settings(BaseSettings):
 
     # Emit every tool call's usage record as an OTel LOG record over OTLP
     # (usage/otel_events.py), beside the usage store, which stays
-    # authoritative. Unlike metrics these carry principal_sub and token_id,
+    # authoritative. Unlike metrics these carry subject and token_id,
     # so the receiving log backend needs its own access control. Off by
     # default, and then the store is not wrapped. Collector, headers and TLS
     # come from the standard OTEL_EXPORTER_OTLP_* variables, shared with

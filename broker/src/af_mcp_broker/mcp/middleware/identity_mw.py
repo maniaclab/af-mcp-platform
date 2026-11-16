@@ -20,7 +20,7 @@ from af_mcp_broker.identity import (
 )
 from af_mcp_broker.logging import (
     bind_client_request_id,
-    bind_new_correlation_id,
+    bind_new_request_id,
     bind_subject,
     log_request_finished,
     log_request_received,
@@ -187,8 +187,8 @@ class AsgiAuthMiddleware:
 
         # /mcp requests never pass through /v1's FastAPI middleware chain
         # (app.py's mount comment) -- this is the only place that can bind a
-        # correlation_id for this surface (issue #281).
-        bind_new_correlation_id()
+        # request_id for this surface (issue #281).
+        bind_new_request_id()
         client_request_id = dict(scope.get("headers") or []).get(b"x-request-id")
         if client_request_id is not None:
             bind_client_request_id(client_request_id.decode("latin-1"))

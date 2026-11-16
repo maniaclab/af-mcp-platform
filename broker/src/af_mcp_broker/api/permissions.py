@@ -134,9 +134,9 @@ class CatalogServer(BaseModel):
     # rejected the stored credential). None for every other status.
     link_state: LinkState | None
     # Set only for admin-actionable statuses (permission_required,
-    # misconfigured) -- a correlation id the caller can quote in a ticket so
+    # misconfigured) -- a request id the caller can quote in a ticket so
     # an admin can grep the audit log for it. None otherwise.
-    correlation_id: str | None
+    request_id: str | None
     # True only for the broker's own gateway service entry (ServiceSpec.builtin,
     # issue #240) -- the portal's cue to drop the identity-link/credential
     # affordances that don't apply to the gateway itself.
@@ -372,7 +372,7 @@ async def get_catalog(
         # currently use -- status/status_detail say why instead of a silent
         # omission (issue #123: a hidden, permission-gated service left the
         # portal unable to explain an empty tools/list).
-        status, status_detail, correlation_id, link_state = await service_status(
+        status, status_detail, request_id, link_state = await service_status(
             spec, principal, caps, credential_registry, registry
         )
         granting_groups = granting_groups_for(spec, status, policy)
@@ -394,7 +394,7 @@ async def get_catalog(
                 status=status,
                 status_detail=status_detail,
                 link_state=link_state,
-                correlation_id=correlation_id,
+                request_id=request_id,
                 builtin=spec.builtin,
                 trust_tier=spec.trust_tier,
                 docs_url=spec.docs_url,

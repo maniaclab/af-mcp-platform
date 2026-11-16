@@ -262,10 +262,10 @@ indexed, because nothing reads by them yet and an index adds write load.
 
 Raw rows would otherwise accumulate forever. The broker folds raw rows older
 than the retention window into `af_mcp_usage_daily`, keyed `(day,
-principal_sub, service, method, outcome)` with the summed calls, duration,
+subject, service, method, outcome)` with the summed calls, duration,
 bytes and tokens, and deletes them in the same statement. The per-content-type
 rows are folded in that same statement into `af_mcp_usage_daily_content`,
-keyed `(day, principal_sub, service, method, outcome, content_type)`, before
+keyed `(day, subject, service, method, outcome, content_type)`, before
 the delete cascades them away.
 
 | Setting | Default | Meaning |
@@ -362,7 +362,7 @@ The recipe:
 ### Schema
 
 Four idempotent tables: `af_mcp_usage_events` (raw rows), keyed by
-`audit_id` (primary key) with indexes on `(principal_sub, ts)` and `ts`,
+`audit_id` (primary key) with indexes on `(subject, ts)` and `ts`,
 `af_mcp_usage_event_content` (one child row per content type of an event:
 `audit_id` → `af_mcp_usage_events ON DELETE CASCADE`, `content_type`,
 `blocks`, `bytes`, `tokens_est`, primary key `(audit_id, content_type)`),
@@ -378,6 +378,17 @@ which best-effort metering permits — is safe by construction. The DDL is
 startup (replicas racing each other are fine); there is deliberately **no
 migration framework** yet — idempotent DDL does not justify one. Raw
 rows are bounded by the retention window described above.
+
+**Upgrading from the `principal_sub` column.** The user column is `subject`
+in all three tables that have one (`af_mcp_usage_events`, `af_mcp_usage_daily`,
+`af_mcp_usage_daily_content`); a database created earlier has `principal_sub`.
+Starting the broker renames the column in each table that still has the old
+name, keeping every row, and does nothing once renamed (the primary keys and
+indexes follow the column). During a rolling deploy a replica of the previous
+release still inserts `principal_sub`; those inserts fail, are logged as
+`usage.record_batch_failed` with their `audit_ids`, and the audit log keeps the
+records, so the rows can be rebuilt. Queries of your own against these tables
+must use `subject`.
 
 **Upgrading from a release without the breakdown.** Starting the broker
 creates the two content tables and backfills them once: each existing event
@@ -451,8 +462,8 @@ signal is access-controlled and unbounded by design:
 |---|---|---|---|
 | Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `outcome`, `error_class`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
 | OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome`; plus `content_type` on the two size counters | Same bound; `content_type` is MCP's small type set, unknown types become `other` |
-| Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
-| OTel usage events (OTLP logs, opt-in) | Yes: `principal_sub`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`, and `result_content.<type>.{blocks,bytes,tokens_est}`; never arguments or results | One per tool call; access control is the log backend's |
+| Audit log (JSON lines) | Yes: `subject`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
+| OTel usage events (OTLP logs, opt-in) | Yes: `subject`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`, and `result_content.<type>.{blocks,bytes,tokens_est}`; never arguments or results | One per tool call; access control is the log backend's |
 | Spans (OTLP, sampled) | Yes: `user.id` | Identity, outcome and timing; never arguments or results | Sampled; joins to the audit log by `trace_id` |
 
 Rule of thumb: a question about *a user* is answered from the audit log
@@ -572,7 +583,7 @@ broker:
   does not enable tracing: the endpoint is transport only.
 - One log record (event name `af_mcp.usage`) is emitted for each usage
   record the store records, with exactly these attributes: `audit_id`,
-  `trace_id`, `principal_sub`, `token_id`, `service`, `method`, `outcome`,
+  `trace_id`, `subject`, `token_id`, `service`, `method`, `outcome`,
   `duration_ms`, `result_bytes`, `result_tokens_est`; a measured call also
   carries `result_content.<content_type>.blocks`, `.bytes` and `.tokens_est`
   for each content type of the result (the real type string). Unset optional
@@ -695,10 +706,9 @@ shape as every other broker log line. Each is one JSON object with
 | `timestamp` | ISO 8601 UTC time the line was **written**. |
 | `level` | Always `info`. |
 | `logger` | `af_mcp_broker.audit.logger`. |
-| `correlation_id`, `subject` | The request's correlation id and caller, when the record was written inside a request. A queued tool-call record carries the ids of the request that submitted it. |
 | `recorded_at` | ISO 8601 UTC time the record was **created**; for a record the metering worker wrote later, earlier than `timestamp`. |
-| `request_id` | For tool calls, the request's `correlation_id`, so the audit, `http.request.*` and usage lines of one call share one id. Other record types keep their own identifier (a token `jti`, a PAT `lookup_id`). |
-| everything else | The `AuditRecord` fields: `audit_id`, `principal_sub`, `principal_uid`, `permission`, `target`, `action`, `action_type`, `args_summary`, `outcome`, `error`, and the metering and attribution fields above. |
+| `request_id`, `subject` | The request's id and the caller (for an admin action, the actor). A queued tool-call record carries the request that submitted it. The request's id is on every record, so the audit, `http.request.*` and usage lines of one call share one id. A token's identifier is never put here: `jti` carries a broker identity token's id on credential-release records and `token_id` a PAT's `lookup_id`. |
+| everything else | The `AuditRecord` fields: `audit_id`, `subject`, `principal_uid`, `permission`, `target`, `action`, `action_type`, `args_summary`, `outcome`, `error`, and the metering and attribution fields above. |
 
 Where the lines go: `AUDIT_LOG_FILE` is `-` (stdout, the default) or a file
 path opened for appending. Either way the line is written through the audit
@@ -711,7 +721,7 @@ produced the record: the denial path, the inline fallback (no pipeline
 running, or a full metering queue) and the credential and token endpoints
 all surface it to the request. The metering worker has no caller to raise
 to, so it logs `metering.audit_write_failed` at `error` level with the
-traceback and the lost record's `audit_id`, `principal_sub`, `target`,
+traceback and the lost record's `audit_id`, `subject`, `target`,
 `action` and `outcome`, increments `af_mcp_metering_worker_errors_total`, and
 keeps processing the queue.
 
@@ -739,7 +749,8 @@ fields; they change only with a release note.
 | `detail` | A human-readable explanation. |
 | `status_code`, `upstream_status` | The HTTP status the broker answered, and the status a dependency (token service, backend) answered. |
 | `duration_ms`, `exc_type` | Elapsed milliseconds; exception class name. |
-| `correlation_id` | The request's id (see [Following one call end to end](#following-one-call-end-to-end)). |
+| `request_id` | The request's id (see [Following one call end to end](#following-one-call-end-to-end)). The same name in audit records, usage rows, `/v1` error bodies and the `X-Request-ID` header. |
+| `jti`, `token_id` | A broker identity token's id (RFC 7519 `jti`), and a PAT's `lookup_id`. Never in `request_id`. |
 | `audit_id`, `lookup_id` | The audit record's id; a personal access token's lookup id. |
 | `uid`, `unixname` | POSIX identity. |
 | `claimed_subject` | A `sub` read from a token whose signature was not verified (`jwt.expired`, `jwt.audience_mismatch`). Caller-controlled, so never in `subject`. |
@@ -751,7 +762,7 @@ bodies are never logged. A certificate DN is logged only at `debug` (`x509.proxy
 
 Every request except the kubelet probes (`/v1/healthz`, `/v1/readyz`) logs
 exactly one `http.request.received` and one `http.request.finished` line,
-both under one `correlation_id`. A `/mcp` request is logged by
+both under one `request_id`. A `/mcp` request is logged by
 `AsgiAuthMiddleware` and a `/v1` request by the FastAPI request middleware;
 neither logs the other's requests.
 
@@ -760,7 +771,7 @@ neither logs the other's requests.
 | `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
 | `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`500` when an exception escaped before any response was sent; `null` when the client disconnected first), wall time since `received`, and the exception class if one escaped. A request that raised logs `finished` at `error`; every other request logs it at `info`. |
 | `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
-| `parent_request_id` | `finished` | Only on a backend credential redeem whose token was minted for a tool call: that call's `correlation_id`, so the redeem's request lines join to the call. The redeem's own id stays in `correlation_id`. Absent on every other request. |
+| `parent_request_id` | `finished` | Only on a backend credential redeem whose token was minted for a tool call: that call's `request_id`, so the redeem's request lines join to the call. The redeem's own id stays in `request_id`. Absent on every other request. |
 
 ## Process and portal log lines
 
@@ -776,7 +787,7 @@ broker/src/af_mcp_broker/uvicorn_log_config.json` (`Containerfile.broker`), and
 (see [Local development](local-development.md#uvicorn-lifecycle-lines)).
 `uvicorn.access` stays at `warning`: the `http.request.received` /
 `http.request.finished` lines carry the method, path, status and duration of
-every request, with the correlation id.
+every request, with the request id.
 
 The portal's nginx writes its standard access log. Two sources of lines with
 no signal are left out of it: a successful kubelet probe (user agent
@@ -786,26 +797,26 @@ request still answers 404 and is access-logged).
 
 ## Following one call end to end
 
-Every `/v1` and `/mcp` request gets a broker-generated `correlation_id`; a
+Every `/v1` and `/mcp` request gets a broker-generated `request_id`; a
 client cannot choose it. An `X-Request-ID` the client sent is logged on the
 request as `client_request_id` (truncated to 128 characters) so the client
 can find its call, and is never forwarded.
 
 | Where | Field | Value |
 |---|---|---|
-| Broker request lines (`http.request.received`/`finished`), every other broker line of the request | `correlation_id` | The request's id. `subject` names the caller once known. |
-| Audit record of a tool call | `request_id` and `correlation_id` | The same id. `audit_id` is unique to the record. |
+| Broker request lines (`http.request.received`/`finished`), every other broker line of the request | `request_id` | The request's id. `subject` names the caller once known. |
+| Audit record | `request_id` | The same id. `audit_id` is unique to the record. |
 | Usage row (`af_mcp_usage_events`) | `request_id` | The same id, joined to the audit line by `request_id` or `audit_id`. |
 | Backend MCP server | `X-Request-ID` request header | The same id, on every HTTP request the broker makes to the backend for that call. A backend that logs the header shares the id with the broker. |
 | Token services (servicex, voms, krb5, condor) | `X-Request-ID` request header | The same id. |
 | Broker identity token minted for the call | `rid` claim | The same id (see [Auth § AF Broker Identity Token](auth.md)). |
 | Credential release when the backend redeems (`krb5_ticket_release`, x509 and servicex equivalents) | `parent_request_id` | The `rid` of the token, so the release joins to the tool call. |
-| Same credential-release line | `correlation_id`, `request_id` | The redeem request's own id, and the token's `jti`. These identify the redeem, not the tool call. |
+| Same credential-release line | `request_id`, `jti` | The redeem request's own id, and the token's `jti` (RFC 7519). These identify the redeem and the token, not the tool call. |
 
-To follow one call, take its `correlation_id` (from a 5xx or error body, an
+To follow one call, take its `request_id` (from a 5xx or error body, an
 audit line, or a client-side `X-Request-ID` found through `client_request_id`):
 
-1. `correlation_id=<id>` finds the request lines, the audit record and any
+1. `request_id=<id>` finds the request lines, the audit record and any
    other broker line of the call.
 2. `request_id=<id>` in the usage store finds its usage row.
 3. `parent_request_id=<id>` finds every credential release the backend
@@ -815,7 +826,7 @@ audit line, or a client-side `X-Request-ID` found through `client_request_id`):
 
 `trace_id` joins the same lines to a trace when tracing is on. The W3C
 `traceparent` rides inside the MCP request's `_meta`, not an HTTP header, so
-it and `X-Request-ID` do not interact. 5xx bodies carry `correlation_id`, as
+it and `X-Request-ID` do not interact. 5xx bodies carry `request_id`, as
 does the ServiceX link rejection (400); other 4xx bodies do not.
 
 ## `/v1` error responses in the log
@@ -825,6 +836,32 @@ Each error response from `/v1` logs one `http.exception` line with
 error-level lines sees a `/v1` outage; a 4xx (authentication, validation,
 rate limit, conflict) logs at `info`, because it is the caller's request being
 refused as designed, not a broker failure.
+
+## Why `subject` and `request_id`
+
+One name per concept across logs, audit records, usage rows and `/v1` bodies,
+so one query finds a user or a request on every surface:
+
+- **`subject`** is the OAuth/OIDC `sub` claim: [RFC 7519 section
+  4.1.2](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.2) ("subject"),
+  the claim the broker already reads it from. Audit and usage called it
+  `principal_sub`.
+- **`request_id`** is the request's identifier. Elastic Common Schema defines
+  `http.request.id` as "a unique identifier for each HTTP request to
+  correlate logs between clients and servers in transactions", carried in a
+  header "such as `X-Request-ID` or `X-Correlation-ID`"
+  ([ECS HTTP fields](https://www.elastic.co/guide/en/ecs/current/ecs-http.html)).
+  OpenTelemetry's semantic conventions have no request-id attribute (only
+  `http.request.header.<key>`, so the header would be
+  `http.request.header.x-request-id`); `trace_id` is the separate trace join.
+  The broker's header is `X-Request-ID`, the backend guidance in
+  [MCP design](mcp-design.md) tells backends to log it as `request_id`, and
+  the audit field and the usage column were already `request_id`; only the
+  broker's own log lines and `/v1` error bodies said `correlation_id`.
+- **`jti`** is the JWT ID ([RFC 7519 section
+  4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7)), a token's
+  identifier. A credential-release record names its redeem request in
+  `request_id` and the broker identity token in `jti`.
 
 ## Finding rate-limit refusals
 

@@ -120,7 +120,7 @@ async def test_calls_past_the_limit_are_refused_with_retry_info_and_audited(
     assert outcomes.count(("open_ping", "rate_limited")) == 1
     limited = next(line for line in lines if line["outcome"] == "rate_limited")
     assert limited["mcp_service"] == "open"
-    assert limited["principal_sub"] == "user-123"
+    assert limited["subject"] == "user-123"
 
 
 async def test_budget_is_per_principal_through_the_chain(

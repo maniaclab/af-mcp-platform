@@ -1,4 +1,4 @@
-"""Backend HTTP clients send the broker's correlation id as ``X-Request-ID``."""
+"""Backend HTTP clients send the broker's request id as ``X-Request-ID``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import httpx2
 import structlog
 
 from af_mcp_broker.backend_client import _checked_httpx_client_factory
-from af_mcp_broker.logging import bind_new_correlation_id
+from af_mcp_broker.logging import bind_new_request_id
 
 
 async def _sent_headers(headers: dict[str, str] | None = None) -> httpx2.Headers:
@@ -24,22 +24,22 @@ async def _sent_headers(headers: dict[str, str] | None = None) -> httpx2.Headers
     return seen[0]
 
 
-async def test_request_carries_the_current_correlation_id() -> None:
-    bind_new_correlation_id()
+async def test_request_carries_the_current_request_id() -> None:
+    bind_new_request_id()
 
     headers = await _sent_headers()
 
-    correlation_id = structlog.contextvars.get_contextvars()["correlation_id"]
-    assert headers["x-request-id"] == correlation_id
+    request_id = structlog.contextvars.get_contextvars()["request_id"]
+    assert headers["x-request-id"] == request_id
 
 
 async def test_a_request_id_already_on_the_client_is_replaced() -> None:
-    bind_new_correlation_id()
+    bind_new_request_id()
 
     headers = await _sent_headers({"X-Request-ID": "chosen-by-the-caller"})
 
-    correlation_id = structlog.contextvars.get_contextvars()["correlation_id"]
-    assert headers.get_list("x-request-id") == [correlation_id]
+    request_id = structlog.contextvars.get_contextvars()["request_id"]
+    assert headers.get_list("x-request-id") == [request_id]
 
 
 async def test_no_request_id_is_sent_outside_a_request() -> None:

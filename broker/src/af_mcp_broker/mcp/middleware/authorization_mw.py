@@ -24,7 +24,7 @@ from af_mcp_broker.backend_errors import (
     ERROR_CLASS_TOOL_REPORTED,
     classify_backend_error,
 )
-from af_mcp_broker.logging import current_correlation_id
+from af_mcp_broker.logging import current_request_id
 from af_mcp_broker.retry_after import (
     RateLimiter,
     log_rate_limited,
@@ -203,7 +203,7 @@ class AuthorizationMiddleware(Middleware):
         # (service=gateway_service) like everything else; the one builtin difference
         # is the authorized_call_target guard below.
         service = self.registry.get_by_tool_prefix(tool_name)
-        request_id = current_correlation_id()
+        request_id = current_request_id()
         args_summary = ", ".join(f"{k}=..." for k in list(tool_args.keys())[:10])
 
         # The broker's per-tool-call server span (OTel MCP semconv name
@@ -257,7 +257,7 @@ class AuthorizationMiddleware(Middleware):
                     )
                 await write_audit(
                     AuditRecord(
-                        principal_sub=principal.subject,
+                        subject=principal.subject,
                         principal_uid=principal.uid,
                         permission="__unmapped__",
                         target=tool_name,
@@ -304,7 +304,7 @@ class AuthorizationMiddleware(Middleware):
                 span.set_attribute("af.outcome", "denied")
                 await write_audit(
                     AuditRecord(
-                        principal_sub=principal.subject,
+                        subject=principal.subject,
                         principal_uid=principal.uid,
                         permission=permission,
                         target=service.name,
@@ -349,7 +349,7 @@ class AuthorizationMiddleware(Middleware):
                 )
                 await write_audit(
                     AuditRecord(
-                        principal_sub=principal.subject,
+                        subject=principal.subject,
                         principal_uid=principal.uid,
                         permission=permission,
                         target=service.name,
@@ -451,7 +451,7 @@ class AuthorizationMiddleware(Middleware):
                 # held by audit I/O either.
                 await self.metering.submit(
                     AuditRecord(
-                        principal_sub=principal.subject,
+                        subject=principal.subject,
                         principal_uid=principal.uid,
                         permission=permission,
                         target=service.name,
@@ -504,7 +504,7 @@ class AuthorizationMiddleware(Middleware):
                     span.set_status(Status(StatusCode.ERROR, error_text))
                 await self.metering.submit(
                     AuditRecord(
-                        principal_sub=principal.subject,
+                        subject=principal.subject,
                         principal_uid=principal.uid,
                         permission=permission,
                         target=service.name,
@@ -537,7 +537,7 @@ class AuthorizationMiddleware(Middleware):
             # produced no result to measure (result=None above).
             await self.metering.submit(
                 AuditRecord(
-                    principal_sub=principal.subject,
+                    subject=principal.subject,
                     principal_uid=principal.uid,
                     permission=permission,
                     target=service.name,

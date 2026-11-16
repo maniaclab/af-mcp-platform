@@ -150,7 +150,7 @@ class TestLink:
         assert "ServiceX rejected this token" in resp.json()["detail"]
         assert store.records == {}
 
-    def test_bad_refresh_token_400_carries_the_correlation_id(
+    def test_bad_refresh_token_400_carries_the_request_id(
         self, servicex_link_env, app_client_factory
     ) -> None:
         """af-mcp-platform#342: the 400 body and message both carry the id
@@ -161,8 +161,8 @@ class TestLink:
             resp = client.post(_LINK, json={"refresh_token": "bad-token"})
 
         body = resp.json()
-        assert body["correlation_id"]
-        assert f"(ref: {body['correlation_id']})" in body["detail"]
+        assert body["request_id"]
+        assert f"(ref: {body['request_id']})" in body["detail"]
         assert "ServiceX rejected" in body["detail"]
 
     def test_infra_failure_is_502(self, servicex_link_env, app_client_factory) -> None:

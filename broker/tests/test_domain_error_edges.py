@@ -367,7 +367,7 @@ async def test_v1_edge_sends_the_credential_failure_status_detail_and_headers(
     body = resp.json()
     assert body["detail"] == detail
     if status_code >= 500:
-        assert body["correlation_id"]
+        assert body["request_id"]
     else:
         assert set(body) == {"detail"}
     for name, value in headers.items():
@@ -470,7 +470,7 @@ def unreachable_jwks(settings: Settings) -> _UnreachableJwksClient:
     return _UnreachableJwksClient()
 
 
-def test_v1_edge_sends_502_with_correlation_id_when_the_jwks_is_unreachable(
+def test_v1_edge_sends_502_with_request_id_when_the_jwks_is_unreachable(
     app_client_factory, settings, sig_key, static_principal_cache, unreachable_jwks
 ) -> None:
     cache, _directory = static_principal_cache
@@ -486,7 +486,7 @@ def test_v1_edge_sends_502_with_correlation_id_when_the_jwks_is_unreachable(
     assert resp.status_code == 502
     body = resp.json()
     assert body["detail"] == f"Unable to reach JWKS endpoint: {settings.oidc_jwks_uri}"
-    assert body["correlation_id"]
+    assert body["request_id"]
 
 
 async def test_mcp_edge_collapses_an_unreachable_jwks_into_the_vague_401(
@@ -536,7 +536,7 @@ def test_v1_edge_sends_403_to_a_non_admin_on_an_admin_route(
 # ---------------------------------------------------------------------------
 
 
-def test_v1_edge_sends_503_with_the_maintenance_reason_and_a_correlation_id(
+def test_v1_edge_sends_503_with_the_maintenance_reason_and_a_request_id(
     app_client_factory,
 ) -> None:
     with app_client_factory() as (client, _state):
@@ -558,4 +558,4 @@ def test_v1_edge_sends_503_with_the_maintenance_reason_and_a_correlation_id(
     assert (
         body["detail"] == "The broker is in maintenance mode. Reason: down for updates"
     )
-    assert body["correlation_id"]
+    assert body["request_id"]

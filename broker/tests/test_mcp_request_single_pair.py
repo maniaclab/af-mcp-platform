@@ -1,5 +1,5 @@
 """One /mcp request leaves exactly one ``http.request.received``/``finished``
-pair and one ``correlation_id``, with the caller's ``subject`` on the pair.
+pair and one ``request_id``, with the caller's ``subject`` on the pair.
 
 The real app wraps the /mcp mount in /v1's ``_bind_request_logging_context``
 BaseHTTPMiddleware, so a /mcp request crosses two request-logging layers.
@@ -39,7 +39,7 @@ class _ContextRecordingApp:
         await send({"type": "http.response.body", "body": b"ok"})
 
 
-def test_one_mcp_request_logs_one_pair_with_one_correlation_id_and_subject(
+def test_one_mcp_request_logs_one_pair_with_one_request_id_and_subject(
     monkeypatch: pytest.MonkeyPatch,
     settings: Any,
     sig_key: Any,
@@ -70,12 +70,12 @@ def test_one_mcp_request_logs_one_pair_with_one_correlation_id_and_subject(
     finished = [e for e in events if e["event"] == "http.request.finished"]
     assert len(received) == 1
     assert len(finished) == 1
-    correlation_ids = {
-        received[0]["correlation_id"],
-        finished[0]["correlation_id"],
-        inner.contextvars["correlation_id"],
+    request_ids = {
+        received[0]["request_id"],
+        finished[0]["request_id"],
+        inner.contextvars["request_id"],
     }
-    assert len(correlation_ids) == 1
+    assert len(request_ids) == 1
     assert finished[0]["subject"] == "user-123"
     assert finished[0]["method"] == "POST"
     assert finished[0]["path"] == "/mcp/"

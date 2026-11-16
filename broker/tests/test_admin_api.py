@@ -161,7 +161,7 @@ def test_toggle_is_audited_and_logged(
 
     assert resp.status_code == 200
     (audit,) = [e for e in logs if e["event"] == "audit"]
-    assert audit["principal_sub"] == "admin-sub"
+    assert audit["subject"] == "admin-sub"
     assert audit["action"] == action
     assert audit["action_type"] == "state_change"
     assert audit["outcome"] == "success"
@@ -554,7 +554,7 @@ def test_renamed_backend_is_drift_and_not_available(
     service = servers["atlas_search_service"]
     assert service["status"] == "misconfigured"
     assert "5 advertised, 0 routable" in service["status_detail"]
-    assert service["correlation_id"]
+    assert service["request_id"]
 
 
 def test_matching_backend_has_no_drift_and_is_available(

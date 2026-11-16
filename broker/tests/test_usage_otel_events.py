@@ -54,7 +54,7 @@ _ENDPOINT = "http://collector.invalid:4318"
 _EVENT_ATTRIBUTES = {
     "audit_id",
     "trace_id",
-    "principal_sub",
+    "subject",
     "token_id",
     "service",
     "method",
@@ -125,7 +125,7 @@ def _full_record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
         "audit_id": "audit-1",
         "trace_id": "a" * 32,
-        "principal_sub": "alice-sub",
+        "subject": "alice-sub",
         "token_id": "tok-1",
         "args_summary": "scope=SECRET-ARGUMENT",
         "duration_ms": 12.5,
@@ -214,7 +214,7 @@ def test_emits_one_record_with_exactly_the_documented_attributes(
     assert dict(log.attributes) == {
         "audit_id": "audit-1",
         "trace_id": "a" * 32,
-        "principal_sub": "alice-sub",
+        "subject": "alice-sub",
         "token_id": "tok-1",
         "service": "rucio",
         "method": "rucio_list_dids",
@@ -256,7 +256,7 @@ def test_unset_optional_fields_are_omitted_not_null(
     (log,) = _logs(exporter)
     assert set(log.attributes) == {
         "audit_id",
-        "principal_sub",
+        "subject",
         "service",
         "method",
         "outcome",

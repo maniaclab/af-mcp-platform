@@ -52,7 +52,7 @@ from af_mcp_broker.credentials.errors import (
     CredentialRateLimitedError,
     NeedsUnlockError,
 )
-from af_mcp_broker.logging import current_correlation_id
+from af_mcp_broker.logging import current_request_id
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.mcp.instructions import compose_agent_instructions
 from af_mcp_broker.mcp.middleware.authorization_mw import AuthorizationMiddleware
@@ -202,7 +202,7 @@ async def _identity_token_list_client(
     principal = await _require_entitled_list_principal(ctx, spec, policy)
     await require_linked_to_list(spec, credential_registry, principal)
     token, _ = issuer.mint(
-        principal.subject, spec.effective_audience, request_id=current_correlation_id()
+        principal.subject, spec.effective_audience, request_id=current_request_id()
     )
     await ctx.set_state(
         f"__list_credential_status__:{spec.name}",
@@ -477,7 +477,7 @@ async def _identity_token_call_client(
     token, _ = issuer.mint(
         principal.subject,
         gate.spec.effective_audience,
-        request_id=current_correlation_id(),
+        request_id=current_request_id(),
     )
     return build_client(gate.spec, headers={"Authorization": f"Bearer {token}"})
 

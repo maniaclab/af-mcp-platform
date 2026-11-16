@@ -164,16 +164,16 @@ class TestRedeemFailures:
 
 
 class TestRequestCorrelation:
-    async def test_redeem_sends_the_bound_correlation_id_as_x_request_id(
+    async def test_redeem_sends_the_bound_request_id_as_x_request_id(
         self, make_client
     ) -> None:
         structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        structlog.contextvars.bind_contextvars(request_id="corr-342")
         client, requests = make_client()
         await _redeem(client)
         assert requests[0].headers["x-request-id"] == "corr-342"
 
-    async def test_redeem_without_a_bound_correlation_id_sends_no_x_request_id(
+    async def test_redeem_without_a_bound_request_id_sends_no_x_request_id(
         self, make_client
     ) -> None:
         structlog.contextvars.clear_contextvars()
@@ -181,11 +181,11 @@ class TestRequestCorrelation:
         await _redeem(client)
         assert "x-request-id" not in requests[0].headers
 
-    async def test_redeem_400_logs_a_warning_with_subject_status_and_correlation_id(
+    async def test_redeem_400_logs_a_warning_with_subject_status_and_request_id(
         self, make_client
     ) -> None:
         structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+        structlog.contextvars.bind_contextvars(request_id="corr-342")
         client, _ = make_client(httpx2.Response(400, json={"detail": "bad token"}))
         with (
             structlog.testing.capture_logs(
@@ -203,7 +203,7 @@ class TestRequestCorrelation:
         assert record["log_level"] == "warning"
         assert record["subject"] == "user1"
         assert record["upstream_status"] == 400
-        assert record["correlation_id"] == "corr-342"
+        assert record["request_id"] == "corr-342"
         assert "tok-s3cret" not in str(logs)
         assert "bad token" not in str(logs)
 

@@ -90,6 +90,10 @@ INSERT INTO af_mcp_usage_events (
 ON CONFLICT (audit_id) DO NOTHING
 """
 
+# A raw row written without children (unmeasured, or measured before the
+# breakdown existed), against the current schema.
+CHILDLESS_INSERT = PREVIOUS_RELEASE_INSERT.replace("principal_sub", "subject")
+
 _IMAGE = {
     "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
     "image": ContentMeasure(blocks=1, bytes=32_000, tokens_est=414),
@@ -190,7 +194,7 @@ async def test_query_reports_the_breakdown_and_treats_childless_parents_as_unkno
     # A parent with no children: a not-yet-updated replica's row.
     await _execute(
         fresh_dsn,
-        PREVIOUS_RELEASE_INSERT,
+        CHILDLESS_INSERT,
         "old-replica", "req", "sub-abc", "rucio", "rucio_list_dids", "read",
         "success", datetime.now(tz=UTC), 1.0, 500, 100, None, None,
     )  # fmt: skip
@@ -277,21 +281,82 @@ async def test_ddl_backfills_a_previous_release_database_exactly_once(
     ]
 
 
-async def test_previous_release_replica_inserts_keep_working_after_migration(
+async def test_previous_release_replica_insert_fails_loudly_after_migration(
     fresh_dsn: str,
 ) -> None:
+    """A replica that still writes ``principal_sub`` gets an error, not a silent drop.
+
+    Its batch is logged as ``usage.record_batch_failed`` with the audit ids, and
+    the audit log keeps the records, so the rows can be rebuilt.
+    """
     store = await _start(fresh_dsn)
+    with pytest.raises(asyncpg.UndefinedColumnError):
+        await _execute(
+            fresh_dsn,
+            PREVIOUS_RELEASE_INSERT,
+            "old-replica", "req", "sub-abc", "rucio", "rucio_list_dids", "read",
+            "success", datetime.now(tz=UTC), 1.0, 500, 100, None, None,
+        )  # fmt: skip
+    await store.aclose()
+
+
+async def test_ddl_renames_principal_sub_to_subject_in_every_table(
+    fresh_dsn: str,
+) -> None:
+    # A deployed database: the content tables exist and the user column is
+    # still `principal_sub` everywhere.
+    await (await _start(fresh_dsn)).aclose()
+    for table in (
+        "af_mcp_usage_events",
+        "af_mcp_usage_daily",
+        "af_mcp_usage_daily_content",
+    ):
+        await _execute(
+            fresh_dsn, f"ALTER TABLE {table} RENAME COLUMN subject TO principal_sub"
+        )
     await _execute(
         fresh_dsn,
         PREVIOUS_RELEASE_INSERT,
-        "old-replica", "req", "sub-abc", "rucio", "rucio_list_dids", "read",
-        "success", datetime.now(tz=UTC), 1.0, 500, 100, None, None,
+        "raw-1", "req", "sub-abc", "jhub", "jhub_nb_execute_code", "state_change",
+        "success", datetime.now(tz=UTC), 1.0, 10, 5, None, None,
     )  # fmt: skip
+    await _execute(
+        fresh_dsn,
+        "INSERT INTO af_mcp_usage_daily VALUES "
+        "(current_date - 200, 'sub-abc', 'rucio', 'rucio_list_dids', 'success', "
+        "4, 8.0, 400, 60)",
+    )
+    await _execute(
+        fresh_dsn,
+        "INSERT INTO af_mcp_usage_daily_content VALUES "
+        "(current_date - 200, 'sub-abc', 'rucio', 'rucio_list_dids', 'success', "
+        "'text', 4, 400, 60)",
+    )
 
-    (agg,) = await store.query("sub-abc", days=30)
-    await store.aclose()
-    assert (agg.calls, agg.result_bytes, agg.result_tokens_est) == (1, 500, 100)
-    assert agg.content == {}
+    for _ in range(2):  # a second start is a no-op
+        await (await _start(fresh_dsn)).aclose()
+
+    columns = await _fetch(
+        fresh_dsn,
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_name IN ('af_mcp_usage_events', 'af_mcp_usage_daily', "
+        "'af_mcp_usage_daily_content') AND column_name IN ('subject', 'principal_sub') "
+        "ORDER BY 1, 2",
+    )
+    assert [tuple(r) for r in columns] == [
+        ("af_mcp_usage_daily", "subject"),
+        ("af_mcp_usage_daily_content", "subject"),
+        ("af_mcp_usage_events", "subject"),
+    ]
+    store = await _start(fresh_dsn)
+    try:
+        aggregates = await store.query("sub-abc", days=365)
+        subjects = await store.list_subjects(365)
+    finally:
+        await store.aclose()
+    # Rows written before the rename (raw and rolled up) are read under the new name.
+    assert {(a.service, a.calls) for a in aggregates} == {("jhub", 1), ("rucio", 4)}
+    assert subjects == ["sub-abc"]
 
 
 # --- fold --------------------------------------------------------------------
@@ -356,7 +421,7 @@ async def test_fold_of_a_childless_parent_keeps_its_totals(fresh_dsn: str) -> No
     store = await _start(fresh_dsn)
     await _execute(
         fresh_dsn,
-        PREVIOUS_RELEASE_INSERT,
+        CHILDLESS_INSERT,
         "old-replica", "req", "sub-abc", "rucio", "rucio_list_dids", "read",
         "success", datetime.fromtimestamp(_days_ago(100), tz=UTC), 1.0, 500, 100, None, None,
     )  # fmt: skip

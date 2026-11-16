@@ -18,6 +18,7 @@ import json
 import time
 from typing import TYPE_CHECKING
 
+import jwt
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
@@ -274,7 +275,7 @@ class TestCredmonTopToken:
 
 
 class TestRedeemParentRequestId:
-    """A token's ``rid`` (the minting tool call) becomes the release line's ``parent_request_id``; ``request_id`` stays the token's ``jti``."""
+    """A token's ``rid`` (the minting tool call) becomes the release line's ``parent_request_id``; ``jti`` stays the token's id and ``request_id`` the redeem's own."""
 
     def test_release_audit_line_names_the_minting_tool_call_as_parent(
         self, x509_redeem_env, app_client_factory, capsys: pytest.CaptureFixture[str]
@@ -297,7 +298,12 @@ class TestRedeemParentRequestId:
         lines = audit_lines(capsys.readouterr().out)
         assert [line["action"] for line in lines] == ["x509_proxy_release"]
         assert lines[0]["parent_request_id"] == "tool-call-id"
-        assert lines[0]["request_id"] != "tool-call-id"  # the token's jti
+        # request_id names the redeem request; jti names the token.
+        assert (
+            lines[0]["jti"]
+            == jwt.decode(token, options={"verify_signature": False})["jti"]
+        )
+        assert lines[0]["request_id"] not in {"tool-call-id", lines[0]["jti"]}
 
     def test_request_finished_line_names_the_minting_tool_call_as_parent(
         self, x509_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch

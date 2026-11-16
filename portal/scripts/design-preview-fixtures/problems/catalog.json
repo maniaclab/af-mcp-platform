@@ -10,7 +10,7 @@
       "credential_provider": null,
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": true
     },
@@ -24,7 +24,7 @@
       "credential_provider": "example-iam",
       "status": "link_required",
       "status_detail": "Link your Example IAM account to use this service.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": "not_linked",
       "builtin": false
     },
@@ -38,7 +38,7 @@
       "credential_provider": "example-iam",
       "status": "link_required",
       "status_detail": "Link your Example IAM account to use this service.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": "not_linked",
       "builtin": false
     },
@@ -52,7 +52,7 @@
       "credential_provider": "example-iam",
       "status": "misconfigured",
       "status_detail": "This service is not configured correctly. Contact an administrator.",
-      "correlation_id": "EXAMPLE-CORR-0001",
+      "request_id": "EXAMPLE-CORR-0001",
       "link_state": null,
       "builtin": false
     },
@@ -66,7 +66,7 @@
       "credential_provider": "x509",
       "status": "link_required",
       "status_detail": "Your grid proxy has expired. Renew it on the Identities page.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": "not_linked",
       "builtin": false
     },
@@ -80,7 +80,7 @@
       "credential_provider": "example-iam",
       "status": "permission_required",
       "status_detail": "You are not in a group that grants notebook access.",
-      "correlation_id": "EXAMPLE-CORR-0002",
+      "request_id": "EXAMPLE-CORR-0002",
       "link_state": null,
       "builtin": false
     },
@@ -94,7 +94,7 @@
       "credential_provider": "example-oauth",
       "status": "link_required",
       "status_detail": "Your linked credential was rejected. Re-link your identity.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": "rejected",
       "builtin": false
     },
@@ -108,7 +108,7 @@
       "credential_provider": null,
       "status": "unavailable",
       "status_detail": "This service is temporarily unreachable.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     }

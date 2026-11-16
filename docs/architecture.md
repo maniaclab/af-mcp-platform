@@ -847,13 +847,13 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - response status and latency
 - request ID (propagated in `X-Request-ID` header)
 - calling token (`token_id`): the PAT's public `lookup_id`, `null` for
-  session JWTs — `principal_sub` identifies the user across all their
+  session JWTs — `subject` identifies the user across all their
   tokens, this identifies the specific token, so a leaked PAT's calls can
   be isolated and that one token revoked (never any secret material)
 - resolved VOMS nickname (`nickname`): on x509 proxy-release records, the
   CERN/Rucio account the released proxy authenticates as — the grid identity
   the credential is usable as, distinct from the AF principal in
-  `principal_sub`/`principal_uid`; `null` on every non-x509 record and for a
+  `subject`/`principal_uid`; `null` on every non-x509 record and for a
   proxy whose VOMS attributes carry no nickname (issue maniaclab/af-mcp-platform#199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`

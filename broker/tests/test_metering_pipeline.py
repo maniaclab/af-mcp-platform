@@ -71,7 +71,7 @@ def _backend(
 
 def _record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
-        "principal_sub": "sub-abc",
+        "subject": "sub-abc",
         "principal_uid": 1000,
         "permission": "read_data",
         "target": "rucio",
@@ -261,13 +261,14 @@ async def test_worker_survives_audit_write_failure_and_reports_it_loudly(
     assert failure["target"] == "rucio"
 
 
-async def test_worker_written_line_carries_the_submitting_requests_correlation_id(
+async def test_worker_written_line_carries_the_submitting_requests_request_id(
     audit_buffer,
 ) -> None:
     """The worker runs in its own task, so the line it writes would lose the
-    request's correlation_id/subject unless they travel with the queued item."""
+    request's context (here ``client_request_id``) unless it travels with the
+    queued item."""
     structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(correlation_id="corr-9", subject="sub-abc")
+    structlog.contextvars.bind_contextvars(client_request_id="cli-9")
     backend = _backend()
     await backend.start()
 
@@ -276,7 +277,7 @@ async def test_worker_written_line_carries_the_submitting_requests_correlation_i
     await backend.aclose()
 
     (line,) = _lines(audit_buffer)
-    assert line["correlation_id"] == "corr-9"
+    assert line["client_request_id"] == "cli-9"
     assert line["subject"] == "sub-abc"
 
 

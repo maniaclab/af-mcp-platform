@@ -27,6 +27,7 @@ from pydantic import SecretStr
 
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
 from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.logging import current_request_id
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 
@@ -200,7 +201,7 @@ class CredmonStorer:
     ) -> None:
         await write_audit(
             AuditRecord(
-                principal_sub=subject,
+                subject=subject,
                 principal_uid=uid,
                 permission=None,
                 target=service,
@@ -210,7 +211,7 @@ class CredmonStorer:
                 if error is None
                 else f"storing top token for {service!r} as user {unixname!r} failed",
                 timestamp=time.time(),
-                request_id="",
+                request_id=current_request_id(),
                 outcome="success" if error is None else "error",
                 error=error,
             )

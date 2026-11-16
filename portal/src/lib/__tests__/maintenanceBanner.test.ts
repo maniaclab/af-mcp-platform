@@ -49,11 +49,11 @@ describe('maintenanceBannerText', () => {
 });
 
 describe('maintenanceErrorMessage', () => {
-  it('keeps the correlation reference on a 5xx so the admin can quote it to support', () => {
+  it('keeps the request reference on a 5xx so the admin can quote it to support', () => {
     const err = new APIError(
       500,
       'Internal Server Error',
-      JSON.stringify({ detail: 'Internal error', correlation_id: 'abc123def456' }),
+      JSON.stringify({ detail: 'Internal error', request_id: 'abc123def456' }),
     );
     expect(maintenanceErrorMessage(err)).toBe('Internal error (reference: abc123def456)');
   });

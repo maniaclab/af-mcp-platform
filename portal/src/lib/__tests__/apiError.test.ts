@@ -7,44 +7,40 @@ import { APIError, SessionExpiredError } from '../api';
 import { apiErrorDetail, describeApiError, errorMessage } from '../apiError';
 
 describe('apiErrorDetail', () => {
-  it('returns the detail unchanged when no correlation_id is present', () => {
+  it('returns the detail unchanged when no request_id is present', () => {
     const err = new APIError(502, 'Bad Gateway', JSON.stringify({ detail: 'boom' }));
     expect(apiErrorDetail(err)).toBe('boom');
   });
 
-  it('appends the correlation_id when present, so it can be quoted to support (af-mcp-platform#288)', () => {
+  it('appends the request_id when present, so it can be quoted to support (af-mcp-platform#288)', () => {
     const err = new APIError(
       502,
       'Bad Gateway',
-      JSON.stringify({ detail: 'boom', correlation_id: 'abc123def456' }),
+      JSON.stringify({ detail: 'boom', request_id: 'abc123def456' }),
     );
     expect(apiErrorDetail(err)).toBe('boom (reference: abc123def456)');
   });
 
-  it('does not repeat a correlation_id the detail already quotes', () => {
+  it('does not repeat a request_id the detail already quotes', () => {
     const err = new APIError(
       502,
       'Bad Gateway',
-      JSON.stringify({ detail: 'boom [abc123def456]', correlation_id: 'abc123def456' }),
+      JSON.stringify({ detail: 'boom [abc123def456]', request_id: 'abc123def456' }),
     );
     expect(apiErrorDetail(err)).toBe('boom [abc123def456]');
   });
 
-  it('ignores a non-string correlation_id rather than rendering "undefined"', () => {
+  it('ignores a non-string request_id rather than rendering "undefined"', () => {
     const err = new APIError(
       502,
       'Bad Gateway',
-      JSON.stringify({ detail: 'boom', correlation_id: 12345 }),
+      JSON.stringify({ detail: 'boom', request_id: 12345 }),
     );
     expect(apiErrorDetail(err)).toBe('boom');
   });
 
-  it('returns null when detail is missing, regardless of correlation_id', () => {
-    const err = new APIError(
-      502,
-      'Bad Gateway',
-      JSON.stringify({ correlation_id: 'abc123def456' }),
-    );
+  it('returns null when detail is missing, regardless of request_id', () => {
+    const err = new APIError(502, 'Bad Gateway', JSON.stringify({ request_id: 'abc123def456' }));
     expect(apiErrorDetail(err)).toBeNull();
   });
 
@@ -78,11 +74,11 @@ describe('describeApiError', () => {
     expect(describeApiError(new SessionExpiredError(), messages)).toBe('expired');
   });
 
-  it("prefers the broker's detail, with its correlation reference, over the status table", () => {
+  it("prefers the broker's detail, with its request reference, over the status table", () => {
     const err = new APIError(
       502,
       'Bad Gateway',
-      JSON.stringify({ detail: 'broker says', correlation_id: 'abc123' }),
+      JSON.stringify({ detail: 'broker says', request_id: 'abc123' }),
     );
     expect(describeApiError(err, messages)).toBe('broker says (reference: abc123)');
   });

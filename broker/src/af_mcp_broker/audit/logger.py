@@ -17,10 +17,10 @@ if TYPE_CHECKING:
 
 @dataclass
 class AuditRecord:
-    principal_sub: str
+    subject: str
     # Optional (issue #148): POSIX identity is not required of every
     # principal, but audit records still carry it when present -- operators
-    # want it, and `principal_sub` alone is a stable substitute when it's
+    # want it, and `subject` alone is a stable substitute when it's
     # absent, not a gap in the record.
     principal_uid: int | None
     permission: str | None
@@ -52,7 +52,7 @@ class AuditRecord:
     principal_permission_grant: list[str] | None = None
     # Per-token attribution (issue #247): the calling PAT's public,
     # non-secret lookup_id, null for a session JWT (not a distinct
-    # long-lived credential). ``principal_sub`` identifies the user across
+    # long-lived credential). ``subject`` identifies the user across
     # all their tokens; this identifies the specific token, so a leaked
     # PAT's calls can be isolated -- and that one token revoked -- without
     # guessing among the owner's other tokens. NEVER secret material or the
@@ -91,7 +91,7 @@ class AuditRecord:
     trace_id: str | None = None
     # The resolved VOMS nickname -- the CERN/Rucio account the x509 proxy
     # authenticates as -- on x509 proxy-release records (issue #199). Distinct
-    # from principal_sub/principal_uid, which identify the AF principal, not
+    # from subject/principal_uid, which identify the AF principal, not
     # the grid identity the credential is actually usable as; an operator
     # grepping the audit trail during an incident (nickname-resolution bug,
     # VOMS AC parsing regression, a user who changed their Globus identity)
@@ -109,6 +109,11 @@ class AuditRecord:
     # how often backends fail transiently before deciding whether the broker
     # should ever retry.
     error_class: str | None = None
+    # The ``jti`` of the broker identity token a credential-release record was
+    # made with (RFC 7519 section 4.1.7). ``request_id`` names the redeem
+    # request itself; this names the token, which is not a request. None on
+    # every other record.
+    jti: str | None = None
 
 
 async def write_audit(record: AuditRecord) -> None:
@@ -116,7 +121,7 @@ async def write_audit(record: AuditRecord) -> None:
 
     The line goes through the same processor chain as every other log line
     (ISO ``timestamp``, ``level``, ``logger``, and the request's
-    ``correlation_id`` / ``subject`` contextvars), to the destination
+    ``request_id`` / ``subject`` contextvars), to the destination
     ``configure_logging`` gives the audit logger. The record's own epoch
     ``timestamp`` is emitted as ISO ``recorded_at`` -- the line's
     ``timestamp`` is when it was written, which for a queued record is later.
@@ -132,7 +137,7 @@ async def write_audit(record: AuditRecord) -> None:
     ).isoformat()
     # The output can be a real file (or stdout redirected to one) whose
     # write/flush block — never do that on the event loop. to_thread copies
-    # the current contextvars, so correlation_id/subject still merge in.
+    # the current contextvars, so request_id/subject still merge in.
     await asyncio.to_thread(_emit, payload)
 
 

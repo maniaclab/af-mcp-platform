@@ -70,10 +70,10 @@ def test_wrong_audience_is_401_with_structured_detail(v1_client):
     assert resp.headers["WWW-Authenticate"] == "Bearer"
     detail = resp.json()["detail"]
     assert detail["error"] == "insufficient_scope"
-    assert detail["correlation_id"] in detail["message"]
+    assert detail["request_id"] in detail["message"]
 
 
-def test_unavailable_directory_is_503_with_correlation_id(v1_client):
+def test_unavailable_directory_is_503_with_request_id(v1_client):
     client, directory, sign = v1_client
     directory.unavailable_subjects.add("user-123")
 
@@ -83,7 +83,7 @@ def test_unavailable_directory_is_503_with_correlation_id(v1_client):
     assert "WWW-Authenticate" not in resp.headers
     body = resp.json()
     assert "authorization directory is temporarily unavailable" in body["detail"]
-    assert body["correlation_id"]
+    assert body["request_id"]
 
 
 def test_other_invalid_token_is_still_a_plain_401(v1_client):

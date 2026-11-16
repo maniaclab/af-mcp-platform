@@ -192,12 +192,12 @@ async def test_issue_presented_broker_token_has_condor_audience_and_posix_claims
     assert claims["unixname"] == "auser"
 
 
-async def test_issue_sends_the_bound_correlation_id_as_x_request_id(
+async def test_issue_sends_the_bound_request_id_as_x_request_id(
     provider_factory, make_principal, fake_client
 ) -> None:
     """af-mcp-platform#342: the token service's audit line carries the broker's id."""
     structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(correlation_id="corr-342")
+    structlog.contextvars.bind_contextvars(request_id="corr-342")
     provider, _ = provider_factory()
 
     await provider.issue(make_principal(), "condor-mcp")

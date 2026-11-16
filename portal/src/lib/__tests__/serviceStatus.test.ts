@@ -12,24 +12,24 @@ import type { ServiceStatus, CatalogServer } from '../api';
 
 function statusFields(
   status: ServiceStatus,
-  overrides: Partial<Pick<CatalogServer, 'status_detail' | 'correlation_id'>> = {},
-): Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'> {
+  overrides: Partial<Pick<CatalogServer, 'status_detail' | 'request_id'>> = {},
+): Pick<CatalogServer, 'status' | 'status_detail' | 'request_id'> {
   return {
     status,
     status_detail: overrides.status_detail ?? 'detail',
-    correlation_id: overrides.correlation_id ?? null,
+    request_id: overrides.request_id ?? null,
   };
 }
 
 describe('resolveServiceStatus', () => {
-  it('reports "available" as ok severity with no CTA and no correlation id', () => {
+  it('reports "available" as ok severity with no CTA and no request id', () => {
     const view = resolveServiceStatus(statusFields('available', { status_detail: 'Available.' }));
     expect(view).toEqual({
       label: 'Available',
       detail: 'Available.',
       severity: 'ok',
       cta: null,
-      correlationId: null,
+      requestId: null,
       grantingGroups: [],
     });
   });
@@ -41,22 +41,22 @@ describe('resolveServiceStatus', () => {
     expect(view.label).toBe('Not linked');
     expect(view.severity).toBe('off');
     expect(view.cta).toEqual({ label: 'Link identity', href: '/identities/' });
-    expect(view.correlationId).toBeNull();
+    expect(view.requestId).toBeNull();
   });
 
-  it('reports "permission_required" as warning severity with no CTA but a correlation id', () => {
+  it('reports "permission_required" as warning severity with no CTA but a request id', () => {
     const view = resolveServiceStatus(
-      statusFields('permission_required', { correlation_id: 'abc123' }),
+      statusFields('permission_required', { request_id: 'abc123' }),
     );
     expect(view.severity).toBe('warning');
     expect(view.cta).toBeNull();
-    expect(view.correlationId).toBe('abc123');
+    expect(view.requestId).toBe('abc123');
   });
 
   describe('"permission_required" (issue #395)', () => {
     const denied = (extra: Partial<CatalogServer>) =>
       resolveServiceStatus({
-        ...statusFields('permission_required', { correlation_id: 'abc123' }),
+        ...statusFields('permission_required', { request_id: 'abc123' }),
         ...extra,
       });
 
@@ -67,7 +67,7 @@ describe('resolveServiceStatus', () => {
         href: 'https://docs.example.org/rucio',
       });
       // The reference id to quote stays alongside the call to action.
-      expect(view.correlationId).toBe('abc123');
+      expect(view.requestId).toBe('abc123');
     });
 
     it('has no call to action without a docs URL', () => {
@@ -99,18 +99,18 @@ describe('resolveServiceStatus', () => {
     );
   });
 
-  it('reports "unavailable" as warning severity with no CTA and no correlation id', () => {
+  it('reports "unavailable" as warning severity with no CTA and no request id', () => {
     const view = resolveServiceStatus(statusFields('unavailable'));
     expect(view.severity).toBe('warning');
     expect(view.cta).toBeNull();
-    expect(view.correlationId).toBeNull();
+    expect(view.requestId).toBeNull();
   });
 
-  it('reports "misconfigured" as error severity with no CTA but a correlation id', () => {
-    const view = resolveServiceStatus(statusFields('misconfigured', { correlation_id: 'def456' }));
+  it('reports "misconfigured" as error severity with no CTA but a request id', () => {
+    const view = resolveServiceStatus(statusFields('misconfigured', { request_id: 'def456' }));
     expect(view.severity).toBe('error');
     expect(view.cta).toBeNull();
-    expect(view.correlationId).toBe('def456');
+    expect(view.requestId).toBe('def456');
   });
 
   it('always carries the broker-supplied status_detail sentence through verbatim', () => {

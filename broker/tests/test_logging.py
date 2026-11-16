@@ -3,7 +3,7 @@
 ``configure_logging`` wires ``structlog.contextvars.merge_contextvars``
 into the processor chain; these two helpers are the single place that calls
 ``structlog.contextvars.bind_contextvars``, so every request-scoped log line can be tied back to a
-``correlation_id`` and (once identity resolves) a ``subject``.
+``request_id`` and (once identity resolves) a ``subject``.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import structlog
 
 import af_mcp_broker
 from af_mcp_broker.logging import (
-    bind_new_correlation_id,
+    bind_new_request_id,
     bind_subject,
     configure_logging,
     log_request_finished,
@@ -34,33 +34,33 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-def test_bind_new_correlation_id_binds_a_nonempty_value() -> None:
+def test_bind_new_request_id_binds_a_nonempty_value() -> None:
     structlog.contextvars.clear_contextvars()
 
-    bind_new_correlation_id()
+    bind_new_request_id()
 
     bound = structlog.contextvars.get_contextvars()
-    assert bound["correlation_id"]
+    assert bound["request_id"]
 
 
-def test_bind_new_correlation_id_differs_across_calls() -> None:
+def test_bind_new_request_id_differs_across_calls() -> None:
     structlog.contextvars.clear_contextvars()
-    bind_new_correlation_id()
-    first = structlog.contextvars.get_contextvars()["correlation_id"]
+    bind_new_request_id()
+    first = structlog.contextvars.get_contextvars()["request_id"]
 
-    bind_new_correlation_id()
-    second = structlog.contextvars.get_contextvars()["correlation_id"]
+    bind_new_request_id()
+    second = structlog.contextvars.get_contextvars()["request_id"]
 
     assert first != second
 
 
-def test_bind_new_correlation_id_clears_stale_contextvars_first() -> None:
+def test_bind_new_request_id_clears_stale_contextvars_first() -> None:
     """A prior request's leftover bindings (e.g. ``subject``) must not survive
     into the next request reusing the same task."""
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(subject="stale-from-a-previous-request")
 
-    bind_new_correlation_id()
+    bind_new_request_id()
 
     assert "subject" not in structlog.contextvars.get_contextvars()
 
@@ -159,18 +159,18 @@ def test_log_request_finished_keeps_the_status_already_sent_when_the_request_the
 # ---------------------------------------------------------------------------
 
 
-def test_request_id_headers_carries_the_bound_correlation_id() -> None:
+def test_request_id_headers_carries_the_bound_request_id() -> None:
     structlog.contextvars.clear_contextvars()
-    bind_new_correlation_id()
+    bind_new_request_id()
 
     headers = request_id_headers()
 
     assert headers == {
-        "X-Request-ID": structlog.contextvars.get_contextvars()["correlation_id"]
+        "X-Request-ID": structlog.contextvars.get_contextvars()["request_id"]
     }
 
 
-def test_request_id_headers_is_empty_without_a_bound_correlation_id() -> None:
+def test_request_id_headers_is_empty_without_a_bound_request_id() -> None:
     structlog.contextvars.clear_contextvars()
 
     assert request_id_headers() == {}

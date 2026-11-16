@@ -24,7 +24,7 @@ class _Clock:
 
 def _record(n: int) -> AuditRecord:
     fields: dict[str, Any] = {
-        "principal_sub": "sub-abc",
+        "subject": "sub-abc",
         "principal_uid": 1000,
         "permission": "read_data",
         "target": "rucio",

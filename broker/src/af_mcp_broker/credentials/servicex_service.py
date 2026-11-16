@@ -128,7 +128,7 @@ class ServiceXTokenServiceClient:
         if resp.status_code == httpx2.codes.BAD_REQUEST:
             # The service's body is not logged (it may carry ServiceX
             # backend internals), and the broker cannot tell revoked from
-            # expired from signed-by-a-rotated-key; the correlation_id
+            # expired from signed-by-a-rotated-key; the request_id
             # (merged from contextvars, and sent as X-Request-ID above)
             # joins this line to the token service's audit line.
             self._log.warning(

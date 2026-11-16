@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 # Attribute names a metric must never carry (see metrics.py's cardinality
 # policy): identity, credential, or per-request identifiers.
 _FORBIDDEN_ATTRIBUTES = {
-    "principal_sub",
+    "subject",
     "sub",
     "user",
     "username",
@@ -170,7 +170,7 @@ def test_attribute_set_is_exactly_service_method_action_type_outcome(
     attribute, whatever the record carries. This fails if any metric gains
     one, by name or by leaking an identity value into an attribute value."""
     record = _record(
-        principal_sub="alice-sub-secret",
+        subject="alice-sub-secret",
         token_id="tok-secret-lookup",
         request_id="req-secret",
         trace_id="f" * 32,
@@ -214,7 +214,7 @@ def test_attribute_set_is_exactly_service_method_action_type_outcome(
 def test_error_counter_attributes_obey_the_same_policy(
     reader: InMemoryMetricReader,
 ) -> None:
-    otel_metrics.record_tool_call(_record(outcome="error", principal_sub="alice"))
+    otel_metrics.record_tool_call(_record(outcome="error", subject="alice"))
 
     (point,) = _points(reader, "af_mcp.tool.errors")
     assert set(point.attributes) == _ALLOWED_ATTRIBUTES
@@ -318,7 +318,7 @@ def test_real_exporter_sends_only_the_allowed_attributes_over_otlp(
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.endpoint)
         otel_metrics.init_otel_metrics(_enabled(collector.endpoint))
         otel_metrics.record_tool_call(
-            _record(principal_sub="alice-sub-secret", token_id="tok-secret")
+            _record(subject="alice-sub-secret", token_id="tok-secret")
         )
         otel_metrics.shutdown_otel_metrics()  # final flush
 

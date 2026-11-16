@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def _record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
-        "principal_sub": "sub-abc",
+        "subject": "sub-abc",
         "principal_uid": 1000,
         "permission": "read_data",
         "target": "rucio",
@@ -189,7 +189,7 @@ def test_usage_is_scoped_to_the_calling_subject(app_client, make_principal) -> N
     """Seed two subjects; each caller sees only their own usage -- there is
     no parameter that reaches anyone else's."""
     client, state = app_client
-    _seed(client, _record(), _record(principal_sub="sub-other", result_tokens_est=7))
+    _seed(client, _record(), _record(subject="sub-other", result_tokens_est=7))
 
     resp = client.get("/v1/usage")
     assert resp.json()["totals"]["calls"] == 1
@@ -232,7 +232,7 @@ def test_usage_subject_override_for_admin_returns_that_subjects_usage(
         _seed(
             client,
             _record(),
-            _record(principal_sub="sub-other", result_tokens_est=7),
+            _record(subject="sub-other", result_tokens_est=7),
         )
 
         resp = client.get("/v1/usage", params={"subject": "sub-other"})
@@ -304,7 +304,7 @@ def test_usage_subjects_resolves_unixname(
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["atlas", "af-admins"])
         set_broker_state(client.app, principal_cache=cache)
-        _seed(client, _record(principal_sub="someone-else"))
+        _seed(client, _record(subject="someone-else"))
 
         resp = client.get("/v1/usage/subjects")
 
@@ -329,7 +329,7 @@ def test_usage_subjects_falls_back_to_bare_subject_when_unresolvable(
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["atlas", "af-admins"])
         set_broker_state(client.app, principal_cache=cache)
-        _seed(client, _record(principal_sub="ghost"))
+        _seed(client, _record(subject="ghost"))
 
         resp = client.get("/v1/usage/subjects")
 

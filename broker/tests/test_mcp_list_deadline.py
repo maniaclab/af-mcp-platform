@@ -291,7 +291,7 @@ async def test_deadline_miss_shows_unavailable_service_wide_in_catalog(
 
     # Every caller sees the service-wide record, not only the one whose
     # listing missed the deadline.
-    status, _detail, _correlation_id, link_state = await service_status(
+    status, _detail, _request_id, link_state = await service_status(
         spec,
         make_principal(subject="someone-else"),
         set(),

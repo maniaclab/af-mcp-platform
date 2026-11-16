@@ -15,7 +15,7 @@ from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.logging import bind_subject, current_correlation_id
+from af_mcp_broker.logging import bind_subject, current_request_id
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
     PrincipalRejectedError,
@@ -223,7 +223,7 @@ class TokenAudienceError(IdentityError):
     token this user mints is missing it until an administrator changes
     their group membership. ``detail`` is a dict, not a plain string,
     carrying a stable ``error`` discriminator (RFC 6750's
-    ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
+    ``insufficient_scope``) plus a ``request_id`` the caller can quote
     when contacting an administrator -- the same pattern
     ``service_status.py``'s ``service_status`` already uses for
     ``permission_required``/``misconfigured``.
@@ -400,11 +400,11 @@ async def get_principal(
         caller_path=caller_path,
     )
     if wrong_audience:
-        correlation_id = current_correlation_id()
+        request_id = current_request_id()
         logger.warning(
             "jwt.audience_mismatch",
             claimed_subject=_peek_sub(token),
-            correlation_id=correlation_id,
+            request_id=request_id,
             actual_audience=_peek_aud(token),
             expected_audience=settings.oidc_audience,
         )
@@ -414,9 +414,9 @@ async def get_principal(
                 "message": (
                     "Your account is not authorized to use this platform "
                     "yet. Contact your AF administrators and quote this "
-                    f"ID: {correlation_id}"
+                    f"ID: {request_id}"
                 ),
-                "correlation_id": correlation_id,
+                "request_id": request_id,
             }
         )
     if expired:
