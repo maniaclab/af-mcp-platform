@@ -327,6 +327,7 @@ def test_vault_config_ok_when_addr_and_role_set():
     Settings(
         token_store_backend="vault",
         vault_addr="https://vault.example",
+        vault_kv_root="mcp",
         vault_auth_role="af-mcp-broker",
     )  # must not raise
 
@@ -355,6 +356,7 @@ def test_vault_config_ok_when_registry_backend_vault_and_addr_and_role_set():
     Settings(
         token_registry_backend="vault",
         vault_addr="https://vault.example",
+        vault_kv_root="mcp",
         vault_auth_role="af-mcp-broker",
     )  # must not raise
 
@@ -388,6 +390,7 @@ def test_vault_config_ok_when_principal_cache_backend_vault_and_addr_and_role_se
     Settings(
         principal_cache_backend="vault",
         vault_addr="https://vault.example",
+        vault_kv_root="mcp",
         vault_auth_role="af-mcp-broker",
     )  # must not raise
 
@@ -417,6 +420,7 @@ def test_vault_config_ok_when_maintenance_mode_backend_vault_and_addr_and_role_s
     Settings(
         maintenance_mode_backend="vault",
         vault_addr="https://vault.example",
+        vault_kv_root="mcp",
         vault_auth_role="af-mcp-broker",
     )  # must not raise
 
@@ -645,10 +649,6 @@ def test_vault_config_required_by_krb5_token_entry():
         Settings(identity_providers=[entry], vault_addr="https://vault.example")
 
 
-def test_krb5_kv_path_prefix_default():
-    assert Settings().krb5_kv_path_prefix == "mcp/krb5"
-
-
 # servicex-token identity providers (issue #295) -- ServiceXProvider's config.
 def test_servicex_token_provider_config_parses():
     settings = Settings(
@@ -702,10 +702,6 @@ def test_vault_config_required_by_servicex_token_entry():
         Settings(identity_providers=[entry], vault_addr="https://vault.example")
 
 
-def test_servicex_kv_path_prefix_default():
-    assert Settings().servicex_kv_path_prefix == "mcp/servicex"
-
-
 # ---------------------------------------------------------------------------
 # x509 identity providers — X509Provider's config surface, replacing the
 # global VOMS_TOKEN_SERVICE_URL special case (which crash-looped a broker
@@ -722,7 +718,11 @@ _X509_ENTRY = {
     "service_url": "http://voms-token-service.af-mcp.svc:8080",
 }
 
-_VAULT_ENV = {"vault_addr": "https://vault.example", "vault_auth_role": "broker"}
+_VAULT_ENV = {
+    "vault_addr": "https://vault.example",
+    "vault_auth_role": "broker",
+    "vault_kv_root": "mcp",
+}
 
 
 def test_identity_providers_x509_parses():

@@ -468,10 +468,6 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 # rationale as TOKEN_STORE_BACKEND above.
 - name: TOKEN_REGISTRY_BACKEND
   value: {{ .Values.broker.tokenRegistry.backend | replace "-" "_" | quote }}
-{{- if .Values.broker.tokenRegistry.kvPathPrefix }}
-- name: TOKEN_REGISTRY_KV_PATH_PREFIX
-  value: {{ .Values.broker.tokenRegistry.kvPathPrefix | quote }}
-{{- end }}
 # Principal cache persistence backend (issue #144 step 2b) -- durable
 # storage for identity-PAT-authenticated principals' last-known
 # groups/uid/gid/unixname/email, so a broker restart during a Keycloak
@@ -479,10 +475,6 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
 # rationale as TOKEN_STORE_BACKEND above.
 - name: PRINCIPAL_CACHE_BACKEND
   value: {{ .Values.broker.principalCache.backend | replace "-" "_" | quote }}
-{{- if .Values.broker.principalCache.kvPathPrefix }}
-- name: PRINCIPAL_CACHE_KV_PATH_PREFIX
-  value: {{ .Values.broker.principalCache.kvPathPrefix | quote }}
-{{- end }}
 # Metering pipeline backend (metering.py) -- transport for
 # success/error audit records between the tool-call hot path and the
 # worker that measures and writes them. "in-process" and "inline" exist;
@@ -525,10 +517,6 @@ startup refusal (Settings._validate_replica_state_config) for the chart path.
   value: {{ .Values.broker.maintenanceMode.backend | replace "-" "_" | quote }}
 - name: MAINTENANCE_MODE_CACHE_TTL_SECONDS
   value: {{ .Values.broker.maintenanceMode.cacheTtlSeconds | quote }}
-{{- if .Values.broker.maintenanceMode.kvPathPrefix }}
-- name: MAINTENANCE_MODE_KV_PATH_PREFIX
-  value: {{ .Values.broker.maintenanceMode.kvPathPrefix | quote }}
-{{- end }}
 {{- if eq .Values.broker.maintenanceMode.backend "postgres" }}
 {{- if .Values.broker.maintenanceMode.postgres.existingSecret.name }}
 # asyncpg DSN for the postgres maintenance-mode store. Omit this secret
@@ -618,23 +606,11 @@ selector is "vault". The gate is af-mcp-platform.needsVault.
 - name: VAULT_KV_MOUNT
   value: {{ .Values.broker.oauth21.tokenStore.vault.kvMount | quote }}
 {{- end }}
-{{- if eq .Values.broker.oauth21.tokenStore.backend "vault" }}
-{{- if .Values.broker.oauth21.tokenStore.vault.kvPathPrefix }}
-- name: VAULT_KV_PATH_PREFIX
-  value: {{ .Values.broker.oauth21.tokenStore.vault.kvPathPrefix | quote }}
-{{- end }}
-{{- end }}
-# KV path prefixes of the stores that have no backend selector (they follow
-# the identityProviders entries and credmon). Rendered with the connection so
-# two releases sharing one KV mount can be told apart.
-- name: X509_KV_PATH_PREFIX
-  value: {{ .Values.broker.vault.x509KvPathPrefix | quote }}
-- name: KRB5_KV_PATH_PREFIX
-  value: {{ .Values.broker.vault.krb5KvPathPrefix | quote }}
-- name: SERVICEX_KV_PATH_PREFIX
-  value: {{ .Values.broker.vault.servicexKvPathPrefix | quote }}
-- name: CREDMON_STATE_KV_PATH_PREFIX
-  value: {{ .Values.broker.vault.credmonKvPathPrefix | quote }}
+# Root under the KV mount from which the broker derives every Vault-backed
+# store's path prefix (broker VaultKvPaths). Required: two releases sharing one
+# KV mount are told apart by it.
+- name: VAULT_KV_ROOT
+  value: {{ required "broker.vault.kvRoot is required when a Vault-backed store is configured" .Values.broker.vault.kvRoot | quote }}
 {{- end }}
 {{- if .Values.broker.existingServiceTokenSecret }}
 - name: AF_SERVICE_TOKEN
@@ -692,7 +668,7 @@ Secret for the collector headers. Emits nothing.
 {{- fail "broker.tracing.endpoint was removed: set broker.otlp.endpoint (the collector endpoint is now shared by every OpenTelemetry signal)" }}
 {{- end }}
 {{- if hasKey .Values.broker.tracing "networkPolicy" }}
-{{- fail "broker.tracing.networkPolicy was removed: set broker.otlp.networkPolicy (the collector egress rule is now shared by every OpenTelemetry signal)" }}
+{{- fail "broker.tracing.networkPolicy was removed: the collector egress rule is generated from broker.otlp.endpoint (declare the collector pods under networkPolicy.egress.endpoints)" }}
 {{- end }}
 {{- if and (or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled) (not .Values.broker.otlp.endpoint) }}
 {{- fail "broker.otlp.endpoint is required when broker.tracing.enabled, broker.metrics.otlp.enabled or broker.usageEvents.otlp.enabled is true" }}

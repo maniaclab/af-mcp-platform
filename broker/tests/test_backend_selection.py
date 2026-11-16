@@ -71,6 +71,7 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(
         oidc_issuer="https://kc.invalid/realms/x",
         vault_addr="https://vault.invalid",
+        vault_kv_root="mcp",
         vault_auth_role="r",
         maintenance_mode_postgres_dsn=_DSN,
         usage_postgres_dsn=_DSN,

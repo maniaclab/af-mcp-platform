@@ -20,6 +20,8 @@ portal:
   brokerOrigin: "https://mcp.example.com"
 
 broker:
+  vault:
+    kvRoot: "mcp"
   # Two replicas (the chart default) need a shared state store or an explicit
   # opt-in; this file is not about shared state, so it opts in.
   sharedState:
@@ -53,3 +55,14 @@ entitlements:
 ingress:
   mcpHost: "mcp.example.com"
   portalHost: "mcp-portal.example.com"
+
+# Every in-cluster URL needs the pods behind it (networkPolicy.endpoints).
+networkPolicy:
+  egress:
+    endpoints:
+      docs-mcp.example.svc.cluster.local:
+        podSelector:
+          app.kubernetes.io/name: docs-mcp
+      krb5-token-service.example.svc.cluster.local:
+        podSelector:
+          app.kubernetes.io/name: krb5-token-service

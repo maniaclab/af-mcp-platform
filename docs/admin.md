@@ -204,10 +204,9 @@ keep admitting requests:
   selections; it is fine for local dev or a single-replica deployment, but
   not for a real multi-replica facility.
 - **`vault`** persists to the same Vault/OpenBao instance the other
-  Vault-backed stores use, under its own `broker.maintenanceMode.kvPathPrefix`
-  (default `mcp/maintenance-mode`) so it never collides with them under the
-  same KV mount. Concurrent writes are compare-and-set; a lost race
-  surfaces as the 409 described above rather than silently applying
+  Vault-backed stores use, under `{broker.vault.kvRoot}/maintenance-mode`, so it never
+  collides with them under the same KV mount. Concurrent writes are
+  compare-and-set; a lost race surfaces as the 409 described above rather than silently applying
   last-writer-wins.
 - **`postgres`** persists to a single-row table (`af_mcp_maintenance_mode`)
   via asyncpg. `broker.maintenanceMode.postgres.existingSecret` points at a

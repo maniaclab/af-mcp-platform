@@ -468,13 +468,9 @@ rendered.
 ```yaml
 broker:
   otlp:
-    endpoint: "http://otel-collector.observability:4318"
+    endpoint: "http://otel-collector.observability.svc:4318"
     headers:
       existingSecret: { name: otlp-collector-auth, key: headers }
-    networkPolicy:
-      namespaceSelector: { kubernetes.io/metadata.name: observability }
-      podSelector: { app.kubernetes.io/name: otel-collector }
-      port: 4318
 ```
 
 - `endpoint` renders `OTEL_EXPORTER_OTLP_ENDPOINT` once, whenever any
@@ -491,14 +487,16 @@ broker:
   signal. `existingSecret` holds the whole string behind a `secretKeyRef`,
   so credentials never sit in values; `value` is a literal for non-secret
   headers such as an MLflow `x-mlflow-experiment-id=3`. Set at most one.
-- `networkPolicy` renders one egress rule to the collector when any signal
-  is enabled and the chart's NetworkPolicy is on; an empty
-  `namespaceSelector` selects the release namespace, an empty
-  `podSelector` allows any pod there.
+- The chart's NetworkPolicy allows egress to `endpoint` while any signal is
+  enabled, like every other URL in the values
+  ([Adding a Service, Step 4](adding-a-service.md#step-4-declare-the-pods-behind-the-service-for-the-networkpolicy)).
+  An in-cluster collector needs the `<service>.<namespace>.svc` host form and
+  a `networkPolicy.egress.endpoints.<host>.podSelector` naming its pods.
 - **Breaking rename.** `broker.tracing.endpoint` and
   `broker.tracing.networkPolicy` no longer exist, with no alias. Setting
   either makes the chart fail with a message naming `broker.otlp.endpoint` /
-  `broker.otlp.networkPolicy`. Tracing with an empty endpoint used to render
+  `networkPolicy.egress.endpoints`. `broker.otlp.networkPolicy` was removed as well:
+  the collector rule is generated from `broker.otlp.endpoint`. Tracing with an empty endpoint used to render
   silently as "off"; it now fails, because an enabled signal with no
   collector is a misconfiguration. **Setting `OTEL_EXPORTER_OTLP_ENDPOINT`
   alone no longer turns tracing on:** the broker now needs
@@ -516,11 +514,7 @@ In the chart:
 ```yaml
 broker:
   otlp:                      # shared collector, see "OTLP transport" below
-    endpoint: "http://otel-collector.observability:4318"
-    networkPolicy:
-      namespaceSelector: { kubernetes.io/metadata.name: observability }
-      podSelector: { app.kubernetes.io/name: otel-collector }
-      port: 4318
+    endpoint: "http://otel-collector.observability.svc:4318"
   metrics:
     otlp:
       enabled: true
@@ -564,7 +558,7 @@ or ClickHouse), alongside the usage store that backs `/v1/usage`,
 ```yaml
 broker:
   otlp:
-    endpoint: "http://otel-collector.observability:4318"   # shared collector
+    endpoint: "http://otel-collector.observability.svc:4318"   # shared collector
   usageEvents:
     otlp:
       enabled: true
@@ -606,7 +600,7 @@ it at any OTLP/HTTP collector (Grafana Tempo, Jaeger, an OTel Collector,
 ```yaml
 broker:
   otlp:
-    endpoint: "http://otel-collector.observability:4318"   # see OTLP transport
+    endpoint: "http://otel-collector.observability.svc:4318"   # see OTLP transport
   tracing:
     enabled: true
     sampleRatio: ""          # empty = keep every trace

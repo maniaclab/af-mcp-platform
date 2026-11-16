@@ -325,6 +325,67 @@ class VaultConfig(BaseModel):
     sa_token_path: str
 
 
+class VaultKvPaths(BaseModel):
+    """The KV-v2 path prefix of every Vault-backed store, derived from one root.
+
+    Each store keeps its records under ``{root}/<fixed suffix>``, so the stores
+    of one release never collide and a Vault policy grants a release exactly its
+    ``{root}/*`` subtree. Two releases sharing a KV mount need different roots.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    root: str
+
+    @field_validator("root")
+    @classmethod
+    def _strip_and_require(cls, root: str) -> str:
+        root = root.strip("/")
+        if not root:
+            raise ValueError("the Vault KV root must not be empty")
+        return root
+
+    @property
+    def tokens(self) -> str:
+        """OAuth 2.1 token store: ``{prefix}/{subject}/{alias}``."""
+        return f"{self.root}/tokens"
+
+    @property
+    def token_registry(self) -> str:
+        """Token registry (manually minted bearer tokens and PATs)."""
+        return f"{self.root}/token-registry"
+
+    @property
+    def principal_cache(self) -> str:
+        """Persisted principal cache: ``{prefix}/{principal_id}``."""
+        return f"{self.root}/principal-cache"
+
+    @property
+    def maintenance_mode(self) -> str:
+        """The maintenance-mode record."""
+        return f"{self.root}/maintenance-mode"
+
+    @property
+    def x509(self) -> str:
+        """Per-subject x509 link/proxy records: ``{prefix}/{subject}/x509``."""
+        return f"{self.root}/x509"
+
+    @property
+    def krb5(self) -> str:
+        """Per-subject krb5 link/ticket records: ``{prefix}/{subject}/krb5``."""
+        return f"{self.root}/krb5"
+
+    @property
+    def servicex(self) -> str:
+        """Per-subject ServiceX link/token records: ``{prefix}/{subject}/servicex``."""
+        return f"{self.root}/servicex"
+
+    @property
+    def credmon_state(self) -> str:
+        """Credmon sync lease and status records."""
+        return f"{self.root}/credmon"
+
+
 class CredmonApiConfig(BaseModel):
     """Where the credmon storer stores top tokens: the htcondor-api service, its token file and the user domain."""
 
@@ -506,11 +567,6 @@ class Settings(BaseSettings):
     # postgres_dsn below) -- a facility already running Postgres for usage
     # reuses it with no new secret, but isn't forced to couple the two.
     maintenance_mode_postgres_dsn: SecretStr | None = None
-
-    # KV-v2 path prefix for the persisted maintenance-mode record, distinct
-    # from every other Vault-backed store's prefix so they never collide
-    # under the same kv_mount.
-    maintenance_mode_kv_path_prefix: str = "mcp/maintenance-mode"
 
     # How long each replica caches the maintenance flag in-process before
     # re-reading the backing store (maintenance.CachingMaintenanceModeStore).
@@ -736,9 +792,12 @@ class Settings(BaseSettings):
     # Vault KV-v2 secrets engine mount point.
     vault_kv_mount: str = "secret"
 
-    # Path prefix under the KV mount where per-subject/alias credentials are
-    # stored: {vault_kv_mount}/data/{vault_kv_path_prefix}/{subject}/{alias}.
-    vault_kv_path_prefix: str = "mcp/tokens"
+    # Root path under the KV mount from which every Vault-backed store's
+    # prefix is derived (see VaultKvPaths): records live at
+    # {vault_kv_mount}/data/{vault_kv_root}/<store>/.... Required whenever
+    # Vault is used (uses_vault); two releases sharing one KV mount need
+    # different roots.
+    vault_kv_root: str = ""
 
     # Filesystem path to the broker's own ServiceAccount JWT, projected by
     # Kubernetes automatically whenever a ServiceAccount is set on the pod —
@@ -749,13 +808,8 @@ class Settings(BaseSettings):
     # bootstrap flow (POST/GET/DELETE /v1/tokens, issue #115). "in_memory" is
     # single-replica and lost on restart (fine for dev/testing); "vault"
     # persists to the same Vault/OpenBao instance as token_store_backend
-    # above, under a separate kv_path_prefix — see token_registry.py.
+    # above, under VaultKvPaths.token_registry — see token_registry.py.
     token_registry_backend: Literal["in_memory", "vault"] = "in_memory"  # noqa: S105 -- backend selector name, not a secret
-
-    # KV-v2 path prefix for the token registry, distinct from
-    # vault_kv_path_prefix (which is oauth21's TokenStore prefix) so the two
-    # Vault-backed stores never collide under the same kv_mount.
-    token_registry_kv_path_prefix: str = "mcp/token-registry"  # noqa: S105 -- Vault KV path prefix, not a secret
 
     # Grace window (seconds) token_sweep.py's expired-token janitor keeps a
     # record around after its expires_at passes, before removing it from
@@ -836,13 +890,8 @@ class Settings(BaseSettings):
     # lost on restart (fine for dev/testing, and the pre-existing behavior
     # before this setting existed); "vault" persists to the same
     # Vault/OpenBao instance as token_store_backend/token_registry_backend
-    # above, under a separate kv_path_prefix — see principal_cache.py.
+    # above, under VaultKvPaths.principal_cache — see principal_cache.py.
     principal_cache_backend: Literal["in_memory", "vault"] = "in_memory"
-
-    # KV-v2 path prefix for the persisted principal cache, distinct from
-    # vault_kv_path_prefix/token_registry_kv_path_prefix so all three
-    # Vault-backed stores never collide under the same kv_mount.
-    principal_cache_kv_path_prefix: str = "mcp/principal-cache"
 
     # Keycloak user-profile attribute keys `principal_directory.py`'s
     # KeycloakPrincipalDirectory reads a PAT-authenticated principal's POSIX
@@ -940,27 +989,6 @@ class Settings(BaseSettings):
     # (htcondor-api briefly down) never strands running jobs.
     credmon_top_token_ttl_seconds: int = 86400
     credmon_sync_interval_seconds: int = 14400
-    credmon_state_kv_path_prefix: str = "mcp/credmon"
-
-    # KV-v2 path prefix for the per-subject x509 link/proxy records
-    # ({prefix}/{subject}/x509 -- see credentials/x509_vault.py), distinct
-    # from vault_kv_path_prefix/token_registry_kv_path_prefix/
-    # principal_cache_kv_path_prefix so all four Vault-backed stores never
-    # collide under the same kv_mount.
-    x509_kv_path_prefix: str = "mcp/x509"
-
-    # KV-v2 path prefix for the per-subject krb5 link/ticket records
-    # ({prefix}/{subject}/krb5 -- see credentials/krb5_vault.py), distinct
-    # from vault_kv_path_prefix/token_registry_kv_path_prefix/
-    # principal_cache_kv_path_prefix/x509_kv_path_prefix so all five
-    # Vault-backed stores never collide under the same kv_mount.
-    krb5_kv_path_prefix: str = "mcp/krb5"
-
-    # KV-v2 path prefix for the per-subject ServiceX link/token records
-    # ({prefix}/{subject}/servicex -- see credentials/servicex_vault.py),
-    # distinct from every other prefix above so all six Vault-backed stores
-    # never collide under the same kv_mount.
-    servicex_kv_path_prefix: str = "mcp/servicex"
 
     @property
     def broker_token_effective_issuer(self) -> str:
@@ -1027,6 +1055,15 @@ class Settings(BaseSettings):
     def oidc_jwks_uri(self) -> str:
         """JWKS endpoint at the standard OIDC discovery path."""
         return f"{self.oidc_backchannel_url.rstrip('/')}/protocol/openid-connect/certs"
+
+    @property
+    def vault_kv_paths(self) -> VaultKvPaths:
+        """The KV prefix of every Vault-backed store, derived from ``vault_kv_root``.
+
+        Raises when the root is empty, which ``_validate_vault_config`` already
+        refuses at boot whenever ``uses_vault`` holds.
+        """
+        return VaultKvPaths(root=self.vault_kv_root)
 
     @property
     def vault(self) -> VaultConfig | None:
@@ -1286,7 +1323,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_vault_config(self) -> Settings:
-        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store/Krb5VaultStore/VaultServiceXStore would otherwise fail at first request instead of at boot (see also wiring/vault.py's startup trial authentication). All seven stores share the same Vault connection settings (only their kv_path_prefix differs), so one validator covers any or all being selected. An x509 identity_providers entry always implies the x509 store: proxies and passphrases persist in Vault, there is no in-memory fallback. A krb5-token identity_providers entry always implies the krb5 store, unconditionally (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any caller will ever request its optional "remember" persistence, so deferring the requirement to first use would be exactly the silent-runtime-failure trap this validator otherwise exists to avoid. A servicex-token identity_providers entry always implies the ServiceX store too, unconditionally, the same reasoning as krb5-token: the refresh token it vaults has no in-memory fallback either."""
+        """Fail startup loudly when any Vault-backed store is selected but the settings they depend on are not — a half-configured VaultTokenStore/VaultTokenRegistryBackend/VaultPrincipalCacheBackend/VaultMaintenanceModeStore/VaultX509Store/Krb5VaultStore/VaultServiceXStore would otherwise fail at first request instead of at boot (see also wiring/vault.py's startup trial authentication). All seven stores share the same Vault connection settings (only their derived KV prefix differs), so one validator covers any or all being selected. An x509 identity_providers entry always implies the x509 store: proxies and passphrases persist in Vault, there is no in-memory fallback. A krb5-token identity_providers entry always implies the krb5 store, unconditionally (service_url is mandatory on every entry), and a given entry can't declare ahead of time whether any caller will ever request its optional "remember" persistence, so deferring the requirement to first use would be exactly the silent-runtime-failure trap this validator otherwise exists to avoid. A servicex-token identity_providers entry always implies the ServiceX store too, unconditionally, the same reasoning as krb5-token: the refresh token it vaults has no in-memory fallback either."""
         if not self.uses_vault:
             return self
         if not self.vault_addr:
@@ -1326,6 +1363,18 @@ class Settings(BaseSettings):
                 "'vault' or an x509, krb5-token, or servicex-token "
                 "identity_providers entry is configured (their credential "
                 "material persists in Vault, with no in-memory fallback)."
+            )
+        if not self.vault_kv_root.strip("/"):
+            log.error(
+                "vault_config_invalid",
+                reason="vault_kv_root is empty but a Vault-backed store is configured",
+            )
+            raise ValueError(
+                "vault_kv_root (VAULT_KV_ROOT) must be set when token_store_backend, "
+                "token_registry_backend, principal_cache_backend, or "
+                "maintenance_mode_backend is 'vault' or an x509, krb5-token, or "
+                "servicex-token identity_providers entry is configured -- every "
+                "store's KV prefix is derived from it."
             )
         return self
 

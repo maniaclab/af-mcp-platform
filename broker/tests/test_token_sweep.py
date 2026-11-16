@@ -163,7 +163,7 @@ def _vault_settings(sa_token_path: Path, **overrides: Any) -> Settings:
         "vault_auth_mount": AUTH_MOUNT,
         "vault_auth_role": AUTH_ROLE,
         "vault_kv_mount": KV_MOUNT,
-        "token_registry_kv_path_prefix": KV_PATH_PREFIX,
+        "vault_kv_root": "mcp",
         "vault_sa_token_path": str(sa_token_path),
     }
     defaults.update(overrides)

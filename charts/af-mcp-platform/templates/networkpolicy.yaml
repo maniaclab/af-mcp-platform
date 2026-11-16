@@ -1,6 +1,15 @@
 {{- if .Values.networkPolicy.enabled }}
-# Deny all ingress to the broker except from the nginx ingress controller.
-# Deny all egress from the broker except: DNS, Keycloak, ATLAS IAM, and Prometheus scrape.
+{{- $egress := .Values.networkPolicy.egress }}
+{{- $ingress := .Values.networkPolicy.ingress }}
+{{- $ipv4 := has "IPv4" .Values.networkPolicy.ipFamilies }}
+{{- $ipv6 := has "IPv6" .Values.networkPolicy.ipFamilies }}
+# Deny all ingress to the broker except from networkPolicy.ingress.broker
+# (and the chart's own helm-test pod).
+# Deny all egress from the broker except: DNS, networkPolicy.egress.extraEgress
+# and, unless networkPolicy.egress.generate is false, the public internet on
+# the ports of its external URLs, every in-cluster URL in the values (see
+# _networkpolicy.tpl), and the stores selected under broker.usage.postgres and
+# broker.sharedState.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,26 +25,7 @@ spec:
     - Egress
 
   ingress:
-    # Allow traffic from the nginx ingress controller pods (any namespace that
-    # carries the standard ingress-nginx label).
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingress-nginx
-      ports:
-        - protocol: TCP
-          port: 8080
-    # Allow Prometheus to scrape the metrics port from the prom namespace.
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: prom
-      ports:
-        - protocol: TCP
-          port: 9090
+    {{- include "af-mcp-platform.netpol.sources" $ingress.broker.sources | nindent 4 }}
     # Allow the chart's own helm-test pod (same namespace) to hit the broker.
     - from:
         - podSelector:
@@ -44,6 +34,9 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+    {{- with $ingress.broker.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 
   egress:
     # DNS — required for all outbound name resolution.
@@ -53,37 +46,57 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Keycloak (auth.af.uchicago.edu) and ATLAS IAM
-    # (atlas-auth.cern.ch) — OIDC token validation and credential delegation.
-    # The CIDR below covers both services; if your cluster has egress-policy
-    # enforcement via FQDN you can tighten this further.
-    # Kept intentionally broad (0.0.0.0/0 on 443) because the destination IPs
-    # of external OIDC providers are not stable. Restrict in production with an
-    # egress FQDN policy (e.g., Cilium NetworkPolicy or external firewall rule).
+    {{- if $egress.generate }}
+    {{- $targets := include "af-mcp-platform.netpol.targets" . | fromJson }}
+    # External URLs (an external OIDC issuer, an identity provider's token
+    # endpoint, a CIMD client metadata document, ...). A NetworkPolicy cannot
+    # select a DNS name and the destination IPs of external providers are not
+    # stable, so every external host shares this rule: any public address on
+    # the port of each external URL (443 and, e.g., 8443 for
+    # https://host:8443). Restrict it further with an egress FQDN policy
+    # (e.g., Cilium NetworkPolicy or an external firewall rule).
+    # Pods are dual-stack, so the rule has one ipBlock per family in
+    # networkPolicy.ipFamilies: IPv6 egress not listed here is dropped, and
+    # clients that try IPv6 first stall until they fall back. Private (RFC-1918 / ULA), link-local and cloud-metadata
+    # addresses are excluded, plus networkPolicy.egress.external.exceptCidrs.
     - to:
+        {{- if $ipv4 }}
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              # Block access to cluster-internal RFC-1918 ranges except via
-              # explicit rules above (prevents SSRF to in-cluster services).
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
+              {{- include "af-mcp-platform.netpol.exceptCidrs" (dict "family" "4" "root" .) | fromJsonArray | toYaml | nindent 14 }}
+        {{- end }}
+        {{- if $ipv6 }}
+        - ipBlock:
+            cidr: ::/0
+            except:
+              {{- include "af-mcp-platform.netpol.exceptCidrs" (dict "family" "6" "root" .) | fromJsonArray | toYaml | nindent 14 }}
+        {{- end }}
       ports:
+        {{- range $targets.publicPorts }}
         - protocol: TCP
-          port: 443
+          port: {{ . }}
+        {{- end }}
 
-    # In-cluster: allow broker to reach the registered MCP services within the same
-    # namespace, on the configured ports (see values.yaml networkPolicy.broker.servicePorts).
-    {{- if .Values.networkPolicy.broker.servicePorts }}
+    # In-cluster URLs (aggregator services, Vault, in-cluster Keycloak, token
+    # services, the OTLP collector, ...): one rule per host, pairing the
+    # host's namespace with the pods behind it (networkPolicy.egress.endpoints) on the
+    # URL's port or the endpoint's targetPort.
+    {{- range $host, $target := $targets.hosts }}
+    # {{ $host }}
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+              kubernetes.io/metadata.name: {{ $target.namespace | quote }}
+          {{- if $target.podSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $target.podSelector | nindent 14 }}
+          {{- end }}
       ports:
-        {{- range .Values.networkPolicy.broker.servicePorts }}
+        {{- range $port := keys $target.ports | sortAlpha }}
         - protocol: TCP
-          port: {{ . }}
+          port: {{ $port }}
         {{- end }}
     {{- end }}
 
@@ -113,6 +126,9 @@ spec:
     {{- if include "af-mcp-platform.sharedState.configured" . }}
     - to:
         {{- if .Values.broker.sharedState.networkPolicy.cidr }}
+        {{- if not (has (ternary "IPv6" "IPv4" (contains ":" .Values.broker.sharedState.networkPolicy.cidr)) .Values.networkPolicy.ipFamilies) }}
+        {{- fail (printf "broker.sharedState.networkPolicy.cidr %s is in an address family missing from networkPolicy.ipFamilies" .Values.broker.sharedState.networkPolicy.cidr) }}
+        {{- end }}
         - ipBlock:
             cidr: {{ .Values.broker.sharedState.networkPolicy.cidr | quote }}
         {{- else }}
@@ -133,33 +149,15 @@ spec:
         - protocol: TCP
           port: {{ .Values.broker.sharedState.networkPolicy.port }}
     {{- end }}
+    {{- end }}
 
-    # OpenTelemetry collector (broker.tracing.enabled,
-    # broker.metrics.otlp.enabled or broker.usageEvents.otlp.enabled) -- allow
-    # the broker's OTLP/HTTP span, metric and log exports to reach the
-    # collector selected by broker.otlp.networkPolicy (an empty
-    # namespaceSelector means the release namespace; an empty podSelector
-    # allows any pod there).
-    {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled }}
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              {{- if .Values.broker.otlp.networkPolicy.namespaceSelector }}
-              {{- toYaml .Values.broker.otlp.networkPolicy.namespaceSelector | nindent 14 }}
-              {{- else }}
-              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
-              {{- end }}
-          {{- if .Values.broker.otlp.networkPolicy.podSelector }}
-          podSelector:
-            matchLabels:
-              {{- toYaml .Values.broker.otlp.networkPolicy.podSelector | nindent 14 }}
-          {{- end }}
-      ports:
-        - protocol: TCP
-          port: {{ .Values.broker.otlp.networkPolicy.port }}
+    # Anything else the broker must reach (networkPolicy.egress.extraEgress).
+    {{- with $egress.extraEgress }}
+    {{- toYaml . | nindent 4 }}
     {{- end }}
 ---
-# Portal network policy: allow ingress from nginx only; no special egress rules.
+# Portal network policy: allow ingress from networkPolicy.ingress.portal; no
+# egress rules.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -172,15 +170,11 @@ spec:
       {{- include "af-mcp-platform.portal.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
+  {{- if or $ingress.portal.sources $ingress.portal.extraIngress }}
   ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ingress-nginx
-      ports:
-        - protocol: TCP
-          port: 8081
+    {{- include "af-mcp-platform.netpol.sources" $ingress.portal.sources | nindent 4 }}
+    {{- with $ingress.portal.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 {{- end }}

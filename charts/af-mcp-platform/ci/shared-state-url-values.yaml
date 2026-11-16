@@ -34,3 +34,11 @@ entitlements:
 ingress:
   mcpHost: "mcp.example.com"
   portalHost: "mcp-portal.example.com"
+
+# Every in-cluster URL needs the pods behind it (networkPolicy.endpoints).
+networkPolicy:
+  egress:
+    endpoints:
+      docs-mcp.example.svc.cluster.local:
+        podSelector:
+          app.kubernetes.io/name: docs-mcp

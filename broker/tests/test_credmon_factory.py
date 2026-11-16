@@ -35,6 +35,7 @@ def _settings_and_api(
             "credmon_htcondor_api_url": "https://htcondor-api.example",
             "credmon_htcondor_api_token_file": str(token_file),
             "credmon_user_domain": "af.example.org",
+            "vault_kv_root": "mcp",
             **overrides,
         }
     )

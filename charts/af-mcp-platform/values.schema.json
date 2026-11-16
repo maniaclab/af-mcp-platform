@@ -472,16 +472,7 @@
         "vault": {
           "type": "object",
           "properties": {
-            "x509KvPathPrefix": {
-              "type": "string"
-            },
-            "krb5KvPathPrefix": {
-              "type": "string"
-            },
-            "servicexKvPathPrefix": {
-              "type": "string"
-            },
-            "credmonKvPathPrefix": {
+            "kvRoot": {
               "type": "string"
             }
           },
@@ -520,9 +511,6 @@
                     },
                     "kvMount": {
                       "type": "string"
-                    },
-                    "kvPathPrefix": {
-                      "type": "string"
                     }
                   },
                   "additionalProperties": false
@@ -542,9 +530,6 @@
                 "in-memory",
                 "vault"
               ]
-            },
-            "kvPathPrefix": {
-              "type": "string"
             }
           },
           "additionalProperties": false
@@ -558,9 +543,6 @@
                 "in-memory",
                 "vault"
               ]
-            },
-            "kvPathPrefix": {
-              "type": "string"
             }
           },
           "additionalProperties": false
@@ -695,9 +677,6 @@
                 "postgres"
               ]
             },
-            "kvPathPrefix": {
-              "type": "string"
-            },
             "cacheTtlSeconds": {
               "type": "number",
               "minimum": 0
@@ -746,23 +725,6 @@
                     }
                   },
                   "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            "networkPolicy": {
-              "type": "object",
-              "properties": {
-                "namespaceSelector": {
-                  "type": "object"
-                },
-                "podSelector": {
-                  "type": "object"
-                },
-                "port": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535
                 }
               },
               "additionalProperties": false
@@ -1134,16 +1096,168 @@
         "enabled": {
           "type": "boolean"
         },
-        "broker": {
+        "ipFamilies": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "IPv4",
+              "IPv6"
+            ]
+          }
+        },
+        "egress": {
           "type": "object",
           "properties": {
-            "servicePorts": {
+            "generate": {
+              "type": "boolean"
+            },
+            "endpoints": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "targetPort": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "podSelector": {
+                    "type": "object"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "external": {
+              "type": "object",
+              "properties": {
+                "exceptCidrs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "extraEgress": {
               "type": "array",
               "items": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 65535
+                "type": "object"
               }
+            }
+          },
+          "additionalProperties": false
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "broker": {
+              "type": "object",
+              "properties": {
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "namespaceSelector": {
+                        "type": "object"
+                      },
+                      "podSelector": {
+                        "type": "object"
+                      },
+                      "ports": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      }
+                    },
+                    "required": [
+                      "ports"
+                    ],
+                    "anyOf": [
+                      {
+                        "required": [
+                          "namespaceSelector"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "podSelector"
+                        ]
+                      }
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "extraIngress": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "portal": {
+              "type": "object",
+              "properties": {
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "namespaceSelector": {
+                        "type": "object"
+                      },
+                      "podSelector": {
+                        "type": "object"
+                      },
+                      "ports": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      }
+                    },
+                    "required": [
+                      "ports"
+                    ],
+                    "anyOf": [
+                      {
+                        "required": [
+                          "namespaceSelector"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "podSelector"
+                        ]
+                      }
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "extraIngress": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

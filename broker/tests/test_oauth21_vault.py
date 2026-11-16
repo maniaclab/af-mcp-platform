@@ -428,6 +428,7 @@ def _bootstrap_oauth21_vault_env(
     )
     monkeypatch.setenv("TOKEN_STORE_BACKEND", "vault")
     monkeypatch.setenv("VAULT_ADDR", ADDR)
+    monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
     monkeypatch.setenv("VAULT_AUTH_ROLE", AUTH_ROLE)
     monkeypatch.setenv("VAULT_SA_TOKEN_PATH", str(sa_token_path))
     # Issue #144 step 3: the broker refuses to start without a configured

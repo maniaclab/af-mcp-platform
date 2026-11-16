@@ -142,9 +142,9 @@ async def start_credmon_sync(
         store_prefixes={
             kind: prefix
             for kind, store, prefix in (
-                ("x509", link_stores.x509, settings.x509_kv_path_prefix),
-                ("krb5", link_stores.krb5, settings.krb5_kv_path_prefix),
-                ("servicex", link_stores.servicex, settings.servicex_kv_path_prefix),
+                ("x509", link_stores.x509, settings.vault_kv_paths.x509),
+                ("krb5", link_stores.krb5, settings.vault_kv_paths.krb5),
+                ("servicex", link_stores.servicex, settings.vault_kv_paths.servicex),
             )
             if store is not None
         },

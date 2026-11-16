@@ -47,7 +47,7 @@ def build_token_store(
                 vault_kv=require(
                     vault_kv, "token_store_backend=vault requires a Vault client"
                 ),
-                kv_path_prefix=settings.vault_kv_path_prefix,
+                kv_path_prefix=settings.vault_kv_paths.tokens,
             )
         case _:
             assert_never(backend)
@@ -81,26 +81,26 @@ def build_vault_link_stores(settings: Settings, vault_kv: VaultKV) -> VaultLinkS
     servicex_store: VaultServiceXStore | None = None
     if "x509" in entry_types:
         x509_store = VaultX509Store(
-            vault_kv=vault_kv, kv_path_prefix=settings.x509_kv_path_prefix
+            vault_kv=vault_kv, kv_path_prefix=settings.vault_kv_paths.x509
         )
         logger.info(
             "x509_voms_service_mode",
-            kv_path_prefix=settings.x509_kv_path_prefix,
+            kv_path_prefix=settings.vault_kv_paths.x509,
         )
     if "krb5-token" in entry_types:
         krb5_store = Krb5VaultStore(
-            vault_kv=vault_kv, kv_path_prefix=settings.krb5_kv_path_prefix
+            vault_kv=vault_kv, kv_path_prefix=settings.vault_kv_paths.krb5
         )
         logger.info(
             "krb5_vault_store_wired",
-            kv_path_prefix=settings.krb5_kv_path_prefix,
+            kv_path_prefix=settings.vault_kv_paths.krb5,
         )
     if "servicex-token" in entry_types:
         servicex_store = VaultServiceXStore(
-            vault_kv=vault_kv, kv_path_prefix=settings.servicex_kv_path_prefix
+            vault_kv=vault_kv, kv_path_prefix=settings.vault_kv_paths.servicex
         )
         logger.info(
             "servicex_vault_store_wired",
-            kv_path_prefix=settings.servicex_kv_path_prefix,
+            kv_path_prefix=settings.vault_kv_paths.servicex,
         )
     return VaultLinkStores(x509=x509_store, krb5=krb5_store, servicex=servicex_store)

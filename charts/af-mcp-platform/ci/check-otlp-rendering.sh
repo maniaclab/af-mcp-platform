@@ -63,7 +63,7 @@ done
 # egress rule; no metrics switch.
 tracing=$(render -f "$ci/tracing-values.yaml")
 expect_has "tracing only" "name: OTEL_EXPORTER_OTLP_ENDPOINT" "$tracing"
-expect_has "tracing only" "http://otel-collector.observability:4318" "$tracing"
+expect_has "tracing only" "http://otel-collector.observability.svc:4318" "$tracing"
 expect_has "tracing only" "name: TRACING_ENABLED" "$tracing"
 expect_has "tracing only" "name: OTEL_TRACES_SAMPLER_ARG" "$tracing"
 expect_has "tracing only" "port: 4318" "$tracing"
@@ -103,7 +103,7 @@ done
 events=$(render -f "$ci/otel-usage-events-values.yaml")
 expect_has "usage events only" "name: USAGE_EVENTS_OTLP_ENABLED" "$events"
 expect_has "usage events only" "name: OTEL_EXPORTER_OTLP_ENDPOINT" "$events"
-expect_has "usage events only" "http://otel-collector.observability:4318" "$events"
+expect_has "usage events only" "http://otel-collector.observability.svc:4318" "$events"
 expect_has "usage events only" "port: 4318" "$events"
 expect_lacks "usage events only" "TRACING_ENABLED" "$events"
 expect_lacks "usage events only" "OTEL_METRICS_ENABLED" "$events"
@@ -118,7 +118,7 @@ expect_has "literal header" 'value: "x-mlflow-experiment-id=3"' "$literal"
 # The renamed keys fail with a message naming the new ones.
 expect_fails "old broker.tracing.endpoint" "set broker.otlp.endpoint" \
   -f "$ci/test-values.yaml" --set broker.tracing.endpoint=http://x:4318
-expect_fails "old broker.tracing.networkPolicy" "set broker.otlp.networkPolicy" \
+expect_fails "old broker.tracing.networkPolicy" "networkPolicy.egress.endpoints" \
   -f "$ci/test-values.yaml" --set broker.tracing.networkPolicy.port=4318
 
 # A signal with no collector, or two header sources, is refused.

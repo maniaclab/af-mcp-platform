@@ -433,8 +433,8 @@ backed by a `PrincipalCacheBackend`, selected via
 `PRINCIPAL_CACHE_BACKEND`/`broker.principalCache.backend` the same way
 `TOKEN_REGISTRY_BACKEND` selects the PAT store's backend — `in_memory`
 (single-replica, lost on restart) or `vault` (the same Vault/OpenBao
-instance the PAT store and oauth21 token store use, under its own
-`broker.principalCache.kvPathPrefix`). Each persisted record carries the
+instance the PAT store and oauth21 token store use, under
+`{broker.vault.kvRoot}/principal-cache`). Each persisted record carries the
 wall-clock time it was resolved; a cold start (process restart) loads it as
 this replica's initial last-known value, subject to the exact same
 `PRINCIPAL_CACHE_MAX_STALENESS_SECONDS` bound as an in-process refresh

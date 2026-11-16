@@ -45,7 +45,10 @@ _DEV_PRINCIPAL = json.dumps(
 def _settings(**overrides: Any) -> Settings:
     overrides.setdefault("oidc_issuer", "https://kc.invalid/realms/x")
     return Settings(
-        vault_addr="https://vault.invalid", vault_auth_role="r", **overrides
+        vault_addr="https://vault.invalid",
+        vault_kv_root="mcp",
+        vault_auth_role="r",
+        **overrides,
     )
 
 

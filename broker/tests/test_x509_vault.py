@@ -19,7 +19,6 @@ import httpx2
 import pytest
 from pydantic import SecretStr
 
-from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials.x509_vault import VaultX509Store
 from af_mcp_broker.vault_kv import VaultKV
 
@@ -383,22 +382,6 @@ class TestCas:
         await _store_proxy(store)
         record = await store.get_proxy(SUBJECT)
         assert record is not None
-
-
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
-
-
-class TestSettings:
-    def test_kv_path_prefix_default_is_distinct_from_other_vault_stores(self) -> None:
-        settings = Settings()
-        assert settings.x509_kv_path_prefix == "mcp/x509"
-        assert settings.x509_kv_path_prefix not in {
-            settings.vault_kv_path_prefix,
-            settings.token_registry_kv_path_prefix,
-            settings.principal_cache_kv_path_prefix,
-        }
 
 
 # ---------------------------------------------------------------------------

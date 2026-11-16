@@ -120,7 +120,7 @@ async def build_credmon_sync(
     return CredmonSyncService(
         storer=storer,
         state=VaultCredmonSyncState(
-            vault_kv, kv_path_prefix=settings.credmon_state_kv_path_prefix
+            vault_kv, kv_path_prefix=settings.vault_kv_paths.credmon_state
         ),
         holder=f"{socket.gethostname()}:{os.getpid()}",
         interval_seconds=float(settings.credmon_sync_interval_seconds),
