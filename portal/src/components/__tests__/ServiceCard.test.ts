@@ -17,6 +17,7 @@ vi.mock('../../lib/api', () => ({
 }));
 
 import { fetchServerTools } from '../../lib/api';
+import { loadMarkdownRenderer } from '../../lib/markdownRenderer';
 import ServiceCard from '../ServiceCard.vue';
 
 /** A promise whose resolution the test controls — stands in for a slow HTTP response. */
@@ -630,16 +631,21 @@ describe('markdown service description', () => {
     });
   }
 
-  it('renders Markdown in the description', () => {
-    const description = mountDescribed('Data **management** via `rucio`.').get('.bc__description');
+  it('renders Markdown in the description', async () => {
+    const wrapper = mountDescribed('Data **management** via `rucio`.');
+    await loadMarkdownRenderer();
+    await flushPromises();
+    const description = wrapper.get('.bc__description');
     expect(description.get('strong').text()).toBe('management');
     expect(description.get('code').text()).toBe('rucio');
   });
 
-  it('strips scripts and unsafe links from the description', () => {
+  it('strips scripts and unsafe links from the description', async () => {
     const wrapper = mountDescribed(
       '<script>window.pwned = 1</script>\n\n[x](javascript:alert(1)) [ok](https://example.org)',
     );
+    await loadMarkdownRenderer();
+    await flushPromises();
     const description = wrapper.get('.bc__description');
     expect(description.find('script').exists()).toBe(false);
     expect(description.findAll('a').map((a) => a.attributes('href') ?? null)).toEqual([

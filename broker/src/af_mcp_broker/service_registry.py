@@ -199,7 +199,7 @@ class ServiceSpec:
     # when undeclared. This field only lets services.yaml/the chart *declare* a
     # service's posture in machine-checkable form (re-review finding #5); the
     # authoritative per-deployment tier assignment still lives alongside each
-    # app's deployment manifests in the GitOps repo (maniaclab/flux_apps#32),
+    # app's deployment manifests in the GitOps repo,
     # not here.
     trust_tier: TrustTier | None = None
     # Model-facing policy/guidance the LLM agent reads and reasons over before

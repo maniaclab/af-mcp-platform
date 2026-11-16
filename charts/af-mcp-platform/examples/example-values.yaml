@@ -1,0 +1,125 @@
+# Example facility values: the values the chart deliberately has no default
+# for. Layer your own file over the chart the same way (`helm install -f
+# <your-values>.yaml`); every key below is a fact about one facility's cluster
+# or Keycloak realm, and every name, host and address is a placeholder
+# (example.org, "examplevo", RFC 5737 / RFC 3849 documentation ranges).
+# It is not a complete values file: the realm's client ids and Secret names,
+# the service registry (aggregator.services) and the rest of the identity
+# providers are deployment-specific too.
+
+# Keycloak realm shared by the broker and the portal.
+oidc:
+  issuer: "https://auth.af.example.org/realms/example"
+
+ingress:
+  mcpHost: mcp.af.example.org
+  portalHost: mcp-portal.af.example.org
+  annotations:
+    # The cluster's cert-manager ClusterIssuer.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    # cert-manager writes the certificates into these Secrets; leaving them
+    # empty derives "<fullname>-mcp-tls" and "<fullname>-portal-tls".
+    mcpSecretName: example-af-mcp-tls
+    portalSecretName: example-af-mcp-portal-tls
+
+# The cluster runs the Prometheus Operator and a Grafana whose sidecar watches
+# the `monitoring` namespace.
+serviceMonitor:
+  enabled: true
+grafanaDashboard:
+  enabled: true
+  namespace: monitoring
+
+# Keycloak group names of the facility's realm. Group names come from the
+# deployer's own realm, so every facility writes its own mapping; see
+# docs/auth.md's "Group-to-Permission Mapping Example".
+entitlements:
+  group_permissions:
+    users: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
+    admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_data, admin, read_files]
+    # Any authenticated user, no group membership required.
+    __authenticated__: [read_metadata, read_monitoring]
+
+broker:
+  # Keycloak group whose members administer the broker.
+  adminGroup: /example/admins
+  vault:
+    # Root of the KV v2 prefix every Vault-backed store lives under
+    # ({kvRoot}/x509, {kvRoot}/token-registry, ...).
+    kvRoot: af-mcp
+  # An x509/VOMS identity provider: `voms` is the VO name sent to the VOMS
+  # service on every proxy mint. The service registry targets it serves are
+  # deployment-specific.
+  identityProviders:
+    - type: x509
+      alias: examplevo-x509
+      displayName: "ExampleVO grid certificate"
+      enables: "VOMS proxy minting for x509 services"
+      serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
+      voms: "examplevo"
+      valid: "192:00"
+      audience: "voms-token-service"
+      targets: []
+
+# The broker's egress rules are generated from the URLs it connects to
+# (values.yaml documents them); this lists what a URL cannot say.
+networkPolicy:
+  # Dual-stack cluster: every public-internet ipBlock is emitted for both
+  # families.
+  ipFamilies: [IPv4, IPv6]
+  egress:
+    external:
+      # The facility's own node ranges, where host-network services (kubelet,
+      # sshd, the Kubernetes API) live; the public-internet rule must not
+      # reach them. IPv4 and IPv6 are listed together and split by family.
+      exceptCidrs:
+        - 192.0.2.0/24
+        - 2001:db8::/32
+    endpoints:
+      # Every in-cluster URL needs the labels of the pods behind its Service
+      # (here the x509 identity provider's serviceUrl above).
+      voms-token-service.voms-token.svc.cluster.local:
+        podSelector:
+          app.kubernetes.io/name: voms-token-service
+      # An in-cluster Service: the pods behind it, and the pod port when it
+      # differs from the Service port in the URL.
+      rucio-mcp.mcp.svc.cluster.local:
+        targetPort: 9000
+        podSelector:
+          app.kubernetes.io/name: rucio-mcp
+      # A public hostname served by an ingress controller in this cluster
+      # (hairpin): kube-proxy DNATs its load-balancer IP to pod IPs before
+      # policy runs, so the rule selects those pods and their pod port. It
+      # takes effect when a URL (an aggregator service or identity provider)
+      # names this host.
+      hub.af.example.org:
+        namespace: ingress-nginx
+        targetPort: 8443
+        podSelector:
+          app.kubernetes.io/name: ingress-nginx
+    # Destinations no URL names: a node service in the facility's address
+    # range. An ipBlock covers one family, so each has an IPv6 twin.
+    extraEgress:
+      - to:
+          - ipBlock: {cidr: 198.51.100.0/24}
+          - ipBlock: {cidr: 2001:db8:1::/48}
+        ports:
+          - protocol: TCP
+            port: 30443
+  ingress:
+    broker:
+      # Replaces the default list: the ingress controller (namespace and pod
+      # labels paired in one source) and the Prometheus namespace.
+      sources:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+          ports: [8080]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          ports: [9090]

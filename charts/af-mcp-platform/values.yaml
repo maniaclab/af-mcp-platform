@@ -116,7 +116,7 @@ broker:
     # embedded in minted tokens' `iss`) but the broker itself runs in the
     # same cluster and should reach Keycloak via cluster-local DNS instead
     # of hairpinning back out through the public ingress (e.g.
-    # `http://keycloak-prod.keycloak.svc.cluster.local:8080/realms/connect`).
+    # `http://keycloak.keycloak.svc.cluster.local:8080/realms/example`).
     internalUrl: ""
 
   # Name of a pre-existing Secret providing the AF service token.
@@ -192,8 +192,8 @@ broker:
     unixname: "unixname"
 
   # Whether the PAT path (KeycloakPrincipalDirectory) matches a Keycloak
-  # group by its full `path` (e.g. "/atlas/users") instead of its bare `name`
-  # (e.g. "atlas") -- issue #148. False (bare name) matches AF's own Group
+  # group by its full `path` (e.g. "/examplevo/users") instead of its bare `name`
+  # (e.g. "users") -- issue #148. False (bare name) matches AF's own Group
   # Membership mapper convention ("Full group path: OFF", see docs/auth.md)
   # and the JWT path's `groups` claim shape. A site whose mapper has "Full
   # group path" enabled must set this true too, or every PAT-authenticated
@@ -212,7 +212,7 @@ broker:
     clientName: ""
 
   # Canonical origin (scheme + host, no trailing slash, e.g.
-  # "https://mcp-portal.af.uchicago.edu") for every externally-visible OAuth
+  # "https://mcp-portal.af.example.org") for every externally-visible OAuth
   # 2.1 URL the broker constructs itself: the redirect_uri sent to a backend
   # AS at authorize/callback time, and every redirect_uris entry in the CIMD
   # document above. Must be the exact origin the portal SPA is served from —
@@ -232,7 +232,7 @@ broker:
 
   # Identity providers — one entry per identity provider the broker can link
   # a user's account to, either Keycloak's stored-broker-token pattern
-  # (type: keycloak-brokered, e.g. ATLAS IAM) or the broker acting as a
+  # (type: keycloak-brokered, e.g. a VO IAM) or the broker acting as a
   # direct OAuth 2.1 client (type: oauth21-direct, e.g. rucio-mcp). `alias`
   # doubles as the portal-facing id on GET /v1/identities. Empty default —
   # no AF-specific providers in the public chart.
@@ -242,13 +242,13 @@ broker:
   # docs/adding-a-service.md for the migration.
   identityProviders: []
   # - type: keycloak-brokered
-  #   alias: atlas-oidc
-  #   displayName: "ATLAS IAM"
+  #   alias: examplevo-oidc
+  #   displayName: "ExampleVO IAM"
   #   enables: "VOMS proxy generation and grid certificate credential brokering"
   #   targets: ["rucio"]
   # - type: oauth21-direct
-  #   alias: rucio-mcp-atlas
-  #   targets: ["rucio-mcp-atlas"]
+  #   alias: rucio-mcp-examplevo
+  #   targets: ["rucio-mcp-examplevo"]
   #   authorizationEndpoint: "https://rucio-mcp.example/authorize"
   #   tokenEndpoint: "https://rucio-mcp.example/token"
   #   # Optional RFC 7009 revocation endpoint; unset skips the upstream call
@@ -256,8 +256,8 @@ broker:
   #   revocationEndpoint: "https://rucio-mcp.example/revoke"
   #   issuer: "https://rucio-mcp.example"
   #   scope: "openid profile email"
-  #   displayName: "Rucio (ATLAS)"
-  #   enables: "ATLAS Rucio operations via rucio-mcp"
+  #   displayName: "Rucio (ExampleVO)"
+  #   enables: "ExampleVO Rucio operations via rucio-mcp"
   # # An oauth21-direct AS with a static client registry (e.g. JupyterHub)
   # # instead of CIMD: `clientId` is the id it registered the broker under
   # # (omit it to identify by the broker's CIMD URL). Setting
@@ -327,7 +327,7 @@ broker:
   #   # VOMS attribute set (required; the experiment's VO name) and proxy
   #   # validity (HH:MM) forwarded on every mint; audience must match the
   #   # service's EXPECTED_AUDIENCE.
-  #   voms: "atlas"
+  #   voms: "examplevo"
   #   valid: "192:00"
   #   audience: "voms-token-service"
 
@@ -358,7 +358,7 @@ broker:
     # broker.publicOrigin" — check that value before relying on the
     # fallback: at AF, publicOrigin is the PORTAL origin while consumers
     # verify iss against the mcp origin serving the JWKS, so this must be
-    # set explicitly (e.g. "https://mcp.af.uchicago.edu").
+    # set explicitly (e.g. "https://mcp.af.example.org").
     issuer: ""
     # Token TTL in seconds. Empty means the broker default (600). Keep it
     # comfortably above the credential layer's 300s min-remaining floor —
@@ -377,7 +377,7 @@ broker:
     enabled: false
     # htcondor-api base URL, e.g. http://condor-mcp.mcp.svc.cluster.local:8080
     htcondorApiUrl: ""
-    # The pool's user domain (HTCondor UID_DOMAIN, e.g. "af.uchicago.edu"):
+    # The pool's user domain (HTCondor UID_DOMAIN, e.g. "af.example.org"):
     # credd only accepts the user a credential is stored for as
     # <unixname>@<domain>. Required when enabled.
     userDomain: ""
@@ -520,14 +520,19 @@ broker:
       existingSecret:
         name: ""
         key: "uri"
-      # Selects the postgres pods for the broker's NetworkPolicy egress rule
-      # (rendered only when backend="postgres" and networkPolicy.enabled):
-      # pods labeled postgres-operator.crunchydata.com/cluster=<clusterName>
-      # and postgres-operator.crunchydata.com/data=postgres in <namespace>
-      # (empty = the release namespace), port 5432.
+      # The postgres pods for the broker's NetworkPolicy egress rule (rendered
+      # only when backend="postgres" and networkPolicy.enabled). The DSN is in
+      # a Secret, so the pods are declared here in the shape of a
+      # networkPolicy.egress.endpoints entry:
+      #   namespace:   the pods' namespace (empty = the release namespace)
+      #   podSelector: matchLabels of the postgres pods (required; `{}`
+      #                allows the whole namespace). For Crunchy PGO:
+      #                  postgres-operator.crunchydata.com/cluster: <cluster>
+      #                  postgres-operator.crunchydata.com/data: postgres
+      #   port:        the pods' port
       networkPolicy:
         namespace: ""
-        clusterName: ""
+        port: 5432
 
   # State that must agree across broker replicas (unlock brute-force limiter;
   # see docs/architecture.md "Replica consistency"). The store is BYO, like
@@ -561,17 +566,19 @@ broker:
     # replicas. Set it before upgrading an existing multi-replica release
     # that has no store yet.
     allowPerReplicaState: false
-    # Selects the store for the broker's NetworkPolicy egress rule (rendered
-    # only when `url` or `existingSecret.name` is set and
-    # networkPolicy.enabled). `cidr`, when set, is used instead of the
-    # selectors -- for a managed instance outside the cluster. Otherwise
-    # namespaceSelector / podSelector are matchLabels maps: an empty
-    # namespaceSelector selects the release namespace; an empty podSelector
-    # allows any pod there.
+    # The store for the broker's NetworkPolicy egress rule (rendered only when
+    # `url` or `existingSecret.name` is set and networkPolicy.enabled). The URL
+    # may be in a Secret, so the store is declared here in the shape of a
+    # networkPolicy.egress.endpoints entry:
+    #   namespace:   the store's namespace (empty = the release namespace)
+    #   podSelector: matchLabels of the store's pods (required; `{}` allows
+    #                the whole namespace)
+    #   port:        the store's port
+    # `cidr`, when set, replaces namespace and podSelector, for a managed
+    # instance outside the cluster.
     networkPolicy:
       cidr: ""
-      namespaceSelector: {}
-      podSelector: {}
+      namespace: ""
       port: 6379
 
   # Broker-wide maintenance mode: only admins get through /v1 and /mcp while
@@ -759,9 +766,9 @@ entitlements:
   # whose `required_permission` (services.yaml) isn't __none__ becomes
   # unreachable by everyone -- the broker refuses to start, naming the
   # offending service and permission, rather than deploying silently broken
-  # (issue #125). See examples/uchicago-values.yaml for a worked mapping and
+  # (issue #125). See examples/example-values.yaml for a worked mapping and
   # docs/auth.md's "Group-to-Permission Mapping Example" section for a
-  # non-ATLAS site.
+  # site that is not this one.
   # Which permission a service target requires is declared by
   # `required_permission` in services.yaml (aggregator.services), not here --
   # see issue #60.
@@ -860,10 +867,9 @@ portal:
   # oidc/brokerOrigin above and patched into the DOM on mount (see
   # portal/src/lib/branding.ts) — this is a static build, so it can't be
   # baked in at build time. Leave any field empty to keep that field's
-  # built-in default (the original AF branding, unchanged from before this
-  # existed): "AF / MCP" / "AF MCP Platform" / "ATLAS Analysis Facility".
+  # built-in default (the names in portal/src/lib/branding.ts).
   branding:
-    # Short mark in the sidebar/topbar logo, e.g. "UChicago AF Ops".
+    # Short mark in the sidebar/topbar logo, e.g. "Example AF Ops".
     shortName: ""
     # Full name, used in the logo links' aria-label ("<fullName> home").
     fullName: ""
@@ -988,7 +994,7 @@ networkPolicy:
       # excluded. List IPv4 and IPv6 together. For the facility's own node
       # ranges, where host-network services (kubelet, sshd, the Kubernetes
       # API) live, e.g.
-      #   exceptCidrs: [192.0.2.0/23, 2001:db8:10:200a::/64]
+      #   exceptCidrs: [192.0.2.0/24, 2001:db8:10:200a::/64]
       exceptCidrs: []
 
     # NetworkPolicy egress rules appended verbatim to the broker's policy,
@@ -999,7 +1005,7 @@ networkPolicy:
     # e.g.
     #   extraEgress:
     #     - to:
-    #         - ipBlock: {cidr: 192.0.2.0/23}
+    #         - ipBlock: {cidr: 192.0.2.0/24}
     #         - ipBlock: {cidr: 2001:db8:10:200a::/64}
     #       ports:
     #         - protocol: TCP
@@ -1027,6 +1033,22 @@ networkPolicy:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
           ports: [9090]
+      # The in-cluster clients that fetch the broker's /.well-known/jwks.json
+      # (the identity providers' token services and the backends that verify
+      # a broker-signed token) may reach the API port (8080). The peers are
+      # derived from the same URLs and `egress.endpoints` entries as the
+      # egress rules: the serviceUrl of a condor-token, krb5-token,
+      # servicex-token or x509 entry, and the url of a service with auth_type
+      # x509, krb5 or servicex or one a broker-issued entry targets, each
+      # paired with the pods behind it. A backend that holds only an upstream
+      # token (oauth21-direct, bearer, none) is not a client. Only in-cluster hosts qualify
+      # (a NetworkPolicy cannot select an external one: allow those through
+      # `sources` or `extraIngress`), and a host served through an ingress
+      # controller is selected as that controller's pods, not the backend's.
+      # The rule is independent of `egress.generate`. false renders no rule:
+      # manage the clients' access with NetworkPolicies of your own.
+      jwks:
+        generate: true
       # NetworkPolicy ingress rules appended verbatim.
       extraIngress: []
     # Who may reach the portal pods (port 8081).

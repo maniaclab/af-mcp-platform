@@ -5,7 +5,15 @@ from typing import TYPE_CHECKING, Annotated
 from urllib.parse import urlencode
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from af_mcp_broker.api.auth import keycloak_dependency
@@ -37,7 +45,6 @@ from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
-    from fastapi import Response
 
 log = structlog.get_logger(__name__)
 

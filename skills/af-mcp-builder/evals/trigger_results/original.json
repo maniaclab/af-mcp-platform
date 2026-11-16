@@ -5,7 +5,7 @@
    "id": "p01",
    "split": "train",
    "should_trigger": true,
-   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.af.uchicago.edu. server.py is the first cut. what has to change before we ask the AF admins to onboard it?",
+   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.example.org. server.py is the first cut. what has to change before we ask the AF admins to onboard it?",
    "triggers": 3,
    "runs": 3,
    "visible": [
@@ -55,7 +55,7 @@
    "id": "p03",
    "split": "train",
    "should_trigger": true,
-   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.af.uchicago.edu? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go",
+   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.example.org? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go",
    "triggers": 3,
    "runs": 3,
    "visible": [

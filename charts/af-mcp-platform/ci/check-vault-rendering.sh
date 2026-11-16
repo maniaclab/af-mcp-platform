@@ -53,8 +53,8 @@ rendered=$(render -f "$ci/vault-values.yaml")
 expect_has "kvRoot" 'name: VAULT_KV_ROOT' "$rendered"
 expect_has "kvRoot" 'value: "mcp"' "$rendered"
 expect_lacks "per-store prefix" 'KV_PATH_PREFIX' "$rendered"
-rendered=$(render -f "$ci/vault-values.yaml" --set broker.vault.kvRoot=mcp-ops)
-expect_has "kvRoot override" 'value: "mcp-ops"' "$rendered"
+rendered=$(render -f "$ci/vault-values.yaml" --set broker.vault.kvRoot=example-ops)
+expect_has "kvRoot override" 'value: "example-ops"' "$rendered"
 
 # A Vault consumer without a root fails the render, naming the value.
 if err=$(render -f "$ci/vault-values.yaml" --set broker.vault.kvRoot= 2>&1); then

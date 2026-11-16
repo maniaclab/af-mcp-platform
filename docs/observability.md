@@ -135,7 +135,7 @@ Query parameters:
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
 
-curl -sS "https://mcp.af.uchicago.edu/v1/usage?days=7" \
+curl -sS "https://mcp.example.org/v1/usage?days=7" \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN"
 ```
 
@@ -198,9 +198,9 @@ itself: each call to it appears as one `gateway_service` call in the next usage
 window it reports — accepted and deliberately visible.
 
 The portal shows the same numbers as a usage card on its overview page
-(`mcp-portal.af.uchicago.edu/overview/`), labeled with the same estimate
+(`mcp-portal.example.org/overview/`), labeled with the same estimate
 caveat, and in full — window selector, per-service table, daily activity —
-on its Usage page (`mcp-portal.af.uchicago.edu/usage/`), which also splits tokens
+on its Usage page (`mcp-portal.example.org/usage/`), which also splits tokens
 by content type (`by_content_type`) and shows calls recorded without a
 breakdown as an "Unattributed" row, so the rows always add up to the totals.
 
@@ -344,7 +344,9 @@ The recipe:
             key: "uri"          # the default
           networkPolicy:
             namespace: ""       # empty = the release namespace
-            clusterName: "af-mcp-usage"
+            podSelector:        # the postgres pods (Crunchy PGO labels)
+              postgres-operator.crunchydata.com/cluster: "af-mcp-usage"
+              postgres-operator.crunchydata.com/data: postgres
     ```
 
     The `existingSecret` is rendered as `USAGE_POSTGRES_DSN` via
@@ -353,10 +355,9 @@ The recipe:
 
 3. `broker.usage.postgres.networkPolicy` renders an egress rule (only
    when `backend: postgres` and the chart's NetworkPolicy is enabled)
-   allowing the broker to reach pods labeled
-   `postgres-operator.crunchydata.com/cluster: <clusterName>` and
-   `postgres-operator.crunchydata.com/data: postgres` on port 5432 —
-   exactly the labels PGO puts on the cluster's postgres pods.
+   allowing the broker to reach the pods matching `podSelector` in
+   `namespace` on `port` (5432 by default). `podSelector` is required; the
+   labels above are the ones PGO puts on the cluster's postgres pods.
 
 ### Schema
 
@@ -664,7 +665,7 @@ tracer = trace.get_tracer("my-agent")
 
 async def main() -> None:
     transport = StreamableHttpTransport(
-        "https://mcp.af.uchicago.edu/mcp/",
+        "https://mcp.example.org/mcp/",
         headers={"Authorization": f"Bearer {os.environ['MCP_BEARER_TOKEN']}"},
     )
     async with Client(transport) as client:
@@ -731,7 +732,7 @@ neither logs the other's requests.
 | Field | On | Meaning |
 |---|---|---|
 | `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
-| `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`null` when the request raised or the client disconnected first), wall time since `received`, and the exception class if one escaped. |
+| `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`500` when an exception escaped before any response was sent; `null` when the client disconnected first), wall time since `received`, and the exception class if one escaped. A request that raised logs `finished` at `error`; every other request logs it at `info`. |
 | `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
 | `parent_request_id` | `finished` | Only on a backend credential redeem whose token was minted for a tool call: that call's `correlation_id`, so the redeem's request lines join to the call. The redeem's own id stays in `correlation_id`. Absent on every other request. |
 

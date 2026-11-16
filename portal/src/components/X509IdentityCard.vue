@@ -124,7 +124,7 @@ async function handleSubmit() {
   passphrase.value = ''; // cleared before the await — regardless of outcome
 
   try {
-    const meta = await requestProxy(captured, '12:00', 'atlas', remember.value);
+    const meta = await requestProxy(captured, remember.value);
     formOpen.value = false;
     proxyStatus.value = null; // stale — refetched on next expand
     emit('linked', meta, remember.value);

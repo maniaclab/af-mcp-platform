@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "af-mcp-broker"
 dynamic = ["version"]
-description = "Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility"
+description = "Credential-brokered MCP gateway for ATLAS analysis facilities"
 requires-python = ">=3.12"
 # Dependencies are managed by pixi — see pixi.toml at the workspace root.
 dependencies = []

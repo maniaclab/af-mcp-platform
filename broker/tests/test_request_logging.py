@@ -52,7 +52,7 @@ from af_mcp_broker.mcp.middleware import identity_mw
 def _capturing_info(
     monkeypatch: pytest.MonkeyPatch, logger: Any
 ) -> list[dict[str, Any]]:
-    """Record every ``logger.info(...)`` call's event, explicit kwargs, and
+    """Record every ``logger.info(...)``/``logger.error(...)`` call's level, event, explicit kwargs, and
     currently-bound structlog contextvars (correlation_id/subject) together
     -- the contextvar merge normally only happens inside structlog's
     processor chain on the way to output, which patching the method this way
@@ -60,15 +60,25 @@ def _capturing_info(
     output/processing is unaffected).
     """
     events: list[dict[str, Any]] = []
-    original_info = logger.info
 
-    def _capture(event: str, **kwargs: Any) -> Any:
-        events.append(
-            {"event": event, **structlog.contextvars.get_contextvars(), **kwargs}
-        )
-        return original_info(event, **kwargs)
+    def _patch(level: str) -> None:
+        original = getattr(logger, level)
 
-    monkeypatch.setattr(logger, "info", _capture)
+        def _capture(event: str, **kwargs: Any) -> Any:
+            events.append(
+                {
+                    "event": event,
+                    "level": level,
+                    **structlog.contextvars.get_contextvars(),
+                    **kwargs,
+                }
+            )
+            return original(event, **kwargs)
+
+        monkeypatch.setattr(logger, level, _capture)
+
+    _patch("info")
+    _patch("error")
     return events
 
 
@@ -125,6 +135,7 @@ def test_v1_success_logs_received_and_finished_with_matching_correlation_id(
     assert received["method"] == "GET"
     assert received["path"] == "/v1/ok"  # no query string
     assert finished["status_code"] == 200
+    assert finished["level"] == "info"
     assert finished["duration_ms"] >= 0
     assert finished["exc_type"] is None
     assert received["correlation_id"]
@@ -151,7 +162,10 @@ def test_v1_exception_logs_finished_with_exc_type_and_still_returns_500(
     finished = next(e for e in events if e["event"] == "http.request.finished")
 
     assert finished["exc_type"] == "RuntimeError"
-    assert finished["status_code"] is None  # call_next raised before any response
+    # call_next raised before any response; the server answers 500 for it, and
+    # an unhandled exception is the broker's failure, so it logs at error.
+    assert finished["status_code"] == 500
+    assert finished["level"] == "error"
     assert received["correlation_id"] == finished["correlation_id"]
 
 

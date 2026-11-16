@@ -277,7 +277,7 @@ class ServiceXTokenProviderConfig(BaseModel):
 
     # Where the portal's ServiceXIdentityCard links out to for the user to
     # obtain/copy their personal ServiceX refresh token (e.g.
-    # "https://servicex.af.uchicago.edu/api-token"). The broker has no
+    # "https://servicex.example.org/api-token"). The broker has no
     # ServiceX-specific route knowledge -- this is an opaque, operator-
     # configured URL. None hides the "Get your ServiceX token" button.
     external_login_url: AnyHttpUrl | None = None
@@ -722,7 +722,7 @@ class Settings(BaseSettings):
     # rather than baked in here, so it always tracks the current oidc_issuer.
     oauth21_state_issuer: str = ""
 
-    # The broker's own CIMD URL (e.g. https://mcp.af.uchicago.edu/.well-known/cimd),
+    # The broker's own CIMD URL (e.g. https://mcp.example.org/.well-known/cimd),
     # used as `client_id` when the broker acts as an OAuth 2.1 client.
     oauth21_client_id: str = ""
 
@@ -975,7 +975,7 @@ class Settings(BaseSettings):
     # Both are required when credmon_enabled (validated below).
     credmon_htcondor_api_url: AnyHttpUrl | None = None
     credmon_htcondor_api_token_file: str | None = None
-    # The pool's user domain (HTCondor UID_DOMAIN, e.g. "af.uchicago.edu"):
+    # The pool's user domain (HTCondor UID_DOMAIN, e.g. "example.org"):
     # credd only accepts the user a credential is stored for as
     # <unixname>@<domain>. Required when credmon_enabled.
     credmon_user_domain: str | None = None
