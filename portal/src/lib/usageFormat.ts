@@ -19,3 +19,9 @@ export function formatBytes(n: number): string {
   }
   return `${value.toLocaleString('en-US', { maximumFractionDigits: 1 })} ${units[unit]}`;
 }
+
+/** A 0..1 fraction as a percentage; "<1%" for a nonzero share that would round to 0. */
+export function formatShare(fraction: number): string {
+  if (fraction > 0 && fraction < 0.005) return '<1%';
+  return `${(fraction * 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}%`;
+}

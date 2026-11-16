@@ -72,6 +72,27 @@ describe('PopoverTooltip', () => {
       expect(bubbleEl.hidePopover).toHaveBeenCalledTimes(1);
     });
 
+    it('positions the bubble after showing it, since a closed popover has no measurable size', async () => {
+      const wrapper = mount(PopoverTooltip, {
+        props: { tooltipId: 'tt-order' },
+        slots: { default: '<button>read</button>', tooltip: 'Read-only.' },
+      });
+      const bubbleEl = wrapper.find('#tt-order-bubble').element as HTMLElement;
+      const events: string[] = [];
+      bubbleEl.showPopover = vi.fn(() => events.push('show'));
+      Object.defineProperty(bubbleEl, 'offsetWidth', {
+        get() {
+          events.push('measure');
+          return 100;
+        },
+      });
+
+      await wrapper.find('.popover-tooltip-trigger').trigger('mouseenter');
+
+      expect(events[0]).toBe('show');
+      expect(events).toContain('measure');
+    });
+
     it('stays open while EITHER hover or focus holds, closing only when both end', async () => {
       const wrapper = mount(PopoverTooltip, {
         props: { tooltipId: 'tt-4' },

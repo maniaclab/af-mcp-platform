@@ -35,6 +35,7 @@ vi.mock('../../lib/api', () => ({
 }));
 
 import { fetchCatalog, fetchUsage } from '../../lib/api';
+import { TOKEN_DOCS_URL } from '../../lib/tokenExplainer';
 import UsagePage from '../UsagePage.vue';
 
 const USAGE: UsageResponse = {
@@ -67,6 +68,10 @@ const USAGE: UsageResponse = {
     { date: '2026-08-24', calls: 30, result_tokens_est: 11000 },
     { date: '2026-08-25', calls: 12, result_tokens_est: 4000 },
   ],
+  by_content_type: [
+    { content_type: 'text', blocks: 38, bytes: 90000, tokens_est: 13000 },
+    { content_type: 'image', blocks: 2, bytes: 6000, tokens_est: 1000 },
+  ],
 };
 
 const EMPTY: UsageResponse = {
@@ -81,6 +86,7 @@ const EMPTY: UsageResponse = {
   },
   by_service: [],
   by_day: [],
+  by_content_type: [],
 };
 
 beforeEach(() => {
@@ -114,7 +120,7 @@ describe('UsagePage', () => {
     const wrapper = mount(UsagePage);
     await flushPromises();
 
-    const rows = wrapper.findAll('.table-container tbody tr');
+    const rows = wrapper.findAll('[aria-labelledby="up-service"] .table-container tbody tr');
     expect(rows).toHaveLength(2);
     expect(rows[0].text()).toContain('rucio');
     expect(rows[0].text()).toContain('30');
@@ -134,7 +140,9 @@ describe('UsagePage', () => {
       const wrapper = mount(UsagePage);
       await flushPromises();
 
-      const cell = wrapper.findAll('.table-container tbody tr')[0].find('td');
+      const cell = wrapper
+        .findAll('[aria-labelledby="up-service"] .table-container tbody tr')[0]
+        .find('td');
       expect(cell.find('.up__service').text()).toBe('Rucio (ATLAS)');
       const id = cell.find('code.af-sub');
       expect(id.text()).toBe('rucio');
@@ -146,7 +154,9 @@ describe('UsagePage', () => {
       const wrapper = mount(UsagePage);
       await flushPromises();
 
-      const cell = wrapper.findAll('.table-container tbody tr')[1].find('td');
+      const cell = wrapper
+        .findAll('[aria-labelledby="up-service"] .table-container tbody tr')[1]
+        .find('td');
       expect(cell.text()).toBe('ami');
       expect(cell.find('code').exists()).toBe(false);
     });
@@ -157,7 +167,9 @@ describe('UsagePage', () => {
       const wrapper = mount(UsagePage);
       await flushPromises();
 
-      const cell = wrapper.findAll('.table-container tbody tr')[0].find('td');
+      const cell = wrapper
+        .findAll('[aria-labelledby="up-service"] .table-container tbody tr')[0]
+        .find('td');
       expect(cell.text()).toBe('rucio');
     });
 
@@ -167,7 +179,7 @@ describe('UsagePage', () => {
       const wrapper = mount(UsagePage);
       await flushPromises();
 
-      const rows = wrapper.findAll('.table-container tbody tr');
+      const rows = wrapper.findAll('[aria-labelledby="up-service"] .table-container tbody tr');
       expect(rows[0].find('td').text()).toBe('rucio');
       expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     });
@@ -245,5 +257,57 @@ describe('UsagePage', () => {
 
     expect(wrapper.find('[role="alert"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('boom');
+  });
+
+  describe('per-content-type breakdown', () => {
+    async function mounted() {
+      vi.mocked(fetchUsage).mockResolvedValue(USAGE);
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+      return wrapper;
+    }
+
+    it('lists each content type with its blocks, size and estimated tokens', async () => {
+      const wrapper = await mounted();
+      const rows = wrapper.findAll('#up-content .table-container tbody tr');
+      expect(rows[0].text()).toContain('Text');
+      expect(rows[0].text()).toContain('13,000');
+      expect(rows[0].text()).toContain('38');
+      expect(rows[1].text()).toContain('Images');
+      expect(rows[1].text()).toContain('1,000');
+    });
+
+    it('shows the remainder recorded without a breakdown as an unattributed row', async () => {
+      const wrapper = await mounted();
+      const rows = wrapper.findAll('#up-content .table-container tbody tr');
+      expect(rows).toHaveLength(3);
+      expect(rows[2].text()).toContain('Unattributed');
+      // 15000 - 14000 tokens; 98765 - 96000 = 2765 B
+      expect(rows[2].text()).toContain('1,000');
+      expect(rows[2].text()).toContain('2.7 KiB');
+      expect(wrapper.find('#up-content').text()).toContain('without a breakdown');
+    });
+
+    it('omits the section when the window has calls but no result bytes at all', async () => {
+      vi.mocked(fetchUsage).mockResolvedValue({
+        ...USAGE,
+        totals: { ...USAGE.totals, result_bytes: 0, result_tokens_est: 0 },
+        by_content_type: [],
+      });
+      const wrapper = mount(UsagePage);
+      await flushPromises();
+      expect(wrapper.find('#up-content').exists()).toBe(false);
+    });
+
+    it('explains the estimate with an info tip and links to the docs section', async () => {
+      const wrapper = await mounted();
+      const tips = wrapper.findAll('button[aria-label="How token counts are estimated"]');
+      expect(tips.length).toBeGreaterThanOrEqual(2);
+      const describedBy = tips[0].attributes('aria-describedby') as string;
+      expect(wrapper.find(`#${describedBy}`).text()).toContain('o200k_base');
+      expect(wrapper.find(`#${describedBy}`).text()).toContain('4784');
+      const link = wrapper.find('#up-content a[href*="observability"]');
+      expect(link.attributes('href')).toBe(TOKEN_DOCS_URL);
+    });
   });
 });

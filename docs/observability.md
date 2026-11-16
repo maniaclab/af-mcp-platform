@@ -91,6 +91,34 @@ visible step up in a given backend's error rate the day it starts
 setting `isError` correctly; that's the fix finally seeing what was
 always failing, not a new regression to chase.
 
+## How token counts are estimated
+
+Every token figure the broker reports (`result_tokens_est` in usage, `af_usage`,
+OTel and the portal's Usage page) is an **estimate** of what a tool result adds
+to the LLM client's context. It is not provider-reported usage, and it covers
+only tool results: prompts and the model's own output are invisible to the
+broker. The portal shows these rules in a tooltip next to its token figures.
+
+| Content | Tokens |
+|---|---|
+| Text (and the text of an embedded `resource`) | Counted with [tiktoken](https://github.com/openai/tiktoken) using the `o200k_base` encoding (`TOKEN_ESTIMATE_ENCODING`). |
+| Image | One token per 28x28 px patch: `ceil(width/28) x ceil(height/28)`, after downscaling to the high-resolution tier's limits: 2,576 px long edge and at most 4,784 tokens per image. A 640x480 image is 23 x 18 = 414 tokens. An image whose size cannot be read is charged the 4,784 maximum, never 0. |
+| Audio, binary blob resources, resource links, unknown types | Bytes are recorded; tokens are 0, because the model does not consume them as tokens. |
+| Structured content | Counted (as text) only when the result has no text block, since backends commonly mirror one into the other. |
+
+**Why the high-resolution tier.** Claude's image cost depends on the model:
+standard-resolution models cap an image at 1,568 px and 1,568 tokens, newer
+models at 2,576 px and 4,784 tokens
+([Vision](https://platform.claude.com/docs/en/build-with-claude/vision)). The
+broker sits between many clients and cannot know which model any of them runs,
+so it assumes the high-resolution tier. That errs toward overestimating: a
+standard-tier model would count less for large images. Small images (the
+640x480 example) cost the same on both tiers. The assumption is the single
+constant `ASSUMED_TIER` in `broker/src/af_mcp_broker/audit/image_tokens.py`.
+
+`broker/tests/test_token_explainer_docs.py` fails if these numbers and the
+portal tooltip (`portal/src/lib/tokenExplainer.ts`) drift from the code.
+
 ## Self-service usage: `GET /v1/usage`
 
 Every user can query their own usage — and nobody else's: the subject
@@ -170,7 +198,9 @@ window it reports — accepted and deliberately visible.
 The portal shows the same numbers as a usage card on its overview page
 (`mcp-portal.af.uchicago.edu/overview/`), labeled with the same estimate
 caveat, and in full — window selector, per-service table, daily activity —
-on its Usage page (`mcp-portal.af.uchicago.edu/usage/`).
+on its Usage page (`mcp-portal.af.uchicago.edu/usage/`), which also splits tokens
+by content type (`by_content_type`) and shows calls recorded without a
+breakdown as an "Unattributed" row, so the rows always add up to the totals.
 
 ## Operator: the usage store
 
