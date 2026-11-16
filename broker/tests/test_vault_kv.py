@@ -256,7 +256,10 @@ async def test_delete_metadata_nonexistent_is_idempotent(sa_token_path: Path) ->
     fake = FakeVault()
     vault_kv = _make_vault_kv(fake, sa_token_path)
 
-    await vault_kv.delete_metadata(PATH)  # must not raise
+    await vault_kv.delete_metadata(PATH)
+
+    assert await vault_kv.get(PATH) is None
+    assert fake.entries == {}
 
 
 async def test_delete_metadata_raises_vault_error_on_5xx(sa_token_path: Path) -> None:

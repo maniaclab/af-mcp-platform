@@ -86,7 +86,11 @@ class TestUnlockLockoutBoundary:
     async def test_check_passes_at_exactly_the_limit(self):
         state = ScriptedWindowState(WindowCount(count=3, ttl_seconds=100))
         cache = CredentialCache(max_failed_unlocks=3, shared_state=state)
+
         await cache.check_unlock_rate_limit(UID)
+
+        # A pre-check only reads the window; it never spends budget.
+        assert state.incr_calls == []
 
     async def test_check_refuses_one_past_the_limit(self):
         state = ScriptedWindowState(WindowCount(count=4, ttl_seconds=100))
@@ -95,7 +99,15 @@ class TestUnlockLockoutBoundary:
             await cache.check_unlock_rate_limit(UID)
 
     async def test_check_passes_with_no_open_window(self):
-        await CredentialCache(max_failed_unlocks=1).check_unlock_rate_limit(UID)
+        cache = CredentialCache(max_failed_unlocks=1)
+
+        await cache.check_unlock_rate_limit(UID)
+
+        # The pre-check did not spend budget: one failure is still tolerated,
+        # the next is refused.
+        await cache.record_failed_unlock(UID)
+        with pytest.raises(UnlockRateLimitError):
+            await cache.record_failed_unlock(UID)
 
     async def test_counters_are_per_uid(self):
         cache = CredentialCache(max_failed_unlocks=1)
@@ -103,6 +115,12 @@ class TestUnlockLockoutBoundary:
         await cache.record_failed_unlock(2)
         await cache.check_unlock_rate_limit(1)
         await cache.check_unlock_rate_limit(2)
+
+        # Each uid spent exactly its own budget of one.
+        with pytest.raises(UnlockRateLimitError):
+            await cache.record_failed_unlock(1)
+        with pytest.raises(UnlockRateLimitError):
+            await cache.record_failed_unlock(2)
 
 
 class TestRetryAfter:
@@ -133,6 +151,8 @@ class TestPutResetsFailedUnlocks:
         await cache.record_failed_unlock(UID)
         await cache.put(SUBJECT, TARGET, "cred", uid=UID)
         await cache.record_failed_unlock(UID)  # back to a fresh budget
+        with pytest.raises(UnlockRateLimitError):
+            await cache.record_failed_unlock(UID)  # ... of exactly one failure
 
     async def test_put_without_uid_keeps_the_counter(self):
         cache = CredentialCache(max_failed_unlocks=1)

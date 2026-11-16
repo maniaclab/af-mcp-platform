@@ -98,11 +98,13 @@ _PUBLIC_ORIGIN = "https://mcp-portal.example"
 
 
 def test_identity_providers_empty_list_is_valid():
-    Settings()  # must not raise -- a degraded but valid config
+    assert Settings().identity_providers == []
 
 
 def test_identity_providers_keycloak_brokered_only_is_valid():
-    Settings(identity_providers=[_KEYCLOAK_ENTRY])  # must not raise -- no
+    settings = Settings(identity_providers=[_KEYCLOAK_ENTRY])
+
+    assert [p.alias for p in settings.identity_providers] == ["atlas-oidc"]
     # broker_state_key/oauth21_client_id needed for this provider type
 
 
@@ -121,12 +123,14 @@ def test_identity_providers_discriminates_entries_by_type():
 
 
 def test_identity_providers_oauth21_direct_ok_when_state_key_and_client_id_set():
-    Settings(
+    settings = Settings(
         broker_state_key="fake-key",
         oauth21_client_id="https://mcp.example/.well-known/cimd",
         broker_public_origin=_PUBLIC_ORIGIN,
         identity_providers=[_OAUTH21_ENTRY],
-    )  # must not raise
+    )
+
+    assert [p.alias for p in settings.identity_providers] == ["a"]
 
 
 def test_identity_providers_oauth21_direct_raises_when_state_key_missing():
@@ -330,17 +334,22 @@ _VAULT_BACKEND_SETTINGS = [
 
 @pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
 def test_vault_config_ok_when_backend_is_in_memory(backend_setting):
-    Settings(**{backend_setting: "in_memory"})  # must not raise
+    settings = Settings(**{backend_setting: "in_memory"})
+
+    assert getattr(settings, backend_setting) == "in_memory"
 
 
 @pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
 def test_vault_config_ok_when_backend_vault_and_addr_and_role_set(backend_setting):
-    Settings(
+    settings = Settings(
         **{backend_setting: "vault"},
         vault_addr="https://vault.example",
         vault_kv_root="mcp",
         vault_auth_role="af-mcp-broker",
-    )  # must not raise
+    )
+
+    assert getattr(settings, backend_setting) == "vault"
+    assert settings.vault_addr == "https://vault.example"
 
 
 @pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
@@ -442,7 +451,9 @@ def test_identity_providers_broker_issued_needs_no_oauth21_settings():
     # broker_state_key/oauth21_client_id/broker_public_origin requirement at
     # Settings level -- the signing-key check lives in app.py's lifespan,
     # where the key file is actually loaded.
-    Settings(identity_providers=[_BROKER_ISSUED_ENTRY])  # must not raise
+    settings = Settings(identity_providers=[_BROKER_ISSUED_ENTRY])
+
+    assert [p.alias for p in settings.identity_providers] == ["af-native"]
 
 
 def test_broker_token_ttl_defaults_to_600():
@@ -746,10 +757,17 @@ def test_usage_store_backend_defaults_to_in_memory():
 
 
 def test_usage_store_postgres_ok_when_dsn_set():
-    Settings(
+    settings = Settings(
         usage_store_backend="postgres",
         usage_postgres_dsn="postgresql://broker:pw@pg.example/usage",
-    )  # must not raise
+    )
+
+    assert settings.usage_store_backend == "postgres"
+    assert settings.usage_postgres_dsn is not None
+    assert (
+        settings.usage_postgres_dsn.get_secret_value()
+        == "postgresql://broker:pw@pg.example/usage"
+    )
 
 
 def test_usage_store_postgres_raises_when_dsn_missing():
@@ -784,10 +802,17 @@ def test_maintenance_mode_backend_defaults_to_in_memory():
 
 
 def test_maintenance_mode_postgres_ok_when_own_dsn_set():
-    Settings(
+    settings = Settings(
         maintenance_mode_backend="postgres",
         maintenance_mode_postgres_dsn="postgresql://broker:pw@pg.example/maint",
-    )  # must not raise
+    )
+
+    assert settings.maintenance_mode_backend == "postgres"
+    assert settings.maintenance_mode_postgres_dsn is not None
+    assert (
+        settings.maintenance_mode_postgres_dsn.get_secret_value()
+        == "postgresql://broker:pw@pg.example/maint"
+    )
 
 
 def test_maintenance_mode_postgres_falls_back_to_usage_dsn():
@@ -817,18 +842,22 @@ def test_maintenance_mode_rejects_unknown_backend():
 
 
 def test_credmon_disabled_needs_no_htcondor_api_settings():
-    Settings(credmon_enabled=False)  # must not raise
+    assert Settings(credmon_enabled=False).credmon_api is None
 
 
 def test_credmon_enabled_with_htcondor_api_settings_is_ok():
-    Settings(
+    settings = Settings(
         credmon_enabled=True,
         credmon_htcondor_api_url="https://htcondor-api.example",
         credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
         credmon_user_domain="af.example.org",
         token_store_backend="vault",
         **_VAULT_ENV,
-    )  # must not raise
+    )
+
+    credmon_api = settings.credmon_api
+    assert credmon_api is not None
+    assert credmon_api.user_domain == "af.example.org"
 
 
 def test_credmon_enabled_raises_without_user_domain():
@@ -922,7 +951,12 @@ def test_multiple_replicas_without_shared_state_refuse_to_start(monkeypatch):
 def test_replica_state_guard_passes(monkeypatch, env):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    Settings()
+
+    settings = Settings()
+
+    assert settings.mcp_replica_count == (
+        int(env["MCP_REPLICA_COUNT"]) if "MCP_REPLICA_COUNT" in env else None
+    )
 
 
 def test_usage_batch_settings_default_and_read_env(monkeypatch):

@@ -92,8 +92,16 @@ async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
     await first.start()
     await first.aclose()
     second = PostgresUsageStore(postgres_dsn)
-    await second.start()  # must not raise
+    await second.start()
     await second.aclose()
+
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        assert (
+            await conn.fetchval("SELECT to_regclass('af_mcp_usage_events')") is not None
+        )
+    finally:
+        await conn.close()
 
 
 async def test_start_renames_the_legacy_tool_column(postgres_dsn: str) -> None:

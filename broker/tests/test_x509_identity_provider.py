@@ -93,7 +93,7 @@ class TestValidateTargets:
             )
         ]
 
-        validate_x509_provider_targets(cfgs, {"ami", "panda"})  # must not raise
+        assert validate_x509_provider_targets(cfgs, {"ami", "panda"}) is None
 
     def test_uncovered_x509_backend_refuses_to_start(self) -> None:
         """An auth_type: x509 backend no explicit entry targets would have no
@@ -135,7 +135,7 @@ class TestValidateTargets:
             validate_x509_provider_targets([], {"ami"})
 
     def test_no_explicit_entries_and_no_x509_backends_validates_nothing(self) -> None:
-        validate_x509_provider_targets([], set())  # must not raise
+        assert validate_x509_provider_targets([], set()) is None
 
     def test_error_is_not_raised_for_non_x509_config_types(self) -> None:
         """Only x509 entries participate — a keycloak-brokered entry naming
@@ -150,7 +150,7 @@ class TestValidateTargets:
             ),
         ]
 
-        validate_x509_provider_targets(cfgs, {"ami"})  # must not raise
+        assert validate_x509_provider_targets(cfgs, {"ami"}) is None
 
 
 # ---------------------------------------------------------------------------

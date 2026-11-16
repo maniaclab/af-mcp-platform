@@ -80,6 +80,8 @@ async def test_successful_put_on_one_replica_resets_the_budget_everywhere(
     await replica_a.check_unlock_rate_limit(uid)  # no longer locked out
     for _ in range(3):
         await replica_a.record_failed_unlock(uid)  # a fresh full budget
+    with pytest.raises(UnlockRateLimitError):
+        await replica_b.record_failed_unlock(uid)
 
 
 async def test_other_uids_are_unaffected(

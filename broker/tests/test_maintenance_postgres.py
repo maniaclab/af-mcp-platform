@@ -69,6 +69,11 @@ async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
     first = PostgresMaintenanceModeStore(postgres_dsn)
     await first.start()
     second = PostgresMaintenanceModeStore(postgres_dsn)
-    await second.start()  # must not raise
+    await second.start()
+    written = MaintenanceState(
+        enabled=True, reason="upgrading", enabled_by="admin-sub", enabled_at=1234.0
+    )
+    await second.set(written)
+    assert await first.get() == written
     await first.aclose()
     await second.aclose()

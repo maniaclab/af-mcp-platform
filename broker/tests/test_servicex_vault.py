@@ -160,7 +160,9 @@ class TestDelete:
         assert await store.get_token(SUBJECT) is None
 
     async def test_delete_on_unlinked_subject_is_a_noop(self, store) -> None:
-        await store.delete(SUBJECT)  # must not raise
+        await store.delete(SUBJECT)
+
+        assert await store.get_link(SUBJECT) is None
 
 
 # ---------------------------------------------------------------------------

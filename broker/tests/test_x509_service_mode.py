@@ -464,8 +464,12 @@ class TestRevoke:
         assert await store.get_link("user-123") is not None
 
     async def test_revoke_without_anything_stored_is_a_noop(self) -> None:
-        provider, _, _, _ = _make_provider()
-        await provider.revoke(_principal("auser"), "ami")  # must not raise
+        provider, _, store, _ = _make_provider()
+
+        await provider.revoke(_principal("auser"), "ami")
+
+        assert await store.get_proxy("user-123") is None
+        assert await store.get_link("user-123") is None
 
 
 # ---------------------------------------------------------------------------

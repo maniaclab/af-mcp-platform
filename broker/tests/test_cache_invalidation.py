@@ -83,6 +83,9 @@ async def test_invalidate_reaches_the_other_replica(
     replica_a.invalidator.invalidate("alice", "rucio")
     await _eventually(lambda: replica_b.dropped == [("alice", "rucio")])
 
+    assert replica_b.dropped == [("alice", "rucio")]
+    assert replica_b.dropped_all == 0
+
 
 async def test_a_replica_does_not_reapply_its_own_message(
     replicas: tuple[_Replica, _Replica],
@@ -101,6 +104,8 @@ async def test_a_subject_wide_invalidation_has_no_target(
     replica_a, replica_b = replicas
     replica_a.invalidator.invalidate("alice", None)
     await _eventually(lambda: replica_b.dropped == [("alice", None)])
+
+    assert replica_b.dropped == [("alice", None)]
 
 
 async def test_malformed_messages_are_logged_and_ignored(
@@ -190,3 +195,5 @@ async def test_invalidate_from_another_thread_still_broadcasts(
     replica_a, replica_b = replicas
     await asyncio.to_thread(replica_a.invalidator.invalidate, "alice", "rucio")
     await _eventually(lambda: replica_b.dropped == [("alice", "rucio")])
+
+    assert replica_b.dropped == [("alice", "rucio")]

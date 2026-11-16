@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx2
 import pytest
+import structlog.testing
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
@@ -225,6 +226,7 @@ class TestStartCredmonSync:
 
 
 class TestPrimeJwksCache:
+    @pytest.mark.usefixtures("unpinned_loggers")
     async def test_a_failed_fetch_is_not_fatal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -235,7 +237,12 @@ class TestPrimeJwksCache:
 
         monkeypatch.setattr(lifecycle, "get_jwks", _get_jwks)
 
-        await prime_jwks_cache(_settings(), httpx2.AsyncClient())
+        with structlog.testing.capture_logs() as logs:
+            await prime_jwks_cache(_settings(), httpx2.AsyncClient())
+
+        assert [
+            (entry["event"], entry["log_level"], entry["error"]) for entry in logs
+        ] == [("jwks_cache_prime_failed", "warning", "keycloak unreachable")]
 
     async def test_a_successful_fetch_primes_the_cache(
         self, monkeypatch: pytest.MonkeyPatch

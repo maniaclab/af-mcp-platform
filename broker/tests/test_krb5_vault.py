@@ -266,8 +266,11 @@ class TestDelete:
         assert await store.get_ticket(SUBJECT) is None
         assert fake_vault.entries == {}
 
-    async def test_delete_is_idempotent(self, store) -> None:
-        await store.delete(SUBJECT)  # never linked — must not raise
+    async def test_delete_is_idempotent(self, store, fake_vault) -> None:
+        await store.delete(SUBJECT)  # never linked
+
+        assert await store.get_link(SUBJECT) is None
+        assert fake_vault.entries == {}
 
     async def test_relink_after_delete_succeeds(self, store) -> None:
         """delete() must destroy metadata (not soft-delete data) so the next
