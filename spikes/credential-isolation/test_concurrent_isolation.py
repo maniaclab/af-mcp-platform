@@ -132,7 +132,7 @@ async def test_rate_limit_triggers_after_max_failed_unlocks() -> None:
 
     Plain cache misses from ``get()`` do NOT count against this budget — see
     ``test_needs_unlock_probes_never_trip_rate_limit`` in
-    ``broker/tests/test_rate_limit_api.py``.
+    ``broker/tests/integration/test_rate_limit_api.py``.
     """
     cache = CredentialCache()
     uid = 99_999

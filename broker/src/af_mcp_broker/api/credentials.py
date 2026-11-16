@@ -34,7 +34,11 @@ from af_mcp_broker.credentials.errors import (
     VomsServiceRejectedError,
 )
 from af_mcp_broker.errors import require
-from af_mcp_broker.logging import bind_parent_request_id, bind_subject
+from af_mcp_broker.logging import (
+    bind_parent_request_id,
+    bind_subject,
+    current_request_id,
+)
 from af_mcp_broker.principal import PosixPrincipal, Principal
 from af_mcp_broker.retry_after import RateLimiter, retry_after_seconds
 
@@ -280,10 +284,10 @@ def _iso(epoch: float) -> str:
 def _bind_parent_request_id(claims: dict[str, Any]) -> None:
     """Log the rest of a redeem request under its minting tool call's id.
 
-    A broker identity token's ``rid`` is the ``correlation_id`` of the client
+    A broker identity token's ``rid`` is the ``request_id`` of the client
     request the broker minted it for. Bound as ``parent_request_id``, it lands
     on every line of the redeem, the credential-release audit line included,
-    while ``request_id`` keeps the token's ``jti``. A token minted outside a
+    while ``jti`` keeps the token's id. A token minted outside a
     client request has no ``rid``.
     """
     if rid := claims.get("rid"):
@@ -625,13 +629,13 @@ async def link_servicex(
     try:
         await provider.link(principal.subject, body.refresh_token)
     # The broker cannot know why ServiceX rejected the token, so the
-    # correlation_id (also logged, and sent to servicex-token-service as
+    # request_id (also logged, and sent to servicex-token-service as
     # X-Request-ID) is what the user quotes if a fresh token is rejected too.
     except ServiceXBadRefreshTokenError as exc:
-        correlation_id = structlog.contextvars.get_contextvars()["correlation_id"]
+        request_id = structlog.contextvars.get_contextvars()["request_id"]
         raise CorrelatedHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{exc} (ref: {correlation_id})",
+            detail=f"{exc} (ref: {request_id})",
         ) from exc
     except ServiceXServiceMintError as exc:
         raise HTTPException(
@@ -929,7 +933,7 @@ def _release_audit(
     subject: str,
     uid: Any,
     audience: str,
-    request_id: str,
+    jti: str,
     outcome: str,
     args_summary: str,
     error: str | None = None,
@@ -942,7 +946,7 @@ def _release_audit(
     carries it; every failure path (no proxy resolved) leaves it null.
     """
     return AuditRecord(
-        principal_sub=subject,
+        subject=subject,
         principal_uid=uid,
         permission=None,
         target=audience,
@@ -950,7 +954,8 @@ def _release_audit(
         action_type="read",
         args_summary=args_summary,
         timestamp=time.time(),
-        request_id=request_id,
+        request_id=current_request_id(),
+        jti=jti,
         outcome=outcome,
         error=error,
         nickname=nickname,
@@ -963,7 +968,7 @@ async def _redeem_from_vault(
     subject: str,
     audience: str,
     uid: Any,
-    request_id: str,
+    jti: str,
 ) -> ProxyRedeemResponse:
     """Serve the Vault-stored proxy, renewing hands-free when it has expired.
 
@@ -991,7 +996,7 @@ async def _redeem_from_vault(
                     subject=subject,
                     uid=uid,
                     audience=audience,
-                    request_id=request_id,
+                    jti=jti,
                     outcome="error",
                     args_summary="hands-free renewal failed: stored passphrase rejected; identity unlinked",
                     error="stored Globus passphrase rejected by voms-token-service",
@@ -1010,7 +1015,7 @@ async def _redeem_from_vault(
                     subject=subject,
                     uid=uid,
                     audience=audience,
-                    request_id=request_id,
+                    jti=jti,
                     outcome="error",
                     args_summary="hands-free renewal failed: request rejected by voms-token-service",
                     error=exc.detail,
@@ -1025,7 +1030,7 @@ async def _redeem_from_vault(
                     subject=subject,
                     uid=uid,
                     audience=audience,
-                    request_id=request_id,
+                    jti=jti,
                     outcome="error",
                     args_summary="hands-free renewal failed: voms-token-service unavailable",
                     error=str(exc),
@@ -1042,7 +1047,7 @@ async def _redeem_from_vault(
             subject=subject,
             uid=uid,
             audience=audience,
-            request_id=request_id,
+            jti=jti,
             outcome="success",
             args_summary=(
                 f"proxy renewed hands-free and released to backend {audience!r}"
@@ -1106,7 +1111,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
     bind_subject(subject)
     _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
-    request_id = claims.get("jti", "")
+    jti = claims.get("jti", "")
 
     # The token's aud is the service's effective_audience (what the broker
     # mints, issue #257), which can differ from the x509 *target* name the
@@ -1118,7 +1123,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
     if audience is None:
         await write_audit(
             AuditRecord(
-                principal_sub=subject,
+                subject=subject,
                 principal_uid=claims.get("uid"),
                 permission=None,
                 target=token_aud,
@@ -1126,7 +1131,8 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
                 action_type="read",
                 args_summary="redeem denied: audience is not an x509 target",
                 timestamp=time.time(),
-                request_id=request_id,
+                request_id=current_request_id(),
+                jti=jti,
                 outcome="denied",
                 error=f"audience {token_aud!r} is not a configured x509 target",
             )
@@ -1148,7 +1154,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         subject=subject,
         audience=audience,
         uid=claims.get("uid"),
-        request_id=request_id,
+        jti=jti,
     )
 
 
@@ -1200,7 +1206,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     bind_subject(subject)
     _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
-    request_id = claims.get("jti", "")
+    jti = claims.get("jti", "")
 
     # Same effective_audience -> target reverse map as x509_audiences above
     # (issue #257) -- the aud a krb5 backend presents may differ from the
@@ -1215,7 +1221,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         # outcome this route reaches in any deployment without one.
         await write_audit(
             AuditRecord(
-                principal_sub=subject,
+                subject=subject,
                 principal_uid=claims.get("uid"),
                 permission=None,
                 target=token_aud,
@@ -1223,7 +1229,8 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
                 action_type="read",
                 args_summary="redeem denied: audience is not a krb5 target",
                 timestamp=time.time(),
-                request_id=request_id,
+                request_id=current_request_id(),
+                jti=jti,
                 outcome="denied",
                 error=f"audience {token_aud!r} is not a configured krb5 target",
             )
@@ -1256,7 +1263,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         except Krb5TokenMintError as exc:
             await write_audit(
                 AuditRecord(
-                    principal_sub=subject,
+                    subject=subject,
                     principal_uid=claims.get("uid"),
                     permission=None,
                     target=target,
@@ -1264,7 +1271,8 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
                     action_type="read",
                     args_summary="hands-free renewal/remint failed: krb5-token-service unavailable",
                     timestamp=time.time(),
-                    request_id=request_id,
+                    request_id=current_request_id(),
+                    jti=jti,
                     outcome="error",
                     error=str(exc),
                 )
@@ -1284,7 +1292,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     # principal metadata only, never the ccache material itself.
     await write_audit(
         AuditRecord(
-            principal_sub=subject,
+            subject=subject,
             principal_uid=claims.get("uid"),
             permission=None,
             target=target,
@@ -1297,7 +1305,8 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
                 else f"ticket for {payload['principal']!r} released to backend {target!r}"
             ),
             timestamp=time.time(),
-            request_id=request_id,
+            request_id=current_request_id(),
+            jti=jti,
             outcome="success",
         )
     )
@@ -1359,7 +1368,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
     bind_subject(subject)
     _bind_parent_request_id(claims)
     token_aud: str = claims["aud"]
-    request_id = claims.get("jti", "")
+    jti = claims.get("jti", "")
 
     # Same effective_audience -> target reverse map as x509_audiences/
     # krb5_audiences above (issue #257) -- the aud a servicex backend
@@ -1376,7 +1385,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         # in any deployment without one.
         await write_audit(
             AuditRecord(
-                principal_sub=subject,
+                subject=subject,
                 principal_uid=claims.get("uid"),
                 permission=None,
                 target=token_aud,
@@ -1384,7 +1393,8 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
                 action_type="read",
                 args_summary="redeem denied: audience is not a servicex target",
                 timestamp=time.time(),
-                request_id=request_id,
+                request_id=current_request_id(),
+                jti=jti,
                 outcome="denied",
                 error=f"audience {token_aud!r} is not a configured servicex target",
             )
@@ -1408,7 +1418,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
                 ) from exc
             await write_audit(
                 AuditRecord(
-                    principal_sub=subject,
+                    subject=subject,
                     principal_uid=claims.get("uid"),
                     permission=None,
                     target=target,
@@ -1416,7 +1426,8 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
                     action_type="read",
                     args_summary="hands-free redeem failed: stored refresh token rejected; identity unlinked",
                     timestamp=time.time(),
-                    request_id=request_id,
+                    request_id=current_request_id(),
+                    jti=jti,
                     outcome="error",
                     error="stored ServiceX refresh token rejected by servicex-token-service",
                 )
@@ -1428,7 +1439,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         except ServiceXServiceMintError as exc:
             await write_audit(
                 AuditRecord(
-                    principal_sub=subject,
+                    subject=subject,
                     principal_uid=claims.get("uid"),
                     permission=None,
                     target=target,
@@ -1436,7 +1447,8 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
                     action_type="read",
                     args_summary="hands-free redeem failed: servicex-token-service unavailable",
                     timestamp=time.time(),
-                    request_id=request_id,
+                    request_id=current_request_id(),
+                    jti=jti,
                     outcome="error",
                     error=str(exc),
                 )
@@ -1451,7 +1463,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
 
     await write_audit(
         AuditRecord(
-            principal_sub=subject,
+            subject=subject,
             principal_uid=claims.get("uid"),
             permission=None,
             target=target,
@@ -1463,7 +1475,8 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
                 else f"access token released to backend {target!r}"
             ),
             timestamp=time.time(),
-            request_id=request_id,
+            request_id=current_request_id(),
+            jti=jti,
             outcome="success",
         )
     )

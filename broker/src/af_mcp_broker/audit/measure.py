@@ -11,7 +11,7 @@ schema change. A ``content_type`` is the MCP block's own ``type`` discriminator
 (``text``, ``image``, ``audio``, ``resource``, ``resource_link``, ...), plus
 ``structured`` for the result's ``structuredContent``. A block type this module
 does not know is still measured under its own ``type`` string and logged once
-per call as ``unknown_content_type`` -- never dropped.
+per call as ``measure.unknown_content_type`` -- never dropped.
 
 Bytes are the size of the payload as sent on the wire: text is its UTF-8
 length, and base64 payloads (image and audio ``data``, a blob resource's
@@ -96,7 +96,7 @@ def _get_encoding(encoding_name: str) -> tiktoken.Encoding | None:
     except Exception as exc:  # noqa: BLE001 -- degrade to no estimate, see docstring
         _encoding_load_failed = True
         logger.warning(
-            "token_estimate_encoding_unavailable",
+            "measure.token_encoding_unavailable",
             encoding=encoding_name,
             error=str(exc),
         )
@@ -204,7 +204,7 @@ def _collect_items(result: ToolResult) -> dict[str, list[_Item]]:
             unknown.add(content_type)
         items.setdefault(content_type, []).append(item)
     for content_type in sorted(unknown):
-        logger.warning("unknown_content_type", content_type=content_type)
+        logger.warning("measure.unknown_content_type", content_type=content_type)
     # Text blocks and structured content are alternatives, not additive; see
     # the module docstring (issue #241).
     if "text" not in items and result.structured_content is not None:
@@ -237,7 +237,7 @@ def _image_tokens(items: list[_Item], _encoding_name: str) -> int:
         try:
             width, height = image_dimensions(base64.b64decode(item.base64_data or ""))
         except ValueError as exc:  # includes binascii.Error
-            logger.warning("image_dimensions_unreadable", error=str(exc))
+            logger.warning("measure.image_dimensions_unreadable", error=str(exc))
             total += ASSUMED_TIER.max_tokens
         else:
             total += estimate_image_tokens(width, height)
@@ -290,5 +290,5 @@ def measure_tool_result(
             tokens_estimated=tokens_estimated,
         )
     except Exception as exc:  # noqa: BLE001 -- metering must never break a tool call
-        logger.warning("tool_result_measurement_failed", error=str(exc))
+        logger.warning("measure.tool_result_failed", error=str(exc))
         return None

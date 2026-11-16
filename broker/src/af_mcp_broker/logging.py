@@ -178,48 +178,48 @@ def close_audit_logging() -> None:
         handler.close()
 
 
-def bind_new_correlation_id() -> None:
-    """Bind a fresh ``correlation_id`` to structlog's contextvars for the current request (issue #281).
+def bind_new_request_id() -> None:
+    """Bind a fresh ``request_id`` to structlog's contextvars for the current request (issue #281).
 
     Call once at the very start of every request, before identity is
     resolved -- ``bind_subject`` below binds the caller's subject alongside
     it once a Principal exists, but a caller whose identity never resolves
-    (an invalid token, say) still gets logged with a correlation_id, so
+    (an invalid token, say) still gets logged with a request_id, so
     even that failure can be traced back to one client call. Clears any
     contextvars first: without this, values bound by a previous request
     that happened to reuse the same task (e.g. ``subject`` from a prior
     call) would otherwise leak into this one's log lines.
     """
     structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(correlation_id=uuid.uuid4().hex)
+    structlog.contextvars.bind_contextvars(request_id=uuid.uuid4().hex)
     _request_identity.set({})
 
 
-def current_correlation_id() -> str:
-    """Return the current request's ``correlation_id``, binding a fresh one if none is bound.
+def current_request_id() -> str:
+    """Return the current request's ``request_id``, binding a fresh one if none is bound.
 
     Audit records, request lines and usage rows of one request share this id.
     A call made outside a request (no ASGI entry point bound one) gets a new
     id bound for the rest of the current context, so every line it emits
     still agrees.
     """
-    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
-    if correlation_id is None:
-        correlation_id = uuid.uuid4().hex
-        structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
-    return correlation_id
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
+    if request_id is None:
+        request_id = uuid.uuid4().hex
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+    return request_id
 
 
 def request_id_headers() -> dict[str, str]:
-    """``X-Request-ID`` header carrying the current request's ``correlation_id`` (issue #342).
+    """``X-Request-ID`` header carrying the current request's ``request_id`` (issue #342).
 
     Spread into the headers of every call to an AF-internal token service
     (servicex/voms/krb5/condor-token-service) so that service's audit line
     shares the id the broker logged, instead of minting an unrelated one.
-    Empty when no correlation_id is bound (a call made outside a request).
+    Empty when no request_id is bound (a call made outside a request).
     """
-    correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
-    return {"X-Request-ID": correlation_id} if correlation_id else {}
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
+    return {"X-Request-ID": request_id} if request_id else {}
 
 
 def _bind_request_identity(**fields: str) -> None:
@@ -242,9 +242,9 @@ def bind_subject(subject: str) -> None:
 
 
 def bind_parent_request_id(parent_request_id: str) -> None:
-    """Bind *parent_request_id* for the rest of the current request: the ``correlation_id`` of the client request a broker identity token was minted for.
+    """Bind *parent_request_id* for the rest of the current request: the ``request_id`` of the client request a broker identity token was minted for.
 
-    Set by a backend credential redeem, whose own ``correlation_id`` names the
+    Set by a backend credential redeem, whose own ``request_id`` names the
     redeem; this joins every line of it, the ``finished`` line included, to
     the tool call that caused it.
     """
@@ -254,9 +254,9 @@ def bind_parent_request_id(parent_request_id: str) -> None:
 def bind_client_request_id(client_request_id: str) -> None:
     """Bind the caller-supplied ``X-Request-ID`` as ``client_request_id`` for the rest of the current request.
 
-    Recorded beside the broker's own ``correlation_id`` so a client can find
+    Recorded beside the broker's own ``request_id`` so a client can find
     its call by the id it chose; it is never forwarded or used as the
-    ``correlation_id``, because an unauthenticated caller must not choose the
+    ``request_id``, because an unauthenticated caller must not choose the
     id that joins the broker's, the audit log's and the backends' lines.
     Truncated, since the header is attacker-controlled.
     """
@@ -270,7 +270,7 @@ def log_request_received(bound_logger: BoundLogger, *, method: str, path: str) -
 
     Call once at each ASGI entry point (/v1's ``_bind_request_logging_context``
     middleware, /mcp's ``AsgiAuthMiddleware.__call__``), immediately after
-    ``bind_new_correlation_id()`` and before any auth/credential/routing
+    ``bind_new_request_id()`` and before any auth/credential/routing
     work -- so a request that stalls or dies downstream (queued behind other
     work, stuck in auth/principal resolution, or a connection that never
     completes) still leaves this line. Only ``method`` and ``path`` are
@@ -308,7 +308,7 @@ def log_request_finished(
     router matched one, and never carries a query string.
 
     An unhandled exception (*exc_type* set) is the broker's own failure, so the
-    line logs at error, the same as a 5xx ``http_exception``. When it left no
+    line logs at error, the same as a 5xx ``http.exception``. When it left no
     response behind (*status_code* is None), the server answers 500 for it, so
     that is the status recorded.
     """

@@ -118,6 +118,11 @@ portal:
     accentColorDark: ""      # optional; empty derives it from accentColor
 ```
 
+`portal.branding.facilityUrl` (an `http://` or `https://` URL, empty by default)
+turns the facility name in the footer into a link to the facility's website. An
+empty value leaves it plain text, and the chart schema and the portal both
+refuse any other scheme (`javascript:`, `data:`).
+
 The chart writes both into the `branding` block of `/config.json`
 (`charts/af-mcp-platform/templates/configmap-portal-config.yaml`). At runtime
 `Footer.astro`, which every layout renders, loads that block and calls

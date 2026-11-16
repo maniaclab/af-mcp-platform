@@ -33,7 +33,7 @@ from af_mcp_broker import metrics
 from af_mcp_broker.api.auth import require_admin
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.logging import current_correlation_id
+from af_mcp_broker.logging import current_request_id
 from af_mcp_broker.maintenance import (
     MaintenanceState,
     MaintenanceStateConflictError,
@@ -138,7 +138,7 @@ async def get_maintenance_status(request: Request) -> MaintenanceStatusResponse:
         # exist is staying reachable precisely when everything else is
         # refusing traffic, so surfacing the outage as a 500 here would be
         # exactly backwards.
-        logger.exception("maintenance_store_unavailable", error=str(exc))
+        logger.exception("maintenance.store_unavailable", error=str(exc))
         metrics.maintenance_store_unavailable_total.inc()
         state = _DISABLED_DEFAULT
     unixname, email = await _resolve_enabled_by(request, state.enabled_by)
@@ -206,7 +206,7 @@ async def set_maintenance_status(
     action = "maintenance_enable" if body.enabled else "maintenance_disable"
     await write_audit(
         AuditRecord(
-            principal_sub=principal.subject,
+            subject=principal.subject,
             principal_uid=principal.uid,
             permission=None,
             target="mcp-gateway",
@@ -214,11 +214,11 @@ async def set_maintenance_status(
             action_type="state_change",
             args_summary=f"enabled={body.enabled} reason={body.reason!r}",
             timestamp=time.time(),
-            request_id=current_correlation_id(),
+            request_id=current_request_id(),
         )
     )
     logger.info(
-        "maintenance_mode_changed",
+        "maintenance.mode_changed",
         subject=principal.subject,
         enabled=body.enabled,
         reason=body.reason,

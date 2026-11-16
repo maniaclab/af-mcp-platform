@@ -640,7 +640,7 @@ a TTL at or below that floor makes every call a fresh mint).
 | `aud`      | yes      | The service's `effective_audience` — its `ServiceSpec.audience` if set, else its `name` (issue #257) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
 | `exp` / `iat` | yes   | Mint time and mint time + TTL |
 | `jti`      | yes      | Unique per token (uuid4) |
-| `rid`      | optional | The `correlation_id` of the client request the token was minted for (tool calls and tool listings). A request identifier, not an authorization claim: the redeem call a backend later makes with this token is logged with it as `parent_request_id`. Verifiers may ignore it |
+| `rid`      | optional | The `request_id` of the client request the token was minted for (tool calls and tool listings). A request identifier, not an authorization claim: the redeem call a backend later makes with this token is logged with it as `parent_request_id`. Verifiers may ignore it |
 | `uid` / `gid` / `unixname` | optional | POSIX identity from the directory-backed `Principal` (the same source x509 minting uses — never a token claim), included **only** for services that set `requires_posix` |
 
 **Deliberately absent: permissions, groups, or any authorization claim.**
@@ -751,7 +751,7 @@ JWKS — consumers never hardcode a key:
 
 The overlap property (a token signed by the retiring key verifies against
 a JWKS whose active key is the successor) is regression-tested in
-`broker/tests/test_broker_issued.py`.
+`broker/tests/unit/test_broker_issued.py`.
 
 ### CondorTokenProvider: HTCondor IDTOKENs (issue #169)
 
@@ -1182,10 +1182,10 @@ credential, not tied to a unix account.
 When ServiceX rejects a token at link time, the broker cannot tell revoked
 from expired from signed before a ServiceX key rotation. It logs
 `servicex_service.redeem.bad_refresh_token` (WARNING: subject, upstream
-status, `correlation_id`; never the token or the service's body) and returns
+status, `request_id`; never the token or the service's body) and returns
 400 whose `detail` says ServiceX rejected the token, to generate a new one
-and re-link, ending in `(ref: <correlation_id>)`; the body also carries
-`correlation_id`. The same id is sent to servicex-token-service as
+and re-link, ending in `(ref: <request_id>)`; the body also carries
+`request_id`. The same id is sent to servicex-token-service as
 `X-Request-ID`, so its audit line can be joined to the broker's.
 
 Configuration is one `identity_providers` entry of type `servicex-token`
@@ -1289,7 +1289,7 @@ another JWT:
    inspects or acts on. Expiry defaults to 90 days
    (`Settings.pat_default_expiry_days`, `PAT_DEFAULT_EXPIRY_DAYS`);
    never-expiring is an explicit opt-in (`never_expires: true` in the mint
-   request), logged loudly (`pat_minted_without_expiry`) and never the
+   request), logged loudly (`tokens.pat_minted_without_expiry`) and never the
    default.
 2. **List** — `GET /v1/tokens` shows metadata for PATs minted through this
    endpoint, including ones already revoked (shown with a revoked status
@@ -1342,7 +1342,7 @@ An operator who needs to cut off another user's PATs uses endpoints gated on
 
 `subject` is required on the collection routes. Each revoked token emits a
 `token.revoked` audit event, the same event an owner's own revoke emits,
-with the admin as the actor (`principal_sub`) and the owner in `args_summary`
+with the admin as the actor (`subject`) and the owner in `args_summary`
 as `subject=`. Revocation sets `revoked_at` on the record, so it takes effect
 on the owner's next request. There is no admin delete of a row; clearing
 revoked rows is the owner's housekeeping (step 4 above).

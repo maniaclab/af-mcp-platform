@@ -13,6 +13,8 @@ Everything Python runs through [pixi](https://pixi.sh); dependencies live in `pi
 ```bash
 pixi run -e dev broker       # run broker locally with reload → http://localhost:8080/docs
 pixi run test                # broker + skills tests in parallel (pytest broker/ skills/ -v -n auto; -n 0 to debug serially)
+pixi run test-unit           # broker unit tests only (broker/tests/unit, marker `unit`)
+pixi run test-integration    # broker integration tests only (broker/tests/integration, marker `integration`)
 pixi run test-spikes         # spike validation tests (pytest spikes/ -v)
 pixi run lint                # ruff check + format --check on broker/
 pixi run fmt                 # ruff format + autofix
@@ -21,6 +23,8 @@ pixi run -e dev lint-imports # import-linter layer contracts (broker/pyproject.t
 pixi run -e dev lint-all     # everything the CI lint job runs (ruff + import-linter + mypy + pre-commit)
 pixi run -e dev pytest broker/ -k <name> -v   # single test
 ```
+
+The broker's tests are split by directory into `unit/` (one module, no booted app, server, subprocess or database), `integration/` (the booted app, in-process servers, subprocesses, helm renders) and a reserved `e2e/` (a deployed broker, no mocks); the directory sets the pytest marker. New tests go in the tier directory that matches what they boot; `docs/testing.md` has the definitions.
 
 Portal (Astro + Vue + Tailwind):
 
@@ -67,3 +71,12 @@ Configuration is file + env driven: `POLICY_FILE` and `SERVICES_FILE` (defaults 
 ### Critical auth constraint
 
 Keycloak Standard Token Exchange (V2) mints tokens **accepted only by AF-internal services** — `atlas-auth.cern.ch` rejects them. Any credential for external ATLAS services (Rucio, PanDA, AMI) must use Keycloak's stored brokered token: `GET /realms/<realm>/broker/atlas-oidc/token` (IdP alias `atlas-oidc`, configurable via the `alias` of the `keycloak-brokered` entry in `IDENTITY_PROVIDERS` env var / `broker.identityProviders` chart value), which requires the user to have linked their CERN account. x509/VOMS proxies are minted by voms-token-service (the only component that mounts user homes; the broker sends it the user's POSIX identity and Globus passphrase) and persisted in Vault. Details in `docs/auth.md` — do not conflate these paths.
+
+## Logging conventions
+
+Operators build dashboards, alerts and log queries on event names and field names, so both are interface. The audit log, usage rows and `/v1` error bodies share the field names. `broker/tests/unit/test_logging_conventions.py` enforces the rules below over every `logger.<level>("event", ...)` call in `broker/src`; the field table for operators is in `docs/observability.md` ("Log event names and fields").
+
+- **Event names**: a string literal `component.action` (or `component.thing.action`): lowercase snake_case segments joined by dots, at least one dot. The component is the subsystem (`jwks`, `token_registry`, `credential_cache`), the last segment says what happened (`failed`, `unreachable`, `rejected`, `success`, a past participle). No f-strings, no prose, no flat `snake_case` names. The `audit` line is the one exception: its shape is the audit contract.
+- **Standard fields**: `subject` (the user's Keycloak `sub`, never `principal_id`, `principal_sub` or `user`), `target` (credential target), `service` (service name), `reason` (short machine-readable cause), `error` (`str(exc)`), `detail` (human explanation; never `message`, which log shippers treat as the line itself), `status_code` (our HTTP response) vs `upstream_status` (a dependency's), `duration_ms`, `exc_type`, `audit_id`, `uid`/`unixname` (POSIX identity). `request_id` is the request's id (the `X-Request-ID` the broker sends on); the middleware binds it once per request, so do not mint another. Logs, audit records and usage rows use these same names; a token's id is `jti` (broker identity token) or `token_id` (a PAT's `lookup_id`), never `request_id`.
+- **Levels**: `error` = broker bug, or a failure that fails the request or closes the broker; `warning` = degraded but serving (fallback taken, dependency unreachable); `info` = lifecycle and expected outcomes, including policy denials, 4xx and not-linked users; `debug` = cache hits and tracing aids. A name ending in `failed` is never logged below `warning`; an expected outcome is not "failed".
+- **Never log**: tokens (JWT, PAT, access, refresh), passphrases, passwords, keytabs, proxies or private keys, `Authorization`/cookie headers, request or response bodies, query strings, tool argument values, or a claim read from an unverified token under a trusted field name. Personal data (a certificate DN, an email) goes on a `debug` line only. `PassphraseRedactProcessor` only backstops `passphrase`/`password`.

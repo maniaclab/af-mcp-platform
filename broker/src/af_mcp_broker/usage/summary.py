@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 # The single statement of how token numbers are estimated, shared by the
 # /v1/usage route description and the af_usage tool description; it mirrors
 # docs/observability.md ("How token counts are estimated"), and
-# tests/test_token_explainer_docs.py fails if it drifts from the code.
+# tests/unit/test_token_explainer_docs.py fails if it drifts from the code.
 TOKEN_ESTIMATE_CAVEAT = (
     "Token counts are ESTIMATES of what tool results add to the LLM client's "
     "context -- not provider-reported usage, and not the user's full token "

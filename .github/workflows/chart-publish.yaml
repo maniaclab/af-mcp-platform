@@ -17,6 +17,8 @@ jobs:
     permissions:
       contents: read
       packages: write  # push the chart to ghcr.io/maniaclab/charts
+      id-token: write  # sign the provenance attestations with the workflow's OIDC identity
+      attestations: write  # store the provenance attestations
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,5 +48,29 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Pushes ghcr.io/maniaclab/charts/af-mcp-platform:<version>.
+      # helm prints the pushed manifest's digest ("Digest: sha256:..."); the
+      # OCI attestation below needs it.
       - name: helm push
-        run: helm push "$RUNNER_TEMP"/chart/af-mcp-platform-*.tgz oci://ghcr.io/maniaclab/charts
+        id: push
+        run: |
+          helm push "$RUNNER_TEMP"/chart/af-mcp-platform-*.tgz oci://ghcr.io/maniaclab/charts 2>&1 | tee "$RUNNER_TEMP/helm-push.log"
+          digest="$(sed -n 's/^Digest: //p' "$RUNNER_TEMP/helm-push.log")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no digest in helm push output" >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # Provenance for the packaged .tgz (verify the file from `helm pull`).
+      - name: Attest chart package provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/chart/af-mcp-platform-*.tgz
+
+      # Provenance for the registry artifact, pushed next to it so
+      # `gh attestation verify oci://...` finds it. create-storage-record is
+      # off because it needs the extra artifact-metadata: write permission.
+      - name: Attest chart registry artifact provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/maniaclab/charts/af-mcp-platform
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false

@@ -33,10 +33,10 @@ export interface ServiceStatusView {
    * permission_required service links only when the broker supplies an access
    * URL). */
   cta: StatusCta | null;
-  /** Carried straight through from CatalogServer.correlation_id -- set only
+  /** Carried straight through from CatalogServer.request_id -- set only
    * for permission_required/misconfigured, so the card can show it for the
    * user to quote in a ticket. */
-  correlationId: string | null;
+  requestId: string | null;
   /** Groups whose membership grants the missing permission; non-empty only
    * for permission_required, where the card names them next to the CTA. */
   grantingGroups: string[];
@@ -77,12 +77,12 @@ const SEVERITIES: Record<ServiceStatus, StatusSeverity> = {
  * Resolves how a card should present its server's status. "link_required"
  * gets a CTA to /identities/, where the user can fix it themselves, and
  * "permission_required" gets "About this service" when the broker supplies
- * a docs URL (issue #395). misconfigured is admin-actionable (correlationId
+ * a docs URL (issue #395). misconfigured is admin-actionable (requestId
  * carries the id to quote), and unavailable is a wait-and-retry state with
  * nothing to link to.
  */
 export function resolveServiceStatus(
-  server: Pick<CatalogServer, 'status' | 'status_detail' | 'correlation_id'> & {
+  server: Pick<CatalogServer, 'status' | 'status_detail' | 'request_id'> & {
     link_state?: LinkState | null;
     docs_url?: string | null;
     granting_groups?: string[];
@@ -97,7 +97,7 @@ export function resolveServiceStatus(
       detail: `Your linked ${identityNounText ?? 'credential'} was rejected. Re-link it to use this service.`,
       severity: 'warning',
       cta: { label: 'Re-link identity', href: '/identities/' },
-      correlationId: server.correlation_id,
+      requestId: server.request_id,
       grantingGroups: [],
     };
   }
@@ -107,7 +107,7 @@ export function resolveServiceStatus(
     detail: server.status_detail,
     severity: SEVERITIES[server.status],
     cta: ctaFor(server.status, denied ? (server.docs_url ?? null) : null),
-    correlationId: server.correlation_id,
+    requestId: server.request_id,
     grantingGroups: denied ? (server.granting_groups ?? []) : [],
   };
 }

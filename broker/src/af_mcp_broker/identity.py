@@ -15,7 +15,7 @@ from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
 from af_mcp_broker.errors import BrokerError
-from af_mcp_broker.logging import bind_subject, current_correlation_id
+from af_mcp_broker.logging import bind_subject, current_request_id
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import (
     PrincipalRejectedError,
@@ -71,7 +71,7 @@ async def _fetch_jwks(
         resp.raise_for_status()
         return resp.json()["keys"]
     except Exception as exc:
-        logger.exception("jwks_fetch_failed", uri=jwks_uri, error=str(exc))
+        logger.exception("jwks.fetch_failed", uri=jwks_uri, error=str(exc))
         raise JwksUnavailableError(
             f"Unable to reach JWKS endpoint: {jwks_uri}"
         ) from exc
@@ -104,11 +104,11 @@ async def get_jwks(
             keys = await _fetch_jwks(uri, http_client)
         except JwksUnavailableError:
             if entry is not None:
-                logger.warning("jwks_refresh_failed_serving_stale", uri=uri)
+                logger.warning("jwks.refresh_failed_serving_stale", uri=uri)
                 return entry.keys
             raise
         _jwks_cache[uri] = _JwksEntry(keys=keys, fetched_at=now)
-        logger.debug("jwks_cache_refreshed", uri=uri, key_count=len(keys))
+        logger.debug("jwks.cache_refreshed", uri=uri, key_count=len(keys))
         return keys
 
 
@@ -223,7 +223,7 @@ class TokenAudienceError(IdentityError):
     token this user mints is missing it until an administrator changes
     their group membership. ``detail`` is a dict, not a plain string,
     carrying a stable ``error`` discriminator (RFC 6750's
-    ``insufficient_scope``) plus a ``correlation_id`` the caller can quote
+    ``insufficient_scope``) plus a ``request_id`` the caller can quote
     when contacting an administrator -- the same pattern
     ``service_status.py``'s ``service_status`` already uses for
     ``permission_required``/``misconfigured``.
@@ -359,7 +359,7 @@ async def get_principal(
     has no last-known value to fall back on and cannot authenticate at all.
 
     *caller_path* is purely diagnostic: the request path this validation is
-    gating, attached to the ``jwt_validation_failed`` log line below so a
+    gating, attached to the ``jwt.validation_failed`` log line below so a
     rejection here can be told apart from an unrelated one logged moments
     later by a different concurrent request -- this function otherwise gives
     no indication of which endpoint invoked it. Never affects the outcome.
@@ -378,7 +378,7 @@ async def get_principal(
     except jwt.ExpiredSignatureError as exc:
         error = exc
         expired = True
-        logger.info("jwt_expired", subject=_peek_sub(token))
+        logger.info("jwt.expired", claimed_subject=_peek_sub(token))
     except jwt.InvalidAudienceError as exc:
         # Caught ahead of the broader InvalidTokenError below -- it's a
         # subclass, so ordering matters. Everything else about the token
@@ -395,16 +395,16 @@ async def get_principal(
         return principal
 
     logger.warning(
-        "jwt_validation_failed",
+        "jwt.validation_failed",
         error=str(error) if error else "no matching key",
         caller_path=caller_path,
     )
     if wrong_audience:
-        correlation_id = current_correlation_id()
+        request_id = current_request_id()
         logger.warning(
-            "jwt_audience_mismatch",
-            subject=_peek_sub(token),
-            correlation_id=correlation_id,
+            "jwt.audience_mismatch",
+            claimed_subject=_peek_sub(token),
+            request_id=request_id,
             actual_audience=_peek_aud(token),
             expected_audience=settings.oidc_audience,
         )
@@ -414,9 +414,9 @@ async def get_principal(
                 "message": (
                     "Your account is not authorized to use this platform "
                     "yet. Contact your AF administrators and quote this "
-                    f"ID: {correlation_id}"
+                    f"ID: {request_id}"
                 ),
-                "correlation_id": correlation_id,
+                "request_id": request_id,
             }
         )
     if expired:

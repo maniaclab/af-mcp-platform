@@ -88,7 +88,7 @@ async def record_usage(store: UsageStore, record: AuditRecord) -> None:
         await store.record(record)
     except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
         metrics.metering_worker_errors_total.inc()
-        logger.warning("usage_record_failed", audit_id=record.audit_id, error=str(exc))
+        logger.warning("usage.record_failed", audit_id=record.audit_id, error=str(exc))
 
 
 def counts_as_usage(record: AuditRecord) -> bool:
@@ -110,7 +110,7 @@ async def record_usage_batch(store: UsageStore, records: list[AuditRecord]) -> N
     except Exception as exc:  # noqa: BLE001 -- usage must never lose an audit line
         metrics.metering_worker_errors_total.inc(len(records))
         logger.warning(
-            "usage_record_batch_failed",
+            "usage.record_batch_failed",
             batch_size=len(records),
             audit_ids=[r.audit_id for r in records],
             error=str(exc),

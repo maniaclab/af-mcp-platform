@@ -1,0 +1,669 @@
+"""Tests for X509Provider's voms-token-service minting (issue #112 follow-up).
+
+The provider mints via the service and persists everything in Vault:
+unlock/link stores the passphrase + proxy, ``is_linked()`` asks Vault,
+issue() serves the Vault proxy and — when it's expired or near expiry —
+RE-MINTS with the stored passphrase (hands-free renewal). A bad-passphrase
+failure on re-mint unlinks and surfaces ``NeedsUnlockError`` so the portal
+prompts a re-link; infra failures do neither.
+
+The Vault store here is a lightweight in-memory fake implementing the
+``VaultX509Store`` API (its Vault wire behavior is covered by
+test_x509_vault.py); the voms client is a recording fake with a scriptable
+outcome.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from af_mcp_broker.shared_state import WindowCount
+
+
+import pytest
+import structlog.testing
+from prometheus_client import REGISTRY
+from pydantic import SecretBytes, SecretStr
+from x509_fakes import DN, PEM, VOMS_ATTRS, FakeVomsClient, FakeX509Store, minted
+
+from af_mcp_broker.api.credentials import _to_response
+from af_mcp_broker.credentials.base import CredentialKind
+from af_mcp_broker.credentials.cache import CredentialCache, unlock_failures_key
+from af_mcp_broker.credentials.errors import (
+    NeedsUnlockError,
+    PosixIdentityRequiredError,
+    UnlockRateLimitError,
+    VomsServiceBadPassphraseError,
+    VomsServiceMintError,
+)
+from af_mcp_broker.credentials.x509 import X509Provider
+from af_mcp_broker.principal import Principal
+
+_PEM = PEM
+_DN = DN
+_VOMS_ATTRS = VOMS_ATTRS
+
+
+def _principal(
+    unixname: str | None,
+    *,
+    uid: int | None = 50123,
+    gid: int | None = 5000,
+    subject: str = "user-123",
+) -> Principal:
+    return Principal(
+        subject=subject,
+        email="user@example.org",
+        uid=uid,
+        gid=gid,
+        unixname=unixname,
+        groups=["af-atlas-users"],
+        raw_token=SecretStr("fake-token"),
+    )
+
+
+def _make_provider(
+    voms_client: FakeVomsClient | None = None,
+    store: FakeX509Store | None = None,
+    cache: CredentialCache | None = None,
+) -> tuple[X509Provider, FakeVomsClient, FakeX509Store, CredentialCache]:
+    voms_client = voms_client if voms_client is not None else FakeVomsClient()
+    store = store if store is not None else FakeX509Store()
+    cache = cache if cache is not None else CredentialCache()
+    # Only the posix_*_attribute names (PosixIdentityRequiredError's message)
+    # are ever read from settings.
+    settings = SimpleNamespace(
+        posix_uid_attribute="uid",
+        posix_gid_attribute="gid",
+        posix_unixname_attribute="unixname",
+    )
+    provider = X509Provider(
+        settings=settings,  # type: ignore[arg-type]
+        cache=cache,
+        voms_client=voms_client,  # type: ignore[arg-type]
+        vault_store=store,  # type: ignore[arg-type]
+    )
+    return provider, voms_client, store, cache
+
+
+async def _failed_unlocks(cache: CredentialCache, uid: int) -> WindowCount | None:
+    return await cache._shared_state.get_window(unlock_failures_key(uid))
+
+
+async def _seed_link(store: FakeX509Store, subject: str = "user-123") -> None:
+    await store.store_link(
+        subject,
+        passphrase=SecretStr("stored-passphrase"),
+        unixname="auser",
+        uid=50123,
+        gid=5000,
+    )
+
+
+# ---------------------------------------------------------------------------
+# is_linked
+# ---------------------------------------------------------------------------
+
+
+class TestIsLinked:
+    async def test_true_when_vault_holds_a_link(self) -> None:
+        provider, _, store, _ = _make_provider()
+        await _seed_link(store)
+        assert await provider.is_linked(_principal("auser")) is True
+
+    async def test_false_when_vault_has_no_link(self) -> None:
+        provider, _, _, _ = _make_provider()
+        assert await provider.is_linked(_principal("auser")) is False
+
+    async def test_ignores_the_filesystem_entirely(self) -> None:
+        """settings=None would crash any ~/.globus path construction — the
+        Vault answer must be authoritative."""
+        provider, _, store, _ = _make_provider()
+        await _seed_link(store)
+        principal = _principal(None, uid=None, gid=None)  # no POSIX identity
+        assert await provider.is_linked(principal) is True
+
+
+# ---------------------------------------------------------------------------
+# issue() with a passphrase: the link/unlock flow
+# ---------------------------------------------------------------------------
+
+
+class TestLinkFlow:
+    async def test_mints_via_service_and_stores_link_and_proxy(self) -> None:
+        provider, voms_client, store, _ = _make_provider()
+        principal = _principal("auser")
+
+        cred = await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2")
+        )
+
+        assert len(voms_client.calls) == 1
+        call = voms_client.calls[0]
+        assert call["subject"] == "user-123"
+        assert call["unixname"] == "auser"
+        assert call["uid"] == 50123
+        assert call["gid"] == 5000
+        assert call["passphrase"].get_secret_value() == "hunter2"
+
+        link = await store.get_link("user-123")
+        assert link is not None
+        assert link.passphrase is not None
+        assert link.passphrase.get_secret_value() == "hunter2"
+        record = await store.get_proxy("user-123")
+        assert record is not None
+        assert record.proxy_pem is not None
+        assert record.proxy_pem.get_secret_value() == _PEM
+
+        assert cred.kind == CredentialKind.X509_PROXY_REDEEM
+        assert cred.payload["delivery"] == "redeem"
+        assert "proxy_path" not in cred.payload
+        assert cred.source == "voms_token_service"
+
+    async def test_certificate_dn_is_logged_at_debug_only(self) -> None:
+        provider, _, _, _ = _make_provider()
+
+        with structlog.testing.capture_logs() as logs:
+            await provider.issue(
+                _principal("auser"), "ami", passphrase=SecretBytes(b"hunter2")
+            )
+
+        by_event = {e["event"]: e for e in logs}
+        assert "dn" not in by_event["x509.linked"]
+        assert "dn" not in by_event["x509.proxy_minted"]
+        assert by_event["x509.proxy_dn"]["dn"] == DN
+        assert by_event["x509.proxy_dn"]["log_level"] == "debug"
+
+    async def test_stores_the_nickname_from_the_minted_proxy(self) -> None:
+        """voms-token-service's nickname (issue #191 — the user's CERN/Rucio
+        account, distinct from their AF unixname) must survive into the
+        Vault record so the redeem endpoint can serve it downstream."""
+        provider, _, store, _ = _make_provider(
+            voms_client=FakeVomsClient(minted(nickname="jdoe"))
+        )
+        principal = _principal("auser")
+
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        record = await store.get_proxy("user-123")
+        assert record is not None
+        assert record.nickname == "jdoe"
+
+    async def test_bad_passphrase_counts_against_rate_limiter_and_stores_nothing(
+        self,
+    ) -> None:
+        provider, _, store, cache = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceBadPassphraseError())
+        )
+        principal = _principal("auser")
+
+        with pytest.raises(VomsServiceBadPassphraseError):
+            await provider.issue(principal, "ami", passphrase=SecretBytes(b"wrong"))
+
+        assert store.records == {}
+        failures = await _failed_unlocks(cache, 50123)
+        assert failures is not None
+        assert failures.count == 1
+
+    async def test_infra_failure_does_not_count_against_rate_limiter(self) -> None:
+        provider, _, store, cache = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceMintError("service down"))
+        )
+        principal = _principal("auser")
+
+        with pytest.raises(VomsServiceMintError):
+            await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        assert store.records == {}
+        assert await _failed_unlocks(cache, 50123) is None
+
+    async def test_rate_limit_is_checked_before_the_service_is_called(self) -> None:
+        cache = CredentialCache(max_failed_unlocks=1)
+        provider, voms_client, _, _ = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceBadPassphraseError()), cache=cache
+        )
+        principal = _principal("auser")
+
+        for _ in range(2):
+            with pytest.raises((VomsServiceBadPassphraseError, UnlockRateLimitError)):
+                await provider.issue(principal, "ami", passphrase=SecretBytes(b"wrong"))
+        calls_after_lockout = len(voms_client.calls)
+        with pytest.raises(UnlockRateLimitError):
+            await provider.issue(principal, "ami", passphrase=SecretBytes(b"wrong"))
+        assert len(voms_client.calls) == calls_after_lockout
+
+    async def test_successful_link_resets_the_rate_limiter(self) -> None:
+        provider, _, _, cache = _make_provider()
+        principal = _principal("auser")
+        await cache.record_failed_unlock(50123)
+
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        assert await _failed_unlocks(cache, 50123) is None
+
+    async def test_posix_identity_required_to_link(self) -> None:
+        provider, voms_client, store, _ = _make_provider()
+        principal = _principal(None, uid=None, gid=None)
+
+        with pytest.raises(PosixIdentityRequiredError):
+            await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        assert voms_client.calls == []
+        assert store.records == {}
+
+    async def test_explicit_passphrase_relinks_even_with_valid_stored_proxy(
+        self,
+    ) -> None:
+        """POSTing a passphrase is a linking act: it must update the stored
+        passphrase even while a valid proxy exists (the user may have just
+        changed their Globus password), rather than short-circuiting on the
+        cache the way a passphrase-less issue() does."""
+        provider, voms_client, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"old-pass"))
+
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"new-pass"))
+
+        assert len(voms_client.calls) == 2
+        link = await store.get_link("user-123")
+        assert link is not None
+        assert link.passphrase is not None
+        assert link.passphrase.get_secret_value() == "new-pass"
+
+    async def test_mint_counter_is_incremented(self) -> None:
+
+        provider, _, _, _ = _make_provider()
+        before = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total") or 0.0
+        await provider.issue(
+            _principal("auser"), "ami", passphrase=SecretBytes(b"hunter2")
+        )
+        after = REGISTRY.get_sample_value("af_mcp_x509_proxy_mints_total")
+        assert after == before + 1
+
+    async def test_concurrent_renewals_single_flight_one_service_mint(self) -> None:
+        """N concurrent passphrase-less issue() calls hitting an expired
+        stored proxy must produce exactly one service mint (issue #94's
+        pattern — this is where thundering herds actually happen, unlike
+        explicit link POSTs, which are deliberate one-off user acts and are
+        NOT deduped so a re-link always reaches the service)."""
+        voms_client = FakeVomsClient(delay=0.01)
+        provider, _, store, _ = _make_provider(voms_client=voms_client)
+        await _seed_link(store)
+        await store.store_proxy(
+            "user-123",
+            pem="OLD PEM",
+            dn=_DN,
+            voms_attributes=_VOMS_ATTRS,
+            not_after=time.time() - 10,
+        )
+        principal = _principal("auser")
+
+        results = await asyncio.gather(
+            *[provider.issue(principal, "ami") for _ in range(5)]
+        )
+
+        assert len(voms_client.calls) == 1
+        assert all(r.payload["proxy_handle"] for r in results)
+
+
+# ---------------------------------------------------------------------------
+# issue() without a passphrase: stored proxy / hands-free renewal
+# ---------------------------------------------------------------------------
+
+
+class TestStoredProxyAndRenewal:
+    async def test_valid_vault_proxy_is_served_without_calling_the_service(
+        self,
+    ) -> None:
+        provider, voms_client, store, _ = _make_provider()
+        await _seed_link(store)
+        await store.store_proxy(
+            "user-123",
+            pem=_PEM,
+            dn=_DN,
+            voms_attributes=_VOMS_ATTRS,
+            not_after=time.time() + 3600,
+        )
+
+        cred = await provider.issue(_principal("auser"), "ami")
+
+        assert voms_client.calls == []
+        assert cred.kind == CredentialKind.X509_PROXY_REDEEM
+
+    async def test_vault_proxy_serves_a_principal_without_posix_identity(self) -> None:
+        """POSIX identity isn't needed just to serve an already-minted
+        credential — same rule as the in-memory cache hit."""
+        provider, _, store, _ = _make_provider()
+        await _seed_link(store)
+        await store.store_proxy(
+            "user-123",
+            pem=_PEM,
+            dn=_DN,
+            voms_attributes=_VOMS_ATTRS,
+            not_after=time.time() + 3600,
+        )
+
+        cred = await provider.issue(_principal(None, uid=None, gid=None), "ami")
+        assert cred.kind == CredentialKind.X509_PROXY_REDEEM
+
+    async def test_expired_proxy_with_stored_link_renews_hands_free(self) -> None:
+        provider, voms_client, store, _ = _make_provider()
+        await _seed_link(store)
+        await store.store_proxy(
+            "user-123",
+            pem="OLD PEM",
+            dn=_DN,
+            voms_attributes=_VOMS_ATTRS,
+            not_after=time.time() - 10,
+        )
+
+        cred = await provider.issue(_principal("auser"), "ami")
+
+        assert len(voms_client.calls) == 1
+        call = voms_client.calls[0]
+        # Renewal identity comes from the stored link, not the live principal.
+        assert call["unixname"] == "auser"
+        assert call["uid"] == 50123
+        assert call["passphrase"].get_secret_value() == "stored-passphrase"
+        record = await store.get_proxy("user-123")
+        assert record is not None
+        assert record.proxy_pem is not None
+        assert record.proxy_pem.get_secret_value() == _PEM
+        assert cred.kind == CredentialKind.X509_PROXY_REDEEM
+
+    async def test_hands_free_renewal_stores_the_renewed_nickname(self) -> None:
+        provider, _, store, _ = _make_provider(
+            voms_client=FakeVomsClient(minted(nickname="jdoe"))
+        )
+        await _seed_link(store)
+        await store.store_proxy(
+            "user-123",
+            pem="OLD PEM",
+            dn=_DN,
+            voms_attributes=_VOMS_ATTRS,
+            not_after=time.time() - 10,
+        )
+
+        await provider.issue(_principal("auser"), "ami")
+
+        record = await store.get_proxy("user-123")
+        assert record is not None
+        assert record.nickname == "jdoe"
+
+    async def test_renewal_bad_passphrase_unlinks_and_raises_needs_unlock(
+        self,
+    ) -> None:
+        """The user changed their Globus password: the stored passphrase is
+        dead weight. Unlink so the portal prompts a re-link."""
+        provider, _, store, cache = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceBadPassphraseError())
+        )
+        await _seed_link(store)
+
+        with pytest.raises(NeedsUnlockError):
+            await provider.issue(_principal("auser"), "ami")
+
+        assert store.deleted == ["user-123"]
+        assert await store.get_link("user-123") is None
+        # A stored-passphrase failure is not a user brute-force attempt.
+        assert await _failed_unlocks(cache, 50123) is None
+
+    async def test_renewal_infra_failure_neither_unlinks_nor_needs_unlock(
+        self,
+    ) -> None:
+        provider, _, store, cache = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceMintError("service down"))
+        )
+        await _seed_link(store)
+
+        with pytest.raises(VomsServiceMintError):
+            await provider.issue(_principal("auser"), "ami")
+
+        assert store.deleted == []
+        assert await store.get_link("user-123") is not None
+        assert await _failed_unlocks(cache, 50123) is None
+
+    async def test_no_link_and_no_passphrase_raises_needs_unlock(self) -> None:
+        provider, voms_client, _, _ = _make_provider()
+
+        with pytest.raises(NeedsUnlockError) as excinfo:
+            await provider.issue(_principal("auser"), "ami")
+
+        assert excinfo.value.unlock_endpoint == "/v1/x509/proxy"
+        assert voms_client.calls == []
+
+    async def test_no_link_and_no_posix_identity_raises_posix_error(self) -> None:
+        """An unlinked principal with no POSIX identity can never complete a
+        link, so say that instead of asking for a passphrase."""
+        provider, _, _, _ = _make_provider()
+
+        with pytest.raises(PosixIdentityRequiredError):
+            await provider.issue(_principal(None, uid=None, gid=None), "ami")
+
+    async def test_second_issue_hits_the_in_memory_cache(self) -> None:
+        provider, voms_client, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        store.records.clear()  # a cache hit must not consult Vault at all
+        cred = await provider.issue(principal, "ami")
+
+        assert len(voms_client.calls) == 1
+        assert cred.kind == CredentialKind.X509_PROXY_REDEEM
+
+
+# ---------------------------------------------------------------------------
+# revoke() in service mode
+# ---------------------------------------------------------------------------
+
+
+class TestRevoke:
+    async def test_revoke_clears_stored_proxy_but_keeps_the_link(self) -> None:
+        """Burning the proxy must not unlink the identity: the passphrase
+        stays so the next issue() renews hands-free."""
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        await provider.revoke(principal, "ami")
+
+        assert await store.get_proxy("user-123") is None
+        assert await store.get_link("user-123") is not None
+
+    async def test_revoke_without_anything_stored_is_a_noop(self) -> None:
+        provider, _, store, _ = _make_provider()
+
+        await provider.revoke(_principal("auser"), "ami")
+
+        assert await store.get_proxy("user-123") is None
+        assert await store.get_link("user-123") is None
+
+
+# ---------------------------------------------------------------------------
+# API response rendering for the redeem credential kind
+# ---------------------------------------------------------------------------
+
+
+class TestToResponse:
+    async def test_redeem_kind_renders_proxy_handle(self) -> None:
+
+        provider, _, _, _ = _make_provider()
+        cred = await provider.issue(
+            _principal("auser"), "ami", passphrase=SecretBytes(b"hunter2")
+        )
+
+        response = _to_response(cred)
+
+        assert response.kind == "x509_proxy_redeem"
+        assert response.proxy_handle == cred.payload["proxy_handle"]
+        assert response.token is None
+
+
+# ---------------------------------------------------------------------------
+# voms_client exposure (the /v1/x509/preflight route proxies through it)
+# ---------------------------------------------------------------------------
+
+
+class TestVomsClientProperty:
+    async def test_exposed_in_service_mode(self) -> None:
+        provider, voms_client, _, _ = _make_provider()
+        assert provider.voms_client is voms_client
+
+
+# ---------------------------------------------------------------------------
+# Custody consent (remember=false): proxy persists, passphrase does not
+# ---------------------------------------------------------------------------
+
+
+class TestCustodyConsent:
+    async def test_remember_false_stores_proxy_but_not_passphrase(self) -> None:
+        provider, voms_client, store, _ = _make_provider()
+
+        await provider.issue(
+            _principal("auser"),
+            "ami",
+            passphrase=SecretBytes(b"hunter2"),
+            remember=False,
+        )
+
+        assert len(voms_client.calls) == 1
+        record = store.records["user-123"]
+        assert record.passphrase is None
+        assert record.unixname == "auser"
+        assert record.proxy_pem is not None
+        # Renewal paths key off get_link — this record must never feed one.
+        assert await store.get_link("user-123") is None
+
+    async def test_remember_defaults_to_true(self) -> None:
+        provider, _, store, _ = _make_provider()
+
+        await provider.issue(
+            _principal("auser"), "ami", passphrase=SecretBytes(b"hunter2")
+        )
+
+        link = await store.get_link("user-123")
+        assert link is not None
+        assert link.passphrase is not None
+
+    async def test_remember_false_bad_passphrase_still_counts_against_limiter(
+        self,
+    ) -> None:
+        provider, _, store, cache = _make_provider(
+            voms_client=FakeVomsClient(VomsServiceBadPassphraseError())
+        )
+
+        with pytest.raises(VomsServiceBadPassphraseError):
+            await provider.issue(
+                _principal("auser"),
+                "ami",
+                passphrase=SecretBytes(b"wrong"),
+                remember=False,
+            )
+
+        assert await _failed_unlocks(cache, 50123) is not None
+        assert store.records == {}
+
+    async def test_remember_false_expired_proxy_needs_unlock_without_unlinking(
+        self,
+    ) -> None:
+        """The bounded consequence the user consented to: after expiry the
+        next issue() prompts a re-link — but the record is NOT deleted
+        eagerly (unlinking stays a deliberate act). Simulated with a mint
+        whose proxy is already past expiry, so the in-memory cache and the
+        Vault record lapse together the way they do in real time."""
+        voms_client = FakeVomsClient(minted(remaining=-10))
+        provider, _, store, _ = _make_provider(voms_client=voms_client)
+        principal = _principal("auser")
+        await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
+        )
+
+        with pytest.raises(NeedsUnlockError) as excinfo:
+            await provider.issue(principal, "ami")
+
+        assert excinfo.value.reason == "not_linked"
+        assert len(voms_client.calls) == 1  # no renewal attempt
+        assert store.deleted == []
+        assert "user-123" in store.records
+
+
+# ---------------------------------------------------------------------------
+# link_status / is_linked across custody modes
+# ---------------------------------------------------------------------------
+
+
+class TestLinkStatus:
+    async def test_auto_renew_while_proxy_valid(self) -> None:
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is True
+        assert status.mode == "auto-renew"
+        record = store.records["user-123"]
+        assert status.proxy_not_after == record.not_after
+        assert await provider.is_linked(principal) is True
+
+    async def test_auto_renew_survives_proxy_expiry(self) -> None:
+        """A stored passphrase keeps the identity linked across proxy
+        expiry — the next issue() renews hands-free."""
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(principal, "ami", passphrase=SecretBytes(b"hunter2"))
+        store.records["user-123"] = store.records["user-123"].model_copy(
+            update={"not_after": time.time() - 10}
+        )
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is True
+        assert status.mode == "auto-renew"
+        assert status.proxy_not_after is None  # no currently-valid proxy
+        assert await provider.is_linked(principal) is True
+
+    async def test_until_expiry_while_proxy_valid(self) -> None:
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
+        )
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is True
+        assert status.mode == "until-expiry"
+        record = store.records["user-123"]
+        assert status.proxy_not_after == record.not_after
+        assert await provider.is_linked(principal) is True
+
+    async def test_until_expiry_reads_unlinked_after_expiry(self) -> None:
+        provider, _, store, _ = _make_provider()
+        principal = _principal("auser")
+        await provider.issue(
+            principal, "ami", passphrase=SecretBytes(b"hunter2"), remember=False
+        )
+        store.records["user-123"] = store.records["user-123"].model_copy(
+            update={"not_after": time.time() - 10}
+        )
+
+        status = await provider.link_status(principal)
+
+        assert status.linked is False
+        assert status.mode is None
+        assert status.proxy_not_after is None
+        assert await provider.is_linked(principal) is False
+
+    async def test_unlinked_when_nothing_stored(self) -> None:
+        provider, _, _, _ = _make_provider()
+
+        status = await provider.link_status(_principal("auser"))
+
+        assert status.linked is False
+        assert status.mode is None
+        assert status.proxy_not_after is None

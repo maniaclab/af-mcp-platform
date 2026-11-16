@@ -8,7 +8,7 @@ Revocation is the same ``TokenRegistry.revoke``/``revoke_all`` an owner's own
 ``DELETE /v1/tokens/{lookup_id}`` uses: it sets ``revoked_at`` on the record,
 which PAT validation checks on every request, so it takes effect on the
 owner's next request. Each revoked token emits a ``token.revoked`` audit
-event with the admin as ``principal_sub`` (the actor) and the owner in
+event with the admin as ``subject`` (the actor) and the owner in
 ``args_summary`` as ``subject=`` -- the same event name the owner-initiated
 route emits, so one query finds every revocation.
 

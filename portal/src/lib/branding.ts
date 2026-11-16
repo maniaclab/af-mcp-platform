@@ -17,6 +17,8 @@ export interface BrandingConfig {
   fullName: string;
   /** Facility/institution name shown in the overview hero and footer. */
   facilityName: string;
+  /** Optional http(s) URL of the facility's website; when valid, the footer links the facility name to it. Empty/absent leaves the name unlinked. */
+  facilityUrl?: string;
   /** Optional `#rrggbb` accent for the light theme. Empty/absent keeps the neutral ink default (see accent.ts). */
   accentColor?: string;
   /** Optional `#rrggbb` accent for the dark theme. Empty/absent derives it from accentColor (see accent.ts). */
@@ -28,6 +30,20 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   fullName: 'AF MCP Platform',
   facilityName: 'Analysis Facility',
 };
+
+/**
+ * Returns *value* when it parses as an http(s) URL, else undefined, so a
+ * misconfigured `javascript:` or `data:` URL is never rendered as a link.
+ */
+export function safeHttpUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Patches every `[data-af-brand]` element in *doc* from *config* — falls
@@ -53,6 +69,22 @@ export function applyBranding(config: BrandingConfig, doc: Document = document):
       el.setAttribute('aria-label', value);
     } else {
       el.textContent = value;
+    }
+  });
+
+  // The `<a>` carries no href in the static markup, so it is plain text until
+  // a valid facilityUrl arrives. External, so it opens in a new tab like the
+  // portal's other external links.
+  const facilityUrl = safeHttpUrl(config.facilityUrl);
+  doc.querySelectorAll<HTMLAnchorElement>('[data-af-brand-link="facilityUrl"]').forEach((a) => {
+    if (facilityUrl) {
+      a.setAttribute('href', facilityUrl);
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+    } else {
+      a.removeAttribute('href');
+      a.removeAttribute('target');
+      a.removeAttribute('rel');
     }
   });
 }

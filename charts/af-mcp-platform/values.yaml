@@ -667,7 +667,7 @@ broker:
   # Per-call usage records emitted as OpenTelemetry LOG records over OTLP
   # (broker usage/otel_events.py), beside the usage store above, which stays
   # authoritative. One record per tool call with audit_id, trace_id,
-  # principal_sub, token_id, service, method, outcome, duration_ms,
+  # subject, token_id, service, method, outcome, duration_ms,
   # result_bytes, result_tokens_est and result_content.<type>.* (the
   # per-content-type breakdown) -- never tool arguments or results.
   # Because these carry the caller's identity, the receiving log backend
@@ -876,6 +876,9 @@ portal:
     fullName: ""
     # Facility/institution name shown in the overview hero and footer.
     facilityName: ""
+    # Optional http(s) URL of the facility's website. When set, the footer
+    # links the facility name to it; empty leaves the name as plain text.
+    facilityUrl: ""
     # Optional accent colour as "#rrggbb", e.g. "#800000". Leave empty to keep
     # the default neutral ink theme; nothing is overridden until you set it.
     accentColor: ""

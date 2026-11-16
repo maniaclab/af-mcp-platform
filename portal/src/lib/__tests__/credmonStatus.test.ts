@@ -110,7 +110,7 @@ describe('credmonNextRunAt', () => {
 });
 
 describe('credmonSyncErrorMessage', () => {
-  it("prefers the broker's detail, with its correlation reference", () => {
+  it("prefers the broker's detail, with its request reference", () => {
     const err = new APIError(
       409,
       'Conflict',

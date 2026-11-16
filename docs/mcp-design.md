@@ -866,7 +866,7 @@ Distributed tracing is never a deployment requirement for a backend.
   a `request_id` field on every log line written while serving that request.
   Bind it once at the HTTP edge (a context variable set by middleware) so tool
   and library code carry it without passing it around. The header is
-  authoritative: the broker sends its own correlation id there on every request
+  authoritative: the broker sends its own request id there on every request
   to a backend. Treat the value as an opaque string of at most 128 characters,
   never as an authentication or authorization input, and forward it only on
   calls made on behalf of the same request. Generate an id only when the header

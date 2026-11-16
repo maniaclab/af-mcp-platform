@@ -80,7 +80,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
             self._log.warning(
                 "htcondor_api.store.unreachable",
                 service=service,
-                user=user,
+                credd_user=user,
                 error=str(exc),
             )
             raise CredentialStoreError("htcondor-api could not be reached.") from exc
@@ -93,7 +93,7 @@ class HTCondorApiCredentialStore(CredentialStoreClient):
             self._log.warning(
                 "htcondor_api.store.failed",
                 service=service,
-                user=user,
+                credd_user=user,
                 upstream_status=resp.status_code,
             )
             raise CredentialStoreError(

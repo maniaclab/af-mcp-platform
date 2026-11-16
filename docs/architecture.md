@@ -102,7 +102,7 @@ each request independently with no session pinning by default.
   terminates it — surfacing as an intermittent `McpError: Session
   terminated` that no single-replica test will ever catch. The broker
   cannot see whether affinity is configured upstream, so it can only warn
-  (`mcp_stateful_multi_replica` in the broker logs) rather than refuse to
+  (`mcp.stateful_multi_replica` in the broker logs) rather than refuse to
   start; the chart's `NOTES.txt` warns at install/upgrade time for the
   same combination.
 
@@ -133,7 +133,7 @@ shared store must be an explicit choice, not a silent degradation:
   `MCP_REPLICA_COUNT > 1` and `SHARED_STATE_URL` is empty, unless
   `ALLOW_PER_REPLICA_STATE=true`. The chart sets `MCP_REPLICA_COUNT` itself;
   non-chart deployments set it by hand. With the escape hatch the broker logs
-  `per_replica_state` at startup and the chart's `NOTES.txt` prints a warning.
+  `shared_state.per_replica_state` at startup and the chart's `NOTES.txt` prints a warning.
 - Upgrading an existing multi-replica release that has no store yet therefore
   needs either a store or `allowPerReplicaState: true` in its values *before*
   the upgrade.
@@ -802,7 +802,7 @@ credential services' own limits (HTCondor on `/v1/credential`, krb5 on
 (`retry_after.py`). On `/mcp`, a `rate_limits` refusal and the same credential
 429 put the wait in the tool error message as
 `Retry-After: N seconds; retry_at: <timestamp>.`. Each of these 429s, on both
-surfaces, also logs one `rate_limit_exceeded` event with the subject, the
+surfaces, also logs one `rate_limit.exceeded` event with the subject, the
 limiter and the wait (see [Observability](observability.md#finding-rate-limit-refusals)).
 
 #### Vault storage layering
@@ -847,13 +847,13 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - response status and latency
 - request ID (propagated in `X-Request-ID` header)
 - calling token (`token_id`): the PAT's public `lookup_id`, `null` for
-  session JWTs — `principal_sub` identifies the user across all their
+  session JWTs — `subject` identifies the user across all their
   tokens, this identifies the specific token, so a leaked PAT's calls can
   be isolated and that one token revoked (never any secret material)
 - resolved VOMS nickname (`nickname`): on x509 proxy-release records, the
   CERN/Rucio account the released proxy authenticates as — the grid identity
   the credential is usable as, distinct from the AF principal in
-  `principal_sub`/`principal_uid`; `null` on every non-x509 record and for a
+  `subject`/`principal_uid`; `null` on every non-x509 record and for a
   proxy whose VOMS attributes carry no nickname (issue maniaclab/af-mcp-platform#199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`

@@ -127,6 +127,23 @@ _DEFAULT_IDENTITY_PROVIDERS = [
 ]
 
 
+# The tier a test belongs to is the directory it sits in (tests/unit,
+# tests/integration, tests/e2e); the marker is derived from that, so no test
+# carries one by hand and `pytest -m unit` / `-m integration` select a
+# directory's worth of tests. docs/testing.md defines the tiers.
+_TIERS = ("unit", "integration", "e2e")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        try:
+            tier = item.path.relative_to(Path(__file__).resolve().parent).parts[0]
+        except ValueError:
+            continue  # another suite's tests (skills/, spikes/) in the same session
+        if tier in _TIERS:
+            item.add_marker(getattr(pytest.mark, tier))
+
+
 class _StubTiktokenEncoding:
     """Deterministic stand-in for a tiktoken Encoding: one token per 4 characters, minimum 1."""
 

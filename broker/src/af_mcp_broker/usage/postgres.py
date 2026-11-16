@@ -18,7 +18,7 @@ error.
 
 Raw rows are bounded by retention: ``rollup_and_prune`` folds rows older than
 the window into the ``af_mcp_usage_daily`` rollup (keyed ``(day,
-principal_sub, service, method, outcome)``, the shape every read uses) and
+subject, service, method, outcome)``, the shape every read uses) and
 deletes them in one statement; their child rows are folded into
 ``af_mcp_usage_daily_content`` (keyed like the daily rollup plus
 ``content_type``) in that same statement, before the delete cascades them away.
@@ -77,7 +77,33 @@ logger = structlog.get_logger(__name__)
 # childless rows a not-yet-updated replica inserts during a rolling deploy --
 # correctly, since that replica measures text only. Parents with
 # result_bytes NULL or 0 are left childless: there is nothing to attribute.
+#
+# The user column is `subject` everywhere (logs, audit records, usage rows);
+# tables created before that carry `principal_sub`, renamed here in every
+# table that has one, guarded like the `tool` rename. A replica still running
+# the previous release writes `principal_sub`, so its inserts fail (and are
+# logged as usage.record_batch_failed with their audit ids) until it is
+# replaced.
 _DDL = """
+DO $$
+DECLARE
+    usage_table TEXT;
+BEGIN
+    FOREACH usage_table IN ARRAY ARRAY[
+        'af_mcp_usage_events', 'af_mcp_usage_daily', 'af_mcp_usage_daily_content'
+    ] LOOP
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = usage_table
+              AND column_name = 'principal_sub'
+        ) THEN
+            EXECUTE format(
+                'ALTER TABLE %I RENAME COLUMN principal_sub TO subject', usage_table
+            );
+        END IF;
+    END LOOP;
+END $$;
 DO $$
 BEGIN
     IF EXISTS (
@@ -92,7 +118,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS af_mcp_usage_events (
     audit_id TEXT PRIMARY KEY,
     request_id TEXT NOT NULL,
-    principal_sub TEXT NOT NULL,
+    subject TEXT NOT NULL,
     service TEXT NOT NULL,
     method TEXT NOT NULL,
     action_type TEXT NOT NULL,
@@ -109,12 +135,12 @@ CREATE TABLE IF NOT EXISTS af_mcp_usage_events (
 ALTER TABLE af_mcp_usage_events ADD COLUMN IF NOT EXISTS token_id TEXT;
 ALTER TABLE af_mcp_usage_events ADD COLUMN IF NOT EXISTS trace_id TEXT;
 CREATE INDEX IF NOT EXISTS af_mcp_usage_events_principal_ts
-    ON af_mcp_usage_events (principal_sub, ts);
+    ON af_mcp_usage_events (subject, ts);
 CREATE INDEX IF NOT EXISTS af_mcp_usage_events_ts
     ON af_mcp_usage_events (ts);
 CREATE TABLE IF NOT EXISTS af_mcp_usage_daily (
     day DATE NOT NULL,
-    principal_sub TEXT NOT NULL,
+    subject TEXT NOT NULL,
     service TEXT NOT NULL,
     method TEXT NOT NULL,
     outcome TEXT NOT NULL,
@@ -122,10 +148,10 @@ CREATE TABLE IF NOT EXISTS af_mcp_usage_daily (
     duration_ms DOUBLE PRECISION NOT NULL,
     result_bytes BIGINT NOT NULL,
     result_tokens_est BIGINT NOT NULL,
-    PRIMARY KEY (day, principal_sub, service, method, outcome)
+    PRIMARY KEY (day, subject, service, method, outcome)
 );
 CREATE INDEX IF NOT EXISTS af_mcp_usage_daily_principal_day
-    ON af_mcp_usage_daily (principal_sub, day);
+    ON af_mcp_usage_daily (subject, day);
 CREATE TABLE IF NOT EXISTS af_mcp_usage_event_content (
     audit_id TEXT NOT NULL REFERENCES af_mcp_usage_events (audit_id) ON DELETE CASCADE,
     content_type TEXT NOT NULL,
@@ -136,7 +162,7 @@ CREATE TABLE IF NOT EXISTS af_mcp_usage_event_content (
 );
 CREATE TABLE IF NOT EXISTS af_mcp_usage_daily_content (
     day DATE NOT NULL,
-    principal_sub TEXT NOT NULL,
+    subject TEXT NOT NULL,
     service TEXT NOT NULL,
     method TEXT NOT NULL,
     outcome TEXT NOT NULL,
@@ -144,10 +170,10 @@ CREATE TABLE IF NOT EXISTS af_mcp_usage_daily_content (
     blocks BIGINT NOT NULL,
     bytes BIGINT NOT NULL,
     tokens_est BIGINT NOT NULL,
-    PRIMARY KEY (day, principal_sub, service, method, outcome, content_type)
+    PRIMARY KEY (day, subject, service, method, outcome, content_type)
 );
 CREATE INDEX IF NOT EXISTS af_mcp_usage_daily_content_principal_day
-    ON af_mcp_usage_daily_content (principal_sub, day);
+    ON af_mcp_usage_daily_content (subject, day);
 INSERT INTO af_mcp_usage_event_content (
     audit_id, content_type, blocks, bytes, tokens_est
 )
@@ -159,16 +185,16 @@ WHERE e.result_bytes > 0
   )
 ON CONFLICT DO NOTHING;
 INSERT INTO af_mcp_usage_daily_content (
-    day, principal_sub, service, method, outcome,
+    day, subject, service, method, outcome,
     content_type, blocks, bytes, tokens_est
 )
-SELECT d.day, d.principal_sub, d.service, d.method, d.outcome,
+SELECT d.day, d.subject, d.service, d.method, d.outcome,
        'text', d.calls, d.result_bytes, d.result_tokens_est
 FROM af_mcp_usage_daily d
 WHERE d.result_bytes > 0
   AND NOT EXISTS (
       SELECT 1 FROM af_mcp_usage_daily_content c
-      WHERE c.day = d.day AND c.principal_sub = d.principal_sub
+      WHERE c.day = d.day AND c.subject = d.subject
         AND c.service = d.service AND c.method = d.method
         AND c.outcome = d.outcome
   )
@@ -177,7 +203,7 @@ ON CONFLICT DO NOTHING;
 
 _INSERT = """
 INSERT INTO af_mcp_usage_events (
-    audit_id, request_id, principal_sub, service, method, action_type,
+    audit_id, request_id, subject, service, method, action_type,
     outcome, ts, duration_ms, result_bytes, result_tokens_est,
     token_id, trace_id
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -198,7 +224,7 @@ _ROLLUP_LOCK_KEY = 0x61666D6375736701
 # The window bound is computed in Python (usage/store.py's window_start) and
 # passed in, so both backends share one definition of "trailing N days". The
 # raw-row predicate is a plain range on ``ts`` (bound = UTC midnight of the
-# window's first day) so the ts / (principal_sub, ts) indexes stay usable;
+# window's first day) so the ts / (subject, ts) indexes stay usable;
 # wrapping ``ts`` in ``(ts AT TIME ZONE 'UTC')::date`` there defeats them.
 # The cast stays in the SELECT list, where it costs nothing.
 _RAW_QUERY = """
@@ -209,7 +235,7 @@ SELECT (ts AT TIME ZONE 'UTC')::date AS day,
        coalesce(sum(result_bytes), 0)::bigint AS result_bytes,
        coalesce(sum(result_tokens_est), 0)::bigint AS result_tokens_est
 FROM af_mcp_usage_events
-WHERE principal_sub = $1 AND ts >= $2
+WHERE subject = $1 AND ts >= $2
 GROUP BY day, service, method, outcome
 """
 
@@ -227,7 +253,7 @@ FROM (
     SELECT day, service, method, outcome,
            calls, duration_ms, result_bytes, result_tokens_est
     FROM af_mcp_usage_daily
-    WHERE principal_sub = $1 AND day >= $3
+    WHERE subject = $1 AND day >= $3
 ) AS merged
 GROUP BY day, service, method, outcome
 ORDER BY day, service, method, outcome
@@ -244,7 +270,7 @@ SELECT (e.ts AT TIME ZONE 'UTC')::date AS day,
        sum(c.tokens_est)::bigint AS tokens_est
 FROM af_mcp_usage_events e
 JOIN af_mcp_usage_event_content c ON c.audit_id = e.audit_id
-WHERE e.principal_sub = $1 AND e.ts >= $2
+WHERE e.subject = $1 AND e.ts >= $2
 GROUP BY day, e.service, e.method, e.outcome, c.content_type
 """
 
@@ -258,13 +284,13 @@ FROM (
     UNION ALL
     SELECT day, service, method, outcome, content_type, blocks, bytes, tokens_est
     FROM af_mcp_usage_daily_content
-    WHERE principal_sub = $1 AND day >= $3
+    WHERE subject = $1 AND day >= $3
 ) AS merged
 GROUP BY day, service, method, outcome, content_type
 """  # noqa: S608 -- interpolates only the module-level constant _CONTENT_RAW_QUERY; request values are bound parameters ($1..$3)
 
 _RAW_SUBJECTS_QUERY = """
-SELECT DISTINCT principal_sub
+SELECT DISTINCT subject
 FROM af_mcp_usage_events
 WHERE ts >= $1
 """
@@ -272,7 +298,7 @@ WHERE ts >= $1
 _LIST_SUBJECTS_QUERY = f"""
 {_RAW_SUBJECTS_QUERY}
 UNION
-SELECT principal_sub FROM af_mcp_usage_daily WHERE day >= $2
+SELECT subject FROM af_mcp_usage_daily WHERE day >= $2
 """  # noqa: S608 -- interpolates only the module-level constant _RAW_SUBJECTS_QUERY; request values are bound parameters ($1, $2)
 
 # Folds every raw row older than $1 into the daily rollup and deletes it in
@@ -287,40 +313,40 @@ _ROLLUP = """
 WITH moved AS (
     DELETE FROM af_mcp_usage_events
     WHERE ts < $1
-    RETURNING audit_id, principal_sub, service, method, outcome, ts,
+    RETURNING audit_id, subject, service, method, outcome, ts,
               duration_ms, result_bytes, result_tokens_est
 ),
 folded_content AS (
     -- Reads the children from the statement's own snapshot, so they are
     -- still visible although the DELETE above cascades them away.
     INSERT INTO af_mcp_usage_daily_content AS dc (
-        day, principal_sub, service, method, outcome,
+        day, subject, service, method, outcome,
         content_type, blocks, bytes, tokens_est
     )
-    SELECT (m.ts AT TIME ZONE 'UTC')::date, m.principal_sub, m.service,
+    SELECT (m.ts AT TIME ZONE 'UTC')::date, m.subject, m.service,
            m.method, m.outcome, c.content_type,
            sum(c.blocks)::bigint, sum(c.bytes)::bigint, sum(c.tokens_est)::bigint
     FROM moved m
     JOIN af_mcp_usage_event_content c ON c.audit_id = m.audit_id
     GROUP BY 1, 2, 3, 4, 5, 6
-    ON CONFLICT (day, principal_sub, service, method, outcome, content_type)
+    ON CONFLICT (day, subject, service, method, outcome, content_type)
     DO UPDATE SET
         blocks = dc.blocks + EXCLUDED.blocks,
         bytes = dc.bytes + EXCLUDED.bytes,
         tokens_est = dc.tokens_est + EXCLUDED.tokens_est
 )
 INSERT INTO af_mcp_usage_daily AS d (
-    day, principal_sub, service, method, outcome,
+    day, subject, service, method, outcome,
     calls, duration_ms, result_bytes, result_tokens_est
 )
-SELECT (ts AT TIME ZONE 'UTC')::date, principal_sub, service, method, outcome,
+SELECT (ts AT TIME ZONE 'UTC')::date, subject, service, method, outcome,
        count(*),
        coalesce(sum(duration_ms), 0),
        coalesce(sum(result_bytes), 0),
        coalesce(sum(result_tokens_est), 0)
 FROM moved
 GROUP BY 1, 2, 3, 4, 5
-ON CONFLICT (day, principal_sub, service, method, outcome) DO UPDATE SET
+ON CONFLICT (day, subject, service, method, outcome) DO UPDATE SET
     calls = d.calls + EXCLUDED.calls,
     duration_ms = d.duration_ms + EXCLUDED.duration_ms,
     result_bytes = d.result_bytes + EXCLUDED.result_bytes,
@@ -380,7 +406,7 @@ class PostgresUsageStore(UsageStore):
         return (
             record.audit_id,
             record.request_id,
-            record.principal_sub,
+            record.subject,
             record.mcp_service,
             record.action,
             record.action_type,
@@ -466,7 +492,7 @@ class PostgresUsageStore(UsageStore):
         rows = await self._require_pool().fetch(
             _LIST_SUBJECTS_QUERY, _utc_midnight(start), start
         )
-        return sorted(row["principal_sub"] for row in rows)
+        return sorted(row["subject"] for row in rows)
 
     async def rollup_and_prune(self, retention_days: int) -> bool:
         """Fold raw rows older than *retention_days* UTC days into the daily rollup.
@@ -495,7 +521,7 @@ class PostgresUsageStore(UsageStore):
             ):
                 return False
             status = await conn.execute(_ROLLUP, cutoff)
-        logger.info("usage_rollup_completed", status=status, cutoff=cutoff.isoformat())
+        logger.info("usage.rollup_completed", status=status, cutoff=cutoff.isoformat())
         return True
 
     async def _rollup_loop(self) -> None:
@@ -505,5 +531,5 @@ class PostgresUsageStore(UsageStore):
             try:
                 await self.rollup_and_prune(self._retention_days)
             except Exception as exc:  # noqa: BLE001 -- retry next interval
-                logger.warning("usage_rollup_failed", error=str(exc))
+                logger.warning("usage.rollup_failed", error=str(exc))
             await asyncio.sleep(self._rollup_interval_seconds)

@@ -1,0 +1,312 @@
+"""Tests for ``usage/postgres.py`` against a REAL ephemeral postgres.
+
+No mocks (repo policy): the session fixture ``initdb``s a throwaway cluster
+into a temp directory, starts it on a random loopback port with unix
+sockets disabled, and tears it down afterwards -- deterministic, offline,
+and exercising the actual SQL (DDL idempotency, ON CONFLICT semantics,
+GROUP BY aggregation) instead of an asyncpg stand-in. The server binaries
+come from the dev feature's ``postgresql`` dependency (pixi.toml).
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
+import asyncpg
+import pytest
+
+from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.audit.measure import ContentMeasure
+from af_mcp_broker.usage import PostgresUsageStore
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+def _record(**overrides: Any) -> AuditRecord:
+    fields: dict[str, Any] = {
+        "subject": "sub-abc",
+        "principal_uid": 1000,
+        "permission": "read_data",
+        "target": "rucio",
+        "action": "rucio_list_dids",
+        "action_type": "read",
+        "args_summary": "scope=...",
+        "timestamp": datetime.now(tz=UTC).timestamp(),
+        "request_id": "req-1",
+        "mcp_service": "rucio",
+        "outcome": "success",
+        "duration_ms": 10.0,
+        "result_bytes": 100,
+        "result_tokens_est": 25,
+        "result_content": {"text": ContentMeasure(blocks=1, bytes=100, tokens_est=25)},
+    }
+    fields.update(overrides)
+    return AuditRecord(**fields)
+
+
+@pytest.fixture
+async def store(postgres_dsn: str) -> AsyncIterator[PostgresUsageStore]:
+    """A started store on the session server, with a clean table per test."""
+    s = PostgresUsageStore(postgres_dsn)
+    await s.start()
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        await conn.execute(
+            "TRUNCATE af_mcp_usage_events, af_mcp_usage_daily, af_mcp_usage_daily_content CASCADE"
+        )
+    finally:
+        await conn.close()
+    yield s
+    await s.aclose()
+
+
+async def test_start_bounds_the_pool_instead_of_asyncpgs_defaults(
+    postgres_dsn: str,
+) -> None:
+    """asyncpg.create_pool()'s own defaults (min_size=10, max_size=10) eagerly
+    open 10 connections per replica regardless of load -- with this store's
+    DSN commonly sharing a small Postgres instance with the maintenance-mode
+    store and a second broker deployment, that exhausted the instance's
+    max_connections during a routine rolling restart (issue: 2026-09-19
+    production incident). start() must request a much smaller pool."""
+    s = PostgresUsageStore(postgres_dsn)
+    await s.start()
+    try:
+        assert s._pool is not None
+        assert s._pool.get_min_size() <= 2
+        assert s._pool.get_max_size() <= 5
+    finally:
+        await s.aclose()
+
+
+async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
+    """start() runs CREATE TABLE/INDEX IF NOT EXISTS -- a second broker
+    start (or a second replica) against the same database must not fail."""
+    first = PostgresUsageStore(postgres_dsn)
+    await first.start()
+    await first.aclose()
+    second = PostgresUsageStore(postgres_dsn)
+    await second.start()
+    await second.aclose()
+
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        assert (
+            await conn.fetchval("SELECT to_regclass('af_mcp_usage_events')") is not None
+        )
+    finally:
+        await conn.close()
+
+
+async def test_start_renames_the_legacy_tool_column(postgres_dsn: str) -> None:
+    """A table whose column is still named `tool` (the Elwood-era schema) is migrated
+    in place by start(): column renamed to `method`, data preserved, and the
+    migration is idempotent (a second start() is a no-op)."""
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        await conn.execute(
+            "DROP TABLE IF EXISTS af_mcp_usage_event_content, af_mcp_usage_events"
+        )
+        await conn.execute(
+            """
+            CREATE TABLE af_mcp_usage_events (
+                audit_id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                principal_sub TEXT NOT NULL,
+                service TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                ts TIMESTAMPTZ NOT NULL,
+                duration_ms DOUBLE PRECISION,
+                result_bytes BIGINT,
+                result_tokens_est BIGINT
+            )
+            """
+        )
+        await conn.execute(
+            "INSERT INTO af_mcp_usage_events VALUES "
+            "('legacy-1', 'req', 'user-a', 'svc', 'old_tool', 'read', "
+            "'success', now(), 1.0, 10, 5)"
+        )
+    finally:
+        await conn.close()
+
+    migrated = PostgresUsageStore(postgres_dsn)
+    await migrated.start()
+    again = PostgresUsageStore(postgres_dsn)
+    await again.start()  # idempotent
+
+    aggs = await migrated.query("user-a", days=1)
+    assert [a.method for a in aggs] == ["old_tool"]
+    await migrated.aclose()
+    await again.aclose()
+
+
+async def test_record_and_query_round_trip(store: PostgresUsageStore) -> None:
+    await store.record(_record())
+    await store.record(
+        _record(
+            audit_id="different",
+            duration_ms=5.0,
+            result_bytes=50,
+            result_tokens_est=5,
+        )
+    )
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.service == "rucio"
+    assert agg.method == "rucio_list_dids"
+    assert agg.outcome == "success"
+    assert agg.day == datetime.now(tz=UTC).date()
+    assert agg.calls == 2
+    assert agg.duration_ms == pytest.approx(15.0)
+    assert agg.result_bytes == 150
+    assert agg.result_tokens_est == 30
+
+
+async def test_same_audit_id_twice_inserts_one_row(
+    store: PostgresUsageStore,
+) -> None:
+    """audit_id is the idempotency key: redelivery of the same record
+    (best-effort metering may hand a record over more than once) is safe by
+    construction via ON CONFLICT DO NOTHING."""
+    record = _record()
+    await store.record(record)
+    await store.record(record)
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 1
+
+
+async def test_null_measurements_count_calls_but_contribute_zero_sums(
+    store: PostgresUsageStore,
+) -> None:
+    await store.record(_record())
+    await store.record(
+        _record(
+            audit_id="unmeasured",
+            duration_ms=None,
+            result_bytes=None,
+            result_tokens_est=None,
+        )
+    )
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+    assert agg.duration_ms == pytest.approx(10.0)
+    assert agg.result_bytes == 100
+    assert agg.result_tokens_est == 25
+
+
+async def test_aggregates_split_by_day_service_method_and_outcome(
+    store: PostgresUsageStore,
+) -> None:
+    yesterday = (datetime.now(tz=UTC) - timedelta(days=1)).timestamp()
+    await store.record(_record(audit_id="a1"))
+    await store.record(_record(audit_id="a2", timestamp=yesterday))
+    await store.record(
+        _record(audit_id="a3", mcp_service="ami", action="ami_list_datasets")
+    )
+    await store.record(_record(audit_id="a4", outcome="error"))
+
+    aggs = await store.query("sub-abc", days=30)
+    keys = {(a.day, a.service, a.method, a.outcome) for a in aggs}
+    today = datetime.now(tz=UTC).date()
+    assert keys == {
+        (today, "rucio", "rucio_list_dids", "success"),
+        (today - timedelta(days=1), "rucio", "rucio_list_dids", "success"),
+        (today, "ami", "ami_list_datasets", "success"),
+        (today, "rucio", "rucio_list_dids", "error"),
+    }
+    assert all(a.calls == 1 for a in aggs)
+
+
+async def test_query_excludes_records_outside_the_trailing_window(
+    store: PostgresUsageStore,
+) -> None:
+    old_ts = (datetime.now(tz=UTC) - timedelta(days=40)).timestamp()
+    await store.record(_record(audit_id="old", timestamp=old_ts))
+    await store.record(_record(audit_id="recent"))
+
+    aggs = await store.query("sub-abc", days=30)
+    assert sum(a.calls for a in aggs) == 1
+    aggs_year = await store.query("sub-abc", days=365)
+    assert sum(a.calls for a in aggs_year) == 2
+
+
+async def test_query_is_scoped_to_the_subject(store: PostgresUsageStore) -> None:
+    await store.record(_record(audit_id="mine"))
+    await store.record(_record(audit_id="theirs", subject="sub-other"))
+
+    aggs = await store.query("sub-abc", days=30)
+    assert sum(a.calls for a in aggs) == 1
+
+
+async def test_list_subjects_returns_distinct_subjects_in_window(
+    store: PostgresUsageStore,
+) -> None:
+    await store.record(_record(subject="alice"))
+    await store.record(_record(subject="bob", audit_id="audit-2"))
+    await store.record(_record(subject="alice", audit_id="audit-3"))
+
+    subjects = await store.list_subjects(days=30)
+
+    assert sorted(subjects) == ["alice", "bob"]
+
+
+async def test_record_many_writes_every_row(store: PostgresUsageStore) -> None:
+    await store.record_many(
+        [_record(audit_id=f"id-{i}", result_bytes=10) for i in range(5)]
+    )
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 5
+    assert agg.result_bytes == 50
+
+
+async def test_record_many_with_no_records_is_a_no_op(
+    store: PostgresUsageStore,
+) -> None:
+    await store.record_many([])
+
+    assert await store.query("sub-abc", days=30) == []
+
+
+async def test_record_many_dedups_a_repeated_audit_id_within_a_batch(
+    store: PostgresUsageStore,
+) -> None:
+    record = _record()
+    await store.record_many([record, record, _record(audit_id="other")])
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+
+
+async def test_record_many_dedups_audit_ids_across_batches(
+    store: PostgresUsageStore,
+) -> None:
+    record = _record()
+    await store.record_many([record])
+    await store.record_many([record, _record(audit_id="other")])
+    await store.record(record)
+
+    (agg,) = await store.query("sub-abc", days=30)
+    assert agg.calls == 2
+
+
+async def test_record_many_is_all_or_nothing_when_one_row_is_rejected(
+    store: PostgresUsageStore,
+) -> None:
+    """executemany runs the batch in one implicit transaction: a row that
+    violates a constraint (NULL subject) rolls back its siblings too.
+    The pipeline-side sink accounts for this by counting every row of a
+    failed batch."""
+    batch = [_record(audit_id="good"), _record(audit_id="bad", subject=None)]
+
+    with pytest.raises(asyncpg.PostgresError):
+        await store.record_many(batch)
+
+    assert await store.query("sub-abc", days=30) == []

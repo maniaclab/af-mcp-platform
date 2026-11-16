@@ -12,7 +12,9 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 <footer class="af-footer" aria-label="Site footer">
   <div class="af-wrap af-footer__in">
     <span
-      ><span data-af-brand="facilityName">{DEFAULT_BRANDING.facilityName}</span> · MCP Platform</span
+      ><a data-af-brand-link="facilityUrl" class="af-footer__facility"
+        ><span data-af-brand="facilityName">{DEFAULT_BRANDING.facilityName}</span></a
+      > · MCP Platform</span
     >
     <span>v{appVersion}</span>
     <a href="/design/" class="af-footer__link">Design</a>
@@ -46,6 +48,15 @@ const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
   .af-footer__link {
     color: inherit;
     text-underline-offset: 3px;
+  }
+  .af-footer__facility {
+    color: inherit;
+  }
+  .af-footer__facility[href] {
+    text-underline-offset: 3px;
+  }
+  .af-footer__facility[href]:hover {
+    color: var(--color-af-text);
   }
   .af-footer__link:hover {
     color: var(--color-af-text);

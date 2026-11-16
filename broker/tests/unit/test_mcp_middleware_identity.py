@@ -1,0 +1,848 @@
+from __future__ import annotations
+
+import json
+import time
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
+
+import pytest
+import structlog
+from broker_state_helpers import asgi_auth_middleware
+from conftest import RaisingTokenRegistryBackend, make_claims
+from fastmcp.exceptions import AuthorizationError
+from mcp_middleware_identity_support import (
+    _InnerApp,
+    _run,
+)
+from prometheus_client import REGISTRY
+
+from af_mcp_broker.maintenance import (
+    InMemoryMaintenanceModeStore,
+    MaintenanceModeStore,
+    MaintenanceState,
+)
+from af_mcp_broker.mcp.middleware import identity_mw
+from af_mcp_broker.mcp.middleware.identity_mw import (
+    AsgiAuthMiddleware,
+    IdentityMiddleware,
+)
+from af_mcp_broker.mcp.middleware.maintenance_mw import AsgiMaintenanceMiddleware
+from af_mcp_broker.pat import mint_pat
+from af_mcp_broker.principal_cache import (
+    InMemoryPrincipalCacheBackend,
+    PrincipalCache,
+)
+from af_mcp_broker.principal_directory import (
+    PrincipalAttributes,
+    PrincipalDirectory,
+    PrincipalDisabledError,
+)
+from af_mcp_broker.token_registry import (
+    InMemoryTokenRegistryBackend,
+    TokenRecord,
+    TokenRegistryBackend,
+)
+
+if TYPE_CHECKING:
+    from af_mcp_broker.config import Settings
+
+
+def _http_scope(headers: dict[str, str] | None = None) -> dict[str, Any]:
+    headers = headers or {}
+    return {
+        "type": "http",
+        "headers": [
+            (k.lower().encode("latin-1"), v.encode("latin-1"))
+            for k, v in headers.items()
+        ],
+    }
+
+
+def _status(messages: list[dict[str, Any]]) -> int:
+    return next(m["status"] for m in messages if m["type"] == "http.response.start")
+
+
+def _header(messages: list[dict[str, Any]], name: str) -> str | None:
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    for key, value in start["headers"]:
+        if key.decode("latin-1").lower() == name.lower():
+            return value.decode("latin-1")
+    return None
+
+
+def _body(messages: list[dict[str, Any]]) -> bytes:
+    return b"".join(m["body"] for m in messages if m["type"] == "http.response.body")
+
+
+async def test_valid_bearer_stashes_principal_and_calls_inner_app(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    principal = inner.scope["state"]["principal"]
+    assert principal.unixname == "auser"
+    assert principal.uid == 50123
+    assert _status(messages) == 200
+
+
+async def test_missing_header_rejected_with_genuine_401(settings):
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings)
+
+    messages = await _run(middleware, _http_scope())
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert _header(messages, "www-authenticate") == "Bearer"
+    body = json.loads(_body(messages))
+    assert body["detail"] == "Missing Authorization: Bearer <token> header"
+
+
+async def test_non_bearer_scheme_rejected_with_genuine_401(settings):
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings)
+
+    messages = await _run(middleware, _http_scope({"authorization": "Basic deadbeef"}))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert _header(messages, "www-authenticate") == "Bearer"
+
+
+async def test_invalid_signature_rejected_with_vague_message_leaking_nothing(
+    settings, sig_key, enc_key, prime_jwks
+):
+    # Signing key is never published to the JWKS the middleware sees -> the
+    # token's signature cannot be verified.
+    prime_jwks([enc_key.jwk])
+    token = sig_key.sign(make_claims())
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert _header(messages, "www-authenticate") == "Bearer"
+    body = json.loads(_body(messages))
+    detail = body["detail"]
+    assert detail == "Invalid bearer token"
+    # The entire point of the vague-message requirement: no claim name,
+    # issuer/audience, or JWKS/kid detail leaks into the client-visible body.
+    for leaky in (
+        "kid",
+        "sig-key",
+        "enc-key",
+        settings.oidc_issuer,
+        settings.oidc_audience,
+        "JWKS",
+        "signature",
+    ):
+        assert leaky not in detail
+
+
+async def test_expired_token_rejected_with_actionable_portal_message(
+    settings, sig_key, prime_jwks
+):
+    prime_jwks([sig_key.jwk])
+    now = int(time.time())
+    token = sig_key.sign(make_claims(iat=now - 600, exp=now - 300))
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert _header(messages, "www-authenticate") == "Bearer"
+    body = json.loads(_body(messages))
+    detail = body["detail"]
+    assert "expired" in detail
+    assert f"{settings.portal_url.rstrip('/')}/tokens" in detail
+
+
+async def test_wrong_audience_token_gets_the_vague_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """A missing audience is stated explicitly on /v1 but must not be on /mcp,
+    where every non-expiry JWT failure collapses into the same vague 401."""
+    principal_cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(aud="some-other-service"))
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert _header(messages, "www-authenticate") == "Bearer"
+    assert json.loads(_body(messages)) == {"detail": "Invalid bearer token"}
+
+
+async def test_unavailable_directory_gets_a_503_not_a_401(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.unavailable_subjects.add("user-123")
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 503
+    assert _header(messages, "www-authenticate") is None
+    detail = json.loads(_body(messages))["detail"]
+    assert "authorization directory is temporarily unavailable" in detail
+
+
+async def test_dev_bypass_active_builds_principal_without_checking_headers(settings):
+    dev_settings = settings.model_copy(
+        update={
+            "dev_insecure_principal": json.dumps(
+                {"uid": 1000, "gid": 1000, "unixname": "devuser", "groups": ["atlas"]}
+            ),
+            "oidc_issuer": "http://localhost:8081/realms/x",
+        }
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, dev_settings)
+
+    # No Authorization header at all -- the bypass must not even look.
+    messages = await _run(middleware, _http_scope())
+
+    assert inner.called
+    principal = inner.scope["state"]["principal"]
+    assert principal.unixname == "devuser"
+    assert principal.groups == ["atlas"]
+    assert _status(messages) == 200
+
+
+async def test_dev_bypass_refuses_non_local_issuer(settings):
+    """Defense-in-depth: app.py's lifespan already refuses to start in this
+    configuration, but this middleware must fail closed too if that
+    invariant were ever violated some other way (e.g. exercised directly in
+    a test). A server misconfiguration, not a client-fixable 401."""
+    dev_settings = settings.model_copy(
+        update={
+            "dev_insecure_principal": json.dumps(
+                {"uid": 1000, "gid": 1000, "unixname": "devuser"}
+            ),
+            "oidc_issuer": "https://auth.example.org/realms/example",
+        }
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, dev_settings)
+
+    with pytest.raises(RuntimeError):
+        await _run(middleware, _http_scope())
+    assert not inner.called
+
+
+async def test_valid_bearer_binds_request_id_and_subject_to_structlog_context(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Issue #281: /mcp requests never pass through /v1's FastAPI middleware
+    chain (they're handled entirely by the mounted aggregator sub-app), so
+    AsgiAuthMiddleware is the only place that can bind a request_id for
+    this surface -- and the natural place to bind subject once a JWT
+    resolves, alongside the JWT/PAT/dev-bypass branches it already covers."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings, principal_cache=principal_cache)
+    structlog.contextvars.clear_contextvars()
+
+    await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    bound = structlog.contextvars.get_contextvars()
+    assert bound["subject"] == "user-123"
+    assert bound["request_id"]
+
+
+async def test_request_id_bound_even_when_auth_fails(settings):
+    """A rejected caller still gets a request_id -- just no subject,
+    since none was ever established."""
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings)
+    structlog.contextvars.clear_contextvars()
+
+    messages = await _run(middleware, _http_scope())
+
+    assert _status(messages) == 401
+    bound = structlog.contextvars.get_contextvars()
+    assert bound["request_id"]
+    assert "subject" not in bound
+
+
+async def test_dev_bypass_binds_subject_to_structlog_context(settings):
+    dev_settings = settings.model_copy(
+        update={
+            "dev_insecure_principal": json.dumps(
+                {"uid": 1000, "gid": 1000, "unixname": "devuser", "groups": ["atlas"]}
+            ),
+            "oidc_issuer": "http://localhost:8081/realms/x",
+        }
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, dev_settings)
+    structlog.contextvars.clear_contextvars()
+
+    await _run(middleware, _http_scope())
+
+    assert structlog.contextvars.get_contextvars()["subject"] == "dev-insecure:devuser"
+
+
+async def test_valid_pat_binds_subject_to_structlog_context(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["atlas"]
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+    structlog.contextvars.clear_contextvars()
+
+    await _run(middleware, _http_scope({"authorization": f"Bearer {plaintext}"}))
+
+    assert structlog.contextvars.get_contextvars()["subject"] == "user-123"
+
+
+# ---------------------------------------------------------------------------
+# JWT validation reads no token registry: /mcp accepts a valid JWT even when
+# the PAT backend raises on every call.
+# ---------------------------------------------------------------------------
+
+
+async def test_valid_jwt_allowed_through_mcp_path_with_a_registry_that_raises(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims(jti="any-jti"))
+
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner,
+        settings,
+        pat_backend=RaisingTokenRegistryBackend(),
+        principal_cache=principal_cache,
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) == 200
+
+
+# ---------------------------------------------------------------------------
+# Identity PAT recognition on /mcp (issue #144 step 2a). A non-mcp_pat_
+# bearer always falls through to the existing JWT path above, unchanged
+# (covered by every test above this section, all still passing unmodified).
+# ---------------------------------------------------------------------------
+
+
+async def _pat_principal_cache_and_token(
+    *, groups: list[str] | None = None
+) -> tuple[InMemoryTokenRegistryBackend, str, Any]:
+    """Build a PAT backend + minted plaintext bearer + backing PrincipalCache.
+
+    Shared setup for tests that exercise a real PAT round trip through
+    AsgiAuthMiddleware (unlike test_malformed_pat_rejected_with_vague_401/
+    test_unknown_pat_lookup_id_rejected, which deliberately use a directory
+    that must never be called -- those keep their own inline setup). Returns
+    ``(backend, plaintext, principal_cache)``.
+    """
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            return PrincipalAttributes(
+                uid=50123,
+                gid=5000,
+                unixname="auser",
+                groups=list(groups or []),
+                email="",
+            )
+
+    backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="test-token",
+            created_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    principal_cache = PrincipalCache(
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    return backend, plaintext, principal_cache
+
+
+async def test_valid_pat_stashes_principal_and_calls_inner_app(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["atlas"]
+    )
+
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert inner.called
+    principal = inner.scope["state"]["principal"]
+    assert principal.subject == "user-123"
+    assert principal.uid == 50123
+    assert _status(messages) == 200
+
+
+async def test_pat_of_user_disabled_after_cache_warmed_gets_vague_401(
+    settings, monkeypatch
+):
+    """Issue #336: a valid, unexpired, unrevoked PAT stops working on /mcp
+    within one principal-cache refresh once its owner is disabled."""
+
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["atlas"]
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+    scope = {"authorization": f"Bearer {plaintext}"}
+    assert _status(await _run(middleware, _http_scope(scope))) == 200
+
+    async def disabled(principal_id: str):
+        raise PrincipalDisabledError(principal_id)
+
+    monkeypatch.setattr(principal_cache._directory, "resolve", disabled)
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
+    inner.called = False
+    messages = await _run(middleware, _http_scope(scope))
+
+    assert not inner.called
+    assert _status(messages) == 401
+    assert json.loads(_body(messages))["detail"] == "Invalid bearer token"
+
+
+async def test_pat_shaped_bearer_rejected_when_pat_support_not_configured(
+    settings,
+):
+    """No pat_backend/principal_cache wired in (e.g. KEYCLOAK_ADMIN_CLIENT_ID
+    unset) -- a mcp_pat_... bearer must be rejected the same vague way as any
+    other invalid credential, not crash."""
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, settings)
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": "Bearer mcp_pat_abc123_secretvalue"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+    body = json.loads(_body(messages))
+    assert body["detail"] == "Invalid bearer token"
+
+
+async def test_malformed_pat_rejected_with_vague_401(settings):
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            raise AssertionError("must not be called for a malformed PAT")
+
+    backend = InMemoryTokenRegistryBackend()
+    principal_cache = PrincipalCache(
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": "Bearer mcp_pat_missing_secret_part"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+
+
+async def test_unknown_pat_lookup_id_rejected(settings):
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            raise AssertionError("must not be called for an unknown lookup_id")
+
+    backend = InMemoryTokenRegistryBackend()  # never populated
+    plaintext, _, _ = mint_pat()
+    principal_cache = PrincipalCache(
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+
+
+async def test_expired_pat_rejected_with_actionable_portal_message(settings):
+
+    class _FakeDirectory(PrincipalDirectory):
+        async def resolve(self, principal_id: str) -> PrincipalAttributes:
+            return PrincipalAttributes(uid=1, gid=1, unixname="u", groups=[], email="")
+
+    backend = InMemoryTokenRegistryBackend()
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="test-token",
+            created_at=time.time() - 7200,
+            expires_at=time.time() - 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    principal_cache = PrincipalCache(
+        _FakeDirectory(),
+        backend=InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=1000.0,
+        max_staleness_seconds=3600.0,
+        heartbeat_interval_seconds=3600.0,
+    )
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 401
+    body = json.loads(_body(messages))
+    assert "expired" in body["detail"]
+    assert f"{settings.portal_url.rstrip('/')}/tokens" in body["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Maintenance mode enforcement on /mcp (Task C7) -- AsgiMaintenanceMiddleware,
+# installed inside AsgiAuthMiddleware so it sees the principal resolved for
+# both JWT and PAT bearers. Fails open on store-unavailability, exactly like
+# /v1's require_not_in_maintenance (test_maintenance_v1_enforcement.py) --
+# same module-level metrics.maintenance_store_unavailable_total counter.
+# ---------------------------------------------------------------------------
+
+
+def _gated(
+    inner: Any,
+    store: MaintenanceModeStore,
+    settings: Settings,
+    pat_backend: TokenRegistryBackend | None = None,
+    principal_cache: PrincipalCache | None = None,
+) -> AsgiAuthMiddleware:
+    """Compose the /mcp ASGI stack the way ``build_asgi_middleware`` does: identity outermost, maintenance inside it."""
+    return asgi_auth_middleware(
+        AsgiMaintenanceMiddleware(inner, settings, store),
+        settings,
+        pat_backend,
+        principal_cache,
+    )
+
+
+def _store_unavailable_count() -> float:
+    # No labels on this counter -- see metrics.py's maintenance_store_unavailable_total.
+    return (
+        REGISTRY.get_sample_value("af_mcp_maintenance_store_unavailable_total") or 0.0
+    )
+
+
+class _BrokenMaintenanceModeStore(MaintenanceModeStore):
+    """Store double whose ``get()`` raises, simulating a Vault/Postgres outage."""
+
+    async def start(self) -> None:
+        """Nothing to acquire."""
+
+    async def aclose(self) -> None:
+        """Nothing to release."""
+
+    async def get(self) -> MaintenanceState:
+        raise RuntimeError("maintenance store unreachable (test)")
+
+    async def set(self, state: MaintenanceState) -> None:
+        raise AssertionError("not exercised by this test")
+
+
+async def test_mcp_blocks_non_admin_jwt_during_maintenance(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(
+            enabled=True, reason="down for updates", enabled_by="a", enabled_at=1.0
+        )
+    )
+
+    inner = _InnerApp()
+    middleware = _gated(inner, store, settings, principal_cache=principal_cache)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 503
+    body = json.loads(_body(messages))
+    assert "maintenance mode" in body["detail"]
+    assert "down for updates" in body["detail"]
+
+
+async def test_mcp_blocks_non_admin_pat_during_maintenance(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token()
+
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(enabled=True, reason="r", enabled_by="a", enabled_at=1.0)
+    )
+
+    inner = _InnerApp()
+    middleware = _gated(
+        inner, store, settings, pat_backend=backend, principal_cache=principal_cache
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 503
+
+
+async def test_mcp_allows_admin_during_maintenance(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    directory.groups_by_subject["user-123"] = ["af-admins"]
+    admin_settings = settings.model_copy(update={"admin_group": "af-admins"})
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    store = InMemoryMaintenanceModeStore()
+    await store.set(
+        MaintenanceState(enabled=True, reason="r", enabled_by="a", enabled_at=1.0)
+    )
+
+    inner = _InnerApp()
+    middleware = _gated(inner, store, admin_settings, principal_cache=principal_cache)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) != 503
+    assert _status(messages) == 200
+
+
+async def test_mcp_not_blocked_when_maintenance_disabled(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    store = InMemoryMaintenanceModeStore()  # disabled by default
+
+    inner = _InnerApp()
+    middleware = _gated(inner, store, settings, principal_cache=principal_cache)
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) == 200
+
+
+async def test_mcp_non_admin_not_blocked_when_store_unavailable(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Store-unavailability decision: fail OPEN, exactly matching /v1's
+    require_not_in_maintenance -- see that function's docstring and
+    test_maintenance_v1_enforcement.py's analogous test."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    inner = _InnerApp()
+    middleware = _gated(
+        inner, _BrokenMaintenanceModeStore(), settings, principal_cache=principal_cache
+    )
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) == 200
+
+
+async def test_mcp_store_unavailable_is_logged_and_shares_v1s_counter(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    """Same module-level Counter as /v1's require_not_in_maintenance -- this
+    just confirms /mcp's failure path increments it too, not a second one."""
+    principal_cache, directory = static_principal_cache
+    directory.posix_by_subject["user-123"] = {"uid": 50123, "unixname": "auser"}
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    inner = _InnerApp()
+    middleware = _gated(
+        inner, _BrokenMaintenanceModeStore(), settings, principal_cache=principal_cache
+    )
+
+    before = _store_unavailable_count()
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert _status(messages) == 200
+    assert _store_unavailable_count() == before + 1
+
+
+async def test_maintenance_middleware_fails_closed_without_a_stashed_principal(
+    settings,
+):
+    """Installed outside AsgiAuthMiddleware there is no principal to judge;
+    that is a wiring error, never a reason to wave the request through."""
+    inner = _InnerApp()
+    middleware = AsgiMaintenanceMiddleware(
+        inner, settings, InMemoryMaintenanceModeStore()
+    )
+
+    with pytest.raises(RuntimeError, match="AsgiAuthMiddleware to run first"):
+        await _run(middleware, _http_scope())
+
+    assert not inner.called
+
+
+# ---------------------------------------------------------------------------
+# IdentityMiddleware -- a thin hand-off inside FastMCP's own middleware
+# pipeline. It does no JWT validation; it only republishes the Principal
+# AsgiAuthMiddleware already stashed on the ASGI scope (reachable here via
+# fastmcp's get_http_request().state) as FastMCP Context state, and fails
+# closed if nothing was stashed.
+# ---------------------------------------------------------------------------
+
+
+class _FakeFastMCPContext:
+    """Duck-types just enough of fastmcp.Context for IdentityMiddleware."""
+
+    def __init__(self) -> None:
+        self._state: dict[str, Any] = {}
+
+    async def set_state(
+        self, key: str, value: Any, *, serializable: bool = True
+    ) -> None:
+        self._state[key] = value
+
+    async def get_state(self, key: str) -> Any:
+        return self._state.get(key)
+
+
+class _FakeMiddlewareContext:
+    def __init__(self, fastmcp_context: _FakeFastMCPContext | None) -> None:
+        self.fastmcp_context = fastmcp_context
+
+
+async def _call_next(context: Any) -> str:
+    return "ok"
+
+
+def _set_stashed_principal(monkeypatch: pytest.MonkeyPatch, principal: Any) -> None:
+    """AsgiAuthMiddleware stashes the Principal on scope["state"]; fastmcp's
+    get_http_request() is the reader-side equivalent of that scope --
+    patch it directly rather than building a real ASGI request."""
+    fake_request = SimpleNamespace(state=SimpleNamespace(principal=principal))
+    monkeypatch.setattr(identity_mw, "get_http_request", lambda: fake_request)
+
+
+async def test_on_request_republishes_stashed_principal_as_context_state(
+    settings, make_principal, monkeypatch
+):
+    principal = make_principal(unixname="auser", uid=50123)
+    _set_stashed_principal(monkeypatch, principal)
+
+    mw = IdentityMiddleware()
+    fake_ctx = _FakeFastMCPContext()
+    context = _FakeMiddlewareContext(fake_ctx)
+
+    result = await mw.on_request(context, _call_next)
+
+    assert result == "ok"
+    assert await fake_ctx.get_state("principal") is principal
+
+
+async def test_on_request_fails_closed_when_nothing_was_stashed(settings, monkeypatch):
+    """Should never happen in the real app -- AsgiAuthMiddleware always runs
+    first and never calls into this pipeline without a validated Principal.
+    Guards against a future embedding that forgets to install it."""
+    fake_request = SimpleNamespace(state=SimpleNamespace())
+    monkeypatch.setattr(identity_mw, "get_http_request", lambda: fake_request)
+
+    mw = IdentityMiddleware()
+    context = _FakeMiddlewareContext(_FakeFastMCPContext())
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_request(context, _call_next)
+
+
+async def test_missing_fastmcp_context_fails_closed(settings, monkeypatch):
+    mw = IdentityMiddleware()
+    context = _FakeMiddlewareContext(None)
+
+    with pytest.raises(AuthorizationError):
+        await mw.on_request(context, _call_next)

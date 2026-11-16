@@ -69,7 +69,7 @@ export function credmonNextRunAt(status: CredmonStatus): number | null {
 
 /**
  * User-facing message for a failed POST /v1/admin/credmon/sync. The broker's
- * own `detail` (with its correlation reference) is preferred; the canned
+ * own `detail` (with its request reference) is preferred; the canned
  * sentences cover a response body that isn't `{"detail": ...}` (e.g. an
  * HTML error page from a proxy hop).
  */

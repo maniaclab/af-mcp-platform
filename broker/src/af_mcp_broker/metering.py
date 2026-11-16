@@ -108,7 +108,7 @@ def _measure_into(
         metrics.metering_worker_errors_total.inc()
         metrics.metering_records_missing_measurements_total.inc()
         logger.warning(
-            "metering_measurement_failed", audit_id=record.audit_id, error=str(exc)
+            "metering.measurement_failed", audit_id=record.audit_id, error=str(exc)
         )
 
 
@@ -154,7 +154,7 @@ class InProcessMeteringBackend(MeteringBackend):
         # Items are (record, result, enqueued_at, log_context) tuples --
         # enqueued_at is a time.monotonic() timestamp feeding the queue-delay
         # gauge, log_context the submitting request's structlog contextvars
-        # (correlation_id, subject), which the worker task does not inherit
+        # (request_id, subject), which the worker task does not inherit
         # -- or the drain sentinel.
         self._settings = settings
         self.usage_store = usage_store
@@ -249,9 +249,9 @@ class InProcessMeteringBackend(MeteringBackend):
                 # operator reconstruct the lost line from usage/traces.
                 metrics.metering_worker_errors_total.inc()
                 logger.exception(
-                    "metering_audit_write_failed",
+                    "metering.audit_write_failed",
                     audit_id=record.audit_id,
-                    principal_sub=record.principal_sub,
+                    subject=record.subject,
                     target=record.target,
                     action=record.action,
                     outcome=record.outcome,

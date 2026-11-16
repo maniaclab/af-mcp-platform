@@ -81,6 +81,7 @@ from af_mcp_broker.broker_state import get_broker_state, get_state_settings
 from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
+from af_mcp_broker.logging import current_request_id
 from af_mcp_broker.pat import mint_pat
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.retry_after import RateLimiter
@@ -240,7 +241,7 @@ async def audit_token_action(
 ) -> None:
     await write_audit(
         AuditRecord(
-            principal_sub=principal.subject,
+            subject=principal.subject,
             principal_uid=principal.uid,
             permission="tokens",
             target="mcp-gateway",
@@ -248,7 +249,8 @@ async def audit_token_action(
             action_type="state_change",
             args_summary=args_summary,
             timestamp=time.time(),
-            request_id=lookup_id,
+            request_id=current_request_id(),
+            token_id=lookup_id,
             audit_id=lookup_id,
         )
     )
@@ -318,8 +320,8 @@ async def mint_token(
     if body.never_expires:
         expires_at: float | None = None
         logger.warning(
-            "pat_minted_without_expiry",
-            principal_id=principal.subject,
+            "tokens.pat_minted_without_expiry",
+            subject=principal.subject,
             lookup_id=lookup_id,
         )
     else:
@@ -350,7 +352,7 @@ async def mint_token(
         )
     except DuplicateNameError as exc:
         logger.warning(
-            "token_mint_duplicate_name", principal_id=principal.subject, name=name
+            "tokens.mint_duplicate_name", subject=principal.subject, name=name
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)

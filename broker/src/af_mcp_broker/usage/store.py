@@ -165,7 +165,7 @@ class InMemoryUsageStore(UsageStore):
             return
         day = datetime.fromtimestamp(record.timestamp, tz=UTC).date()
         key = (
-            record.principal_sub,
+            record.subject,
             day,
             record.mcp_service,
             record.action,

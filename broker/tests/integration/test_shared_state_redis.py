@@ -1,0 +1,202 @@
+"""Integration tests for ``RedisSharedState`` against a real redis server.
+
+These exercise the same client path an operator's redis, valkey, dragonfly or
+keydb instance would, since they all speak the redis protocol. The server is
+started by the ``shared_state_url`` fixture; nothing here is mocked.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from typing import TYPE_CHECKING
+
+import pytest
+
+from af_mcp_broker.mcp.cache_invalidation import LIST_CACHE_INVALIDATION_CHANNEL
+from af_mcp_broker.shared_state import (
+    RedisSharedState,
+    build_shared_state,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+@pytest.fixture
+async def store(shared_state_url: str) -> AsyncIterator[RedisSharedState]:
+    backend = RedisSharedState(shared_state_url, key_prefix="")
+    yield backend
+    await backend.close()
+
+
+@pytest.fixture
+def key() -> str:
+    # The server outlives each test, so every test gets its own key.
+    return f"test:{uuid.uuid4()}"
+
+
+async def test_incr_window_counts_and_reports_ttl(
+    store: RedisSharedState, key: str
+) -> None:
+    first = await store.incr_window(key, 60)
+    second = await store.incr_window(key, 60)
+    assert (first.count, second.count) == (1, 2)
+    assert 0 < second.ttl_seconds <= 60
+
+
+async def test_window_expires(store: RedisSharedState, key: str) -> None:
+    await store.incr_window(key, 1)
+    await asyncio.sleep(1.2)
+    assert await store.get_window(key) is None
+    assert (await store.incr_window(key, 1)).count == 1
+
+
+async def test_get_window_does_not_count(store: RedisSharedState, key: str) -> None:
+    assert await store.get_window(key) is None
+    await store.incr_window(key, 60)
+    window = await store.get_window(key)
+    assert window is not None
+    assert window.count == 1
+
+
+async def test_delete_clears_the_counter(store: RedisSharedState, key: str) -> None:
+    await store.incr_window(key, 60)
+    await store.delete(key)
+    assert await store.get_window(key) is None
+
+
+async def test_two_clients_share_one_counter(shared_state_url: str, key: str) -> None:
+    """Two replicas are two clients on one store: their counts add up."""
+    replica_a = RedisSharedState(shared_state_url)
+    replica_b = RedisSharedState(shared_state_url)
+    try:
+        await replica_a.incr_window(key, 60)
+        assert (await replica_b.incr_window(key, 60)).count == 2
+    finally:
+        await replica_a.close()
+        await replica_b.close()
+
+
+async def test_concurrent_increments_are_atomic(
+    store: RedisSharedState, key: str
+) -> None:
+    windows = await asyncio.gather(*(store.incr_window(key, 60) for _ in range(50)))
+    assert sorted(w.count for w in windows) == list(range(1, 51))
+
+
+async def test_counter_without_expiry_is_repaired(
+    store: RedisSharedState, key: str
+) -> None:
+    """A key that somehow lost its TTL must not become a permanent lockout."""
+    await store._client.set(key, 7)
+    window = await store.incr_window(key, 60)
+    assert window.count == 8
+    assert 0 < window.ttl_seconds <= 60
+
+
+async def test_prefix_namespaces_keys(shared_state_url: str, key: str) -> None:
+    a = RedisSharedState(shared_state_url, key_prefix="a:")
+    b = RedisSharedState(shared_state_url, key_prefix="b:")
+    try:
+        await a.incr_window(key, 60)
+        assert await b.get_window(key) is None
+    finally:
+        await a.close()
+        await b.close()
+
+
+async def test_publish_reaches_a_subscriber_on_another_client(
+    shared_state_url: str, key: str
+) -> None:
+    """Replicas are separate clients on one store: a publish on A reaches B."""
+    replica_a = RedisSharedState(shared_state_url)
+    replica_b = RedisSharedState(shared_state_url)
+    try:
+        async with replica_b.subscribe(key) as messages:
+            await replica_a.publish(key, "hello")
+            assert await asyncio.wait_for(anext(messages), timeout=5) == "hello"
+    finally:
+        await replica_a.close()
+        await replica_b.close()
+
+
+async def test_subscriber_only_sees_its_own_channel_and_prefix(
+    shared_state_url: str, key: str
+) -> None:
+    a = RedisSharedState(shared_state_url, key_prefix="a:")
+    b = RedisSharedState(shared_state_url, key_prefix="b:")
+    try:
+        async with a.subscribe(key) as messages:
+            await b.publish(key, "other-prefix")
+            await a.publish(f"{key}-other", "other-channel")
+            await a.publish(key, "mine")
+            assert await asyncio.wait_for(anext(messages), timeout=5) == "mine"
+    finally:
+        await a.close()
+        await b.close()
+
+
+async def test_releases_sharing_a_store_do_not_see_each_others_invalidations(
+    shared_state_url: str,
+) -> None:
+    """Pub/sub ignores the redis database number, so only the prefix separates two releases on one store."""
+    release_a = build_shared_state(shared_state_url, key_prefix="release-a:")
+    release_b = build_shared_state(shared_state_url, key_prefix="release-b:")
+    try:
+        async with release_a.subscribe(LIST_CACHE_INVALIDATION_CHANNEL) as messages:
+            await release_b.publish(LIST_CACHE_INVALIDATION_CHANNEL, "from-b")
+            await release_a.publish(LIST_CACHE_INVALIDATION_CHANNEL, "from-a")
+            assert await asyncio.wait_for(anext(messages), timeout=5) == "from-a"
+    finally:
+        await release_a.close()
+        await release_b.close()
+
+
+async def test_idle_subscription_outlives_the_socket_timeout(
+    store: RedisSharedState, key: str
+) -> None:
+    """The client's 2 s socket timeout is for request/response calls; a quiet channel is not an outage."""
+    async with store.subscribe(key) as messages:
+        waiting = asyncio.ensure_future(anext(messages))
+        await asyncio.sleep(2.5)
+        assert not waiting.done()
+        await store.publish(key, "late")
+        assert await asyncio.wait_for(waiting, timeout=5) == "late"
+
+
+async def test_set_then_get_round_trips_with_a_ttl(
+    store: RedisSharedState, key: str
+) -> None:
+    await store.set(key, "v", 60)
+    assert await store.get(key) == "v"
+    assert 0 < await store._client.pttl(key) <= 60_000
+
+
+async def test_get_of_an_absent_key_is_none(store: RedisSharedState, key: str) -> None:
+    assert await store.get(key) is None
+
+
+async def test_value_expires(store: RedisSharedState, key: str) -> None:
+    await store.set(key, "v", 1)
+    await asyncio.sleep(1.2)
+    assert await store.get(key) is None
+
+
+async def test_set_overwrites(store: RedisSharedState, key: str) -> None:
+    await store.set(key, "old", 60)
+    await store.set(key, "new", 60)
+    assert await store.get(key) == "new"
+
+
+async def test_value_set_on_one_client_is_read_on_another(
+    shared_state_url: str, key: str
+) -> None:
+    replica_a = RedisSharedState(shared_state_url)
+    replica_b = RedisSharedState(shared_state_url)
+    try:
+        await replica_a.set(key, "v", 60)
+        assert await replica_b.get(key) == "v"
+    finally:
+        await replica_a.close()
+        await replica_b.close()

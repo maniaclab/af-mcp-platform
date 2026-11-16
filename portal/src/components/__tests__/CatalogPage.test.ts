@@ -28,7 +28,7 @@ function server(overrides: Partial<CatalogServer> = {}): CatalogServer {
     credential_provider: 'atlas-oidc',
     status: 'available',
     status_detail: 'Available.',
-    correlation_id: null,
+    request_id: null,
     link_state: null,
     builtin: false,
     docs_url: null,

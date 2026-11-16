@@ -10,7 +10,7 @@
       "credential_provider": null,
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": true
     },
@@ -24,7 +24,7 @@
       "credential_provider": "example-iam",
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     },
@@ -38,7 +38,7 @@
       "credential_provider": "example-iam",
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     },
@@ -52,7 +52,7 @@
       "credential_provider": "example-iam",
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     },
@@ -66,7 +66,7 @@
       "credential_provider": "x509",
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     },
@@ -80,7 +80,7 @@
       "credential_provider": "example-iam",
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     },
@@ -94,7 +94,7 @@
       "credential_provider": "servicex-token",
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     },
@@ -108,7 +108,7 @@
       "credential_provider": null,
       "status": "available",
       "status_detail": "Ready to use.",
-      "correlation_id": null,
+      "request_id": null,
       "link_state": null,
       "builtin": false
     }

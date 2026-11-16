@@ -11,7 +11,7 @@ import { APIError, SessionExpiredError } from './api';
  * Extracts FastAPI's `{"detail": "..."}` from an APIError body, or null when
  * the body isn't that shape (e.g. an HTML error page from a proxy hop).
  *
- * af-mcp-platform#288: a 5xx response also carries a `correlation_id`
+ * af-mcp-platform#288: a 5xx response also carries a `request_id`
  * alongside `detail` (app.py's `_http_exception_handler`) — appended here so
  * every caller of this function gets it for free, as something a user can
  * quote back to AF support, rather than every per-status branch needing its
@@ -20,13 +20,10 @@ import { APIError, SessionExpiredError } from './api';
  */
 export function apiErrorDetail(err: APIError): string | null {
   try {
-    const parsed = JSON.parse(err.body) as { detail?: unknown; correlation_id?: unknown };
+    const parsed = JSON.parse(err.body) as { detail?: unknown; request_id?: unknown };
     if (typeof parsed.detail !== 'string') return null;
-    if (
-      typeof parsed.correlation_id === 'string' &&
-      !parsed.detail.includes(parsed.correlation_id)
-    ) {
-      return `${parsed.detail} (reference: ${parsed.correlation_id})`;
+    if (typeof parsed.request_id === 'string' && !parsed.detail.includes(parsed.request_id)) {
+      return `${parsed.detail} (reference: ${parsed.request_id})`;
     }
     return parsed.detail;
   } catch {

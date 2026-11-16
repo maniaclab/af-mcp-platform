@@ -6,7 +6,7 @@ import structlog
 
 from af_mcp_broker.authorization import groups_granting_any
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
-from af_mcp_broker.logging import current_correlation_id
+from af_mcp_broker.logging import current_request_id
 from af_mcp_broker.service_registry import (
     LIST_IDENTITIES_TOOL_NAME,
     WHOAMI_TOOL_NAME,
@@ -111,8 +111,8 @@ async def service_status(
     credential -- see aggregator.py's _bearer_factory): a missing permission
     is reported before a credential problem, since the credential is moot
     until the permission gate is fixed. Returns
-    ``(status, status_detail, correlation_id, link_state)`` --
-    correlation_id is set only for the two admin-actionable statuses and
+    ``(status, status_detail, request_id, link_state)`` --
+    request_id is set only for the two admin-actionable statuses and
     link_state only for "link_required".
 
     For a dict-form required_permission a service can require several
@@ -122,18 +122,18 @@ async def service_status(
     all-or-nothing gate on a single value.
     """
     if not holds_any_required_permission(spec, caps):
-        correlation_id = current_correlation_id()
+        request_id = current_request_id()
         logger.info(
             "catalog.service_status_flagged",
             subject=principal.subject,
             target=spec.name,
             status="permission_required",
-            request_id=correlation_id,
+            request_id=request_id,
         )
         return (
             "permission_required",
             STATUS_DETAILS["permission_required"],
-            correlation_id,
+            request_id,
             None,
         )
 
@@ -144,18 +144,18 @@ async def service_status(
     # before the credential like the missing-provider case below.
     routing = registry.tool_routing(spec.name)
     if routing is not None and routing.advertised > 0 and routing.routable == 0:
-        correlation_id = current_correlation_id()
+        request_id = current_request_id()
         logger.info(
             "catalog.service_status_flagged",
             subject=principal.subject,
             target=spec.name,
             status="misconfigured",
-            request_id=correlation_id,
+            request_id=request_id,
         )
         return (
             "misconfigured",
             NO_ROUTABLE_TOOLS_DETAIL.format(advertised=routing.advertised),
-            correlation_id,
+            request_id,
             None,
         )
 
@@ -175,15 +175,15 @@ async def service_status(
         # auth_type is "bearer"/"x509" (a credential IS expected) but no
         # provider resolves for this target -- a platform misconfiguration,
         # not something the caller can fix themselves.
-        correlation_id = current_correlation_id()
+        request_id = current_request_id()
         logger.info(
             "catalog.service_status_flagged",
             subject=principal.subject,
             target=spec.name,
             status="misconfigured",
-            request_id=correlation_id,
+            request_id=request_id,
         )
-        return "misconfigured", STATUS_DETAILS["misconfigured"], correlation_id, None
+        return "misconfigured", STATUS_DETAILS["misconfigured"], request_id, None
 
     if not await provider.is_linked(principal):
         if await provider.is_rejected(principal):

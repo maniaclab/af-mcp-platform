@@ -1,0 +1,996 @@
+from __future__ import annotations
+
+import json
+import time
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+import httpx2
+import pytest
+from broker_state_helpers import aggregator_inputs
+from conftest import make_claims, run_aggregator_async
+from fastmcp.exceptions import ToolError
+from pydantic import SecretStr
+
+from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.authorization import EntitlementPolicy
+from af_mcp_broker.config import KeycloakBrokeredProviderConfig, KrbTokenProviderConfig
+from af_mcp_broker.credentials import (
+    CredentialProvider,
+    CredentialRegistry,
+    ExecutionModel,
+)
+from af_mcp_broker.credentials.oauth21 import (
+    InMemoryTokenStore,
+    OAuth21Provider,
+    StoredOAuthCredential,
+)
+from af_mcp_broker.credmon.guidance import JobCredentialGuide
+from af_mcp_broker.mcp.aggregator import build_aggregator
+from af_mcp_broker.service_registry import (
+    LINK_IDENTITY_TOOL_NAME,
+    LIST_IDENTITIES_TOOL_NAME,
+    LIST_MCP_SERVERS_TOOL_NAME,
+    USAGE_TOOL_NAME,
+    WHOAMI_TOOL_NAME,
+    ServiceRegistry,
+    ServiceSpec,
+    identity_provider_url,
+)
+from af_mcp_broker.usage import InMemoryUsageStore
+from af_mcp_broker.usage.summary import TOKEN_ESTIMATE_CAVEAT
+
+if TYPE_CHECKING:
+    from af_mcp_broker.principal import Principal
+    from af_mcp_broker.usage import UsageStore
+
+# ---------------------------------------------------------------------------
+# End-to-end tests for the af_* diagnostic tools (issue #153), exercised
+# through a real aggregator (build_aggregator + run_aggregator_async) rather
+# than by calling the tool closures directly -- register_diagnostic_tools()
+# defines them as closures local to that function, so a real MCP round trip
+# (the same harness test_mcp_call_time_errors.py already uses) is the
+# natural way to invoke them and also proves they're actually reachable
+# through EntitlementMiddleware/AuthorizationMiddleware's bypass, not just
+# correct in isolation.
+# ---------------------------------------------------------------------------
+
+
+class _FakeIdentityProvider(CredentialProvider):
+    """A minimal CredentialProvider double whose is_linked() outcome is fixed at construction -- af_list_identities never calls issue(), so it's left unimplemented."""
+
+    cred_class = "fake-identity"
+    execution_model = ExecutionModel.DELEGATED
+
+    def __init__(self, *, linked: bool) -> None:
+        self._linked = linked
+
+    async def is_linked(self, principal: Principal) -> bool:
+        return self._linked
+
+    async def issue(self, principal: Principal, target: str, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+
+class _FakeRejectingIdentityProvider(_FakeIdentityProvider):
+    """An unlinked provider that tracks rejection and holds a rejected credential, as OAuth21Provider does."""
+
+    tracks_rejection = True
+
+    def __init__(self) -> None:
+        super().__init__(linked=False)
+
+    async def is_rejected(self, principal: Principal) -> bool:
+        return True
+
+
+def _idp_config(display_name: str, enables: str) -> KeycloakBrokeredProviderConfig:
+    return KeycloakBrokeredProviderConfig(
+        alias=display_name.lower(),
+        display_name=display_name,
+        enables=enables,
+    )
+
+
+async def test_af_tools_declare_a_proper_object_output_schema(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Every af_* tool must advertise an authored object outputSchema (issue
+    #216 A.1): a non-null ``{"type": "object", ...}`` a client can type-check
+    and compose against. FastMCP auto-wraps a bare ``list[...]`` return under a
+    synthetic single ``result`` key stamped ``x-fastmcp-wrap-result: true`` --
+    that IS an object schema, but ``result`` is a meaningless machine name, no
+    real contract, so it doesn't count here; the list-returning tools declare
+    their own wrapper model with a self-describing field instead."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
+
+    by_name = {t.name: t for t in tools}
+    for name in (
+        WHOAMI_TOOL_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
+    ):
+        schema = by_name[name].output_schema
+        assert schema is not None, f"{name} has no outputSchema"
+        assert schema.get("type") == "object", f"{name} outputSchema is not an object"
+        assert not schema.get("x-fastmcp-wrap-result"), (
+            f"{name} relies on FastMCP's synthetic result wrapper rather than "
+            "an authored object schema"
+        )
+
+
+async def test_af_tools_declare_read_only_annotations(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Every af_* tool declares annotations, and all five are read-only
+    (issue #238 B.6): none of them mutates anything server-side --
+    af_link_identity returns a portal deep link, it doesn't perform the
+    link itself -- so every one gets read_only_hint=True, matching "the
+    gateway's own tools are the reference implementation" for the new
+    annotations convention too."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
+
+    by_name = {t.name: t for t in tools}
+    for name in (
+        WHOAMI_TOOL_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
+    ):
+        annotations = by_name[name].annotations
+        assert annotations is not None, f"{name} has no annotations"
+        assert annotations.read_only_hint is True, f"{name} is not read_only_hint=True"
+
+
+async def test_af_whoami_returns_subject_groups_and_permissions(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["atlas"]
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
+
+    mcp = build_aggregator(
+        ServiceRegistry(), settings, policy, CredentialRegistry(), **aggregator_inputs()
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(WHOAMI_TOOL_NAME, {})
+
+    assert result.structured_content["subject"] == "user-123"
+    assert result.structured_content["groups"] == ["atlas"]
+    assert result.structured_content["permissions"] == ["read_data"]
+
+
+async def test_af_list_identities_reflects_linkage_per_provider(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {
+        "linked-idp": _FakeIdentityProvider(linked=True),
+        "unlinked-idp": _FakeIdentityProvider(linked=False),
+        "rejected-idp": _FakeRejectingIdentityProvider(),
+    }
+    identity_provider_configs = {
+        "linked-idp": _idp_config("Linked IdP", "VOMS proxy generation"),
+        "unlinked-idp": _idp_config("Unlinked IdP", "GitLab access"),
+        "rejected-idp": _idp_config("Rejected IdP", "Indico access"),
+    }
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+
+    rows = {row["id"]: row for row in result.structured_content["identities"]}
+    assert rows["linked-idp"] == {
+        "id": "linked-idp",
+        "display_name": "Linked IdP",
+        "enables": "VOMS proxy generation",
+        "linked": True,
+        "rejected": False,
+        "job_credential": None,
+    }
+    assert rows["unlinked-idp"]["linked"] is False
+    assert rows["unlinked-idp"]["rejected"] is False
+    assert rows["rejected-idp"]["linked"] is False
+    assert rows["rejected-idp"]["rejected"] is True
+    assert rows["unlinked-idp"]["enables"] == "GitLab access"
+
+
+async def test_af_list_identities_describes_job_credentials_when_credmon_is_wired(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """With the HTCondor credmon wired, each identity whose provider type is a
+    wired kind tells the agent how a job uses it; other identities don't."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {
+        "krb5": _FakeIdentityProvider(linked=True),
+        "atlas-oidc": _FakeIdentityProvider(linked=True),
+    }
+    identity_provider_configs = {
+        "krb5": KrbTokenProviderConfig(
+            alias="krb5",
+            service_url="http://krb5-token-service.invalid",
+            display_name="CERN Kerberos ticket",
+        ),
+        "atlas-oidc": _idp_config("ATLAS IAM", "Rucio"),
+    }
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        job_credentials=JobCredentialGuide(
+            service_prefix="af_", kinds=frozenset({"krb5", "x509"})
+        ),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+
+    rows = {row["id"]: row for row in result.structured_content["identities"]}
+    assert rows["krb5"]["job_credential"] == {
+        "service": "af_krb5",
+        "path": "$_CONDOR_CREDS/af_krb5.use",
+        "format": "Kerberos credentials cache",
+        "env": "KRB5CCNAME=FILE:$_CONDOR_CREDS/af_krb5.use",
+    }
+    assert rows["atlas-oidc"]["job_credential"] is None
+
+
+async def test_af_link_identity_returns_portal_url_and_linked_status(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """af_link_identity (stage 1 of the elicitation/link-identity design)
+    returns the exact portal deep link af_list_identities' `linked: false`
+    should send the caller to, plus the provider's current linkage status
+    (informational -- re-linking an already-linked provider, e.g. to rotate
+    an x509 passphrase, is a valid call too)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {
+        "linked-idp": _FakeIdentityProvider(linked=True),
+        "unlinked-idp": _FakeIdentityProvider(linked=False),
+    }
+    identity_provider_configs = {
+        "linked-idp": _idp_config("Linked IdP", "VOMS proxy generation"),
+        "unlinked-idp": _idp_config("Unlinked IdP", "GitLab access"),
+    }
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        linked_result = await client.call_tool(
+            LINK_IDENTITY_TOOL_NAME, {"provider": "linked-idp"}
+        )
+        unlinked_result = await client.call_tool(
+            LINK_IDENTITY_TOOL_NAME, {"provider": "unlinked-idp"}
+        )
+
+    assert linked_result.structured_content == {
+        "id": "linked-idp",
+        "display_name": "Linked IdP",
+        "url": identity_provider_url(settings, "linked-idp"),
+        "already_linked": True,
+    }
+    assert unlinked_result.structured_content == {
+        "id": "unlinked-idp",
+        "display_name": "Unlinked IdP",
+        "url": identity_provider_url(settings, "unlinked-idp"),
+        "already_linked": False,
+    }
+
+
+async def test_af_link_identity_unknown_provider_raises_tool_error(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    identity_providers = {"linked-idp": _FakeIdentityProvider(linked=True)}
+    identity_provider_configs = {"linked-idp": _idp_config("Linked IdP", "Some access")}
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+        ),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        with pytest.raises(ToolError) as excinfo:
+            await client.call_tool(
+                LINK_IDENTITY_TOOL_NAME, {"provider": "no-such-provider"}
+            )
+
+    assert "no-such-provider" in str(excinfo.value)
+    assert "linked-idp" in str(excinfo.value)
+    assert LIST_IDENTITIES_TOOL_NAME in str(excinfo.value)
+
+
+async def test_af_list_mcp_servers_reuses_service_status_and_identity_join(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Reuses service_status.py's service_status() (issue #123) and the
+    target_to_alias identity<->backend join (issue #90) rather than
+    reimplementing either -- this asserts the same statuses/joins /v1/catalog
+    would report for the identical setup, through the MCP tool instead."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    registry = ServiceRegistry()
+    registry.register(
+        ServiceSpec(
+            name="open",
+            prefix="open",
+            url="http://open.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+            display_name="Open Backend",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="down",
+            prefix="down",
+            url="http://down.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+            display_name="Down Backend",
+        )
+    )
+    registry.record_list_failure("down", "unavailable", None)
+    registry.register(
+        ServiceSpec(
+            name="gated",
+            prefix="gated",
+            url="http://gated.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            auth_type="none",
+            display_name="Gated Backend",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="needs-link",
+            prefix="needslink",
+            url="http://needslink.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+            display_name="Needs Link Backend",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="rejected",
+            prefix="rejected",
+            url="http://rejected.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+            display_name="Rejected Backend",
+        )
+    )
+    registry.record_list_failure("rejected", "unauthorized", "user-123")
+    registry.register(
+        ServiceSpec(
+            name="rejected-oauth",
+            prefix="rejectedoauth",
+            url="http://rejectedoauth.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+            display_name="Rejected OAuth Backend",
+        )
+    )
+    oauth_store = InMemoryTokenStore()
+    await oauth_store.write_cas(
+        "user-123",
+        "rejected-oauth-idp",
+        StoredOAuthCredential(
+            alias="rejected-oauth-idp",
+            subject="user-123",
+            access_token=SecretStr("revoked"),
+            refresh_token=None,
+            expires_at=None,
+            refresh_expires_at=None,
+            scope=[],
+            issuer="https://as.example",
+            token_endpoint="https://as.example/token",
+            rejected_at=datetime.now(UTC),
+        ),
+        expected_version=None,
+    )
+    credential_registry = CredentialRegistry()
+    credential_registry.register(
+        "rejected-oauth",
+        OAuth21Provider(
+            alias="rejected-oauth-idp",
+            targets=frozenset({"rejected-oauth"}),
+            authorization_endpoint="https://as.example/authorize",
+            token_endpoint="https://as.example/token",
+            issuer="https://as.example",
+            scope="",
+            store=oauth_store,
+            client_id="client",
+            http_client=httpx2.AsyncClient(),
+        ),
+    )
+    unlinked_provider = _FakeIdentityProvider(linked=False)
+    credential_registry.register("needs-link", unlinked_provider)
+    credential_registry.register("rejected", _FakeIdentityProvider(linked=True))
+    target_to_alias = {"needs-link": "unlinked-idp"}
+
+    mcp = build_aggregator(
+        registry,
+        settings,
+        EntitlementPolicy(group_permissions={"atlas": ["read_data"]}),
+        credential_registry,
+        **aggregator_inputs(target_to_alias=target_to_alias),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
+
+    rows = {row["name"]: row for row in result.structured_content["servers"]}
+    assert rows["open"]["status"] == "available"
+    assert rows["open"]["prefix"] == "open"
+    assert rows["open"]["credential_provider"] is None
+    # A service-wide failure marks even a credential-free backend unavailable.
+    assert rows["down"]["status"] == "unavailable"
+    assert rows["gated"]["status"] == "permission_required"
+    assert rows["needs-link"]["status"] == "link_required"
+    assert rows["needs-link"]["credential_provider"] == "unlinked-idp"
+    # link_state says WHY a link is required: never linked vs linked but the
+    # backend rejected the stored credential; null for every other status.
+    assert rows["needs-link"]["link_state"] == "not_linked"
+    assert rows["rejected"]["status"] == "link_required"
+    assert rows["rejected"]["link_state"] == "rejected"
+    # An oauth21 credential the backend rejected is stored but reads as
+    # unlinked; it is still reported "rejected", never "not_linked".
+    assert rows["rejected-oauth"]["status"] == "link_required"
+    assert rows["rejected-oauth"]["link_state"] == "rejected"
+    assert rows["open"]["link_state"] is None
+    assert rows["gated"]["link_state"] is None
+    assert rows["gateway_service"]["link_state"] is None
+    # The gateway lists itself too (issue #240): the builtin af-mcp service
+    # is always present and available -- even to this zero-permission caller
+    # -- with no identity provider servicing it.
+    assert rows["gateway_service"]["status"] == "available"
+    assert rows["gateway_service"]["prefix"] == "af"
+    assert rows["gateway_service"]["credential_provider"] is None
+    assert rows["gateway_service"]["display_name"]
+
+
+async def test_diagnostic_tools_visible_to_principal_with_no_permissions(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Requirement: the af_* methods must be visible regardless of
+    entitlements -- a principal with zero group memberships (so zero
+    permissions) still sees all five, even while a permission-gated
+    backend's own tools stay hidden (proving this isn't just "entitlement
+    filtering is broken"). Since issue #240 the visibility comes from the
+    builtin af-mcp service's "__none__" permission on the normal filtering
+    path, not a name-based bypass."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    registry = ServiceRegistry()
+    registry.register(
+        ServiceSpec(
+            name="gated",
+            prefix="gated",
+            url="http://gated.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            auth_type="none",
+        )
+    )
+    policy = EntitlementPolicy(group_permissions={"atlas": ["read_data"]})
+
+    mcp = build_aggregator(
+        registry, settings, policy, CredentialRegistry(), **aggregator_inputs()
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
+
+    names = {t.name for t in tools}
+    assert {
+        WHOAMI_TOOL_NAME,
+        LIST_IDENTITIES_TOOL_NAME,
+        LIST_MCP_SERVERS_TOOL_NAME,
+        LINK_IDENTITY_TOOL_NAME,
+        USAGE_TOOL_NAME,
+    } <= names
+    # The permission-gated backend's own tool is correctly still hidden --
+    # proves the af_* visibility above is a deliberate bypass, not a broken
+    # entitlement filter that would let everything through.
+    assert not any(n.startswith("gated_") for n in names)
+
+
+async def test_af_whoami_call_is_audited_and_metered_as_the_gateway_service(
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    audit_buffer,
+) -> None:
+    """Issue #240: with the DIAGNOSTIC_TOOL_NAMES bypass gone, a successful
+    af_* call produces an audit line like any other call -- service af-mcp,
+    measured result (bytes/token estimate) and duration included -- proven
+    through a real aggregator round trip by a principal with zero
+    permissions (the builtin service's "__none__" admits them)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        await client.call_tool(WHOAMI_TOOL_NAME, {})
+
+    line = json.loads(audit_buffer.getvalue().strip())
+    assert line["event"] == "audit"
+    assert line["outcome"] == "success"
+    assert line["mcp_service"] == "gateway_service"
+    assert line["target"] == "gateway_service"
+    assert line["action"] == WHOAMI_TOOL_NAME
+    assert line["permission"] == "__none__"
+    assert line["subject"] == "user-123"
+    assert line["duration_ms"] >= 0.0
+    # The success path measures the result exactly like a proxied call's --
+    # af_whoami returned a non-empty structured payload, so both fields are
+    # populated (this harness's inline metering backend measured and wrote
+    # synchronously).
+    assert line["result_bytes"] > 0
+    assert line["result_tokens_est"] > 0
+
+
+async def test_no_diagnostic_tool_response_contains_a_url(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """Never leak: no af_* diagnostic tool's response may contain a URL
+    -- not a backend's internal address, not the portal's own link URL. The
+    generic "go to the portal" instruction lives in the *static* tool
+    description / the pre-existing not-linked ToolError, never in this
+    per-call structured data (see mcp/diagnostics.py's module docstring and
+    service_status.py's canned status_detail sentences, which this reuses)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    registry = ServiceRegistry()
+    registry.register(
+        ServiceSpec(
+            name="needs-link",
+            prefix="needslink",
+            # .invalid (RFC 2606) instead of .cluster.local: macOS routes
+            # .local lookups through mDNS with a ~5s timeout, which this test
+            # paid twice (~10s) when the aggregator dialed the backend; an
+            # NXDOMAIN in .invalid fails in milliseconds and is still an
+            # unreachable cluster-internal-looking address.
+            url="http://internal.svc.cluster.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="bearer",
+        )
+    )
+    credential_registry = CredentialRegistry()
+    credential_registry.register("needs-link", _FakeIdentityProvider(linked=False))
+    identity_providers = {"idp": _FakeIdentityProvider(linked=False)}
+    identity_provider_configs = {"idp": _idp_config("Some IdP", "Some access")}
+    target_to_alias = {"needs-link": "idp"}
+
+    mcp = build_aggregator(
+        registry,
+        settings,
+        EntitlementPolicy(),
+        credential_registry,
+        **aggregator_inputs(
+            identity_providers=identity_providers,
+            identity_provider_configs=identity_provider_configs,
+            target_to_alias=target_to_alias,
+        ),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        whoami = await client.call_tool(WHOAMI_TOOL_NAME, {})
+        identities = await client.call_tool(LIST_IDENTITIES_TOOL_NAME, {})
+        servers = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
+
+    for result in (whoami, identities, servers):
+        blob = json.dumps(result.structured_content)
+        assert "http://" not in blob
+        assert "https://" not in blob
+
+
+# ---------------------------------------------------------------------------
+# af_usage -- the caller's own usage summary through the MCP surface, the
+# same data GET /v1/usage serves (both are thin wrappers over
+# usage/summary.py's build_usage_summary). Seeded through the usage store
+# handed to build_aggregator.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def usage_store() -> UsageStore:
+    return InMemoryUsageStore()
+
+
+def _usage_record(**overrides: Any) -> AuditRecord:
+    fields: dict[str, Any] = {
+        "subject": "user-123",
+        "principal_uid": 1000,
+        "permission": "read_data",
+        "target": "rucio",
+        "action": "rucio_list_dids",
+        "action_type": "read",
+        "args_summary": "scope=...",
+        "timestamp": time.time(),
+        "request_id": "req-1",
+        "mcp_service": "rucio",
+        "outcome": "success",
+        "duration_ms": 10.0,
+        "result_bytes": 100,
+        "result_tokens_est": 1000,
+    }
+    fields.update(overrides)
+    return AuditRecord(**fields)
+
+
+async def _call_af_usage(
+    settings: Any,
+    principal_cache: Any,
+    token: str,
+    args: dict[str, Any],
+    usage_store: UsageStore,
+) -> Any:
+    """Round-trip one af_usage call through a real aggregator (the same harness the other af_* tests use)."""
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(usage_store=usage_store),
+    )
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        return await client.call_tool(USAGE_TOOL_NAME, args)
+
+
+async def test_af_usage_returns_only_the_callers_usage(
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    usage_store: UsageStore,
+) -> None:
+    """Seed two subjects; the caller sees only their own aggregates -- there
+    is no parameter that reaches anyone else's (same isolation contract as
+    GET /v1/usage, proven through the MCP surface)."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    await usage_store.record(_usage_record())
+    await usage_store.record(
+        _usage_record(outcome="error", result_bytes=10, result_tokens_est=None)
+    )
+    await usage_store.record(_usage_record(subject="someone-else", result_tokens_est=7))
+
+    result = await _call_af_usage(settings, principal_cache, token, {}, usage_store)
+
+    body = result.structured_content
+    assert body["subject"] == "user-123"
+    assert body["window_days"] == 30
+    assert body["totals"]["calls"] == 2
+    assert body["totals"]["errors"] == 1
+    # Token counts only: no price, dollar, or model field on the totals.
+    assert set(body["totals"]) == {
+        "calls",
+        "errors",
+        "duration_ms",
+        "result_bytes",
+        "result_tokens_est",
+    }
+    assert "cost_model" not in body
+    # someone-else's 7 tokens must never leak into user-123's summary.
+    assert body["totals"]["result_tokens_est"] == 1000
+    assert [s["service"] for s in body["by_service"]] == ["rucio"]
+    assert body["by_service"][0]["calls"] == 2
+    assert body["by_service"][0]["errors"] == 1
+    assert len(body["by_day"]) == 1
+    assert body["by_day"][0]["calls"] == 2
+
+
+async def test_af_usage_days_parameter(
+    settings: Any,
+    sig_key: Any,
+    prime_jwks: Any,
+    static_principal_cache: Any,
+    usage_store: UsageStore,
+) -> None:
+    """days narrows the trailing window -- the same semantics as GET
+    /v1/usage's query parameter."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    await usage_store.record(_usage_record())
+    await usage_store.record(
+        _usage_record(timestamp=time.time() - 10 * 86400, result_tokens_est=500)
+    )
+
+    narrow = await _call_af_usage(
+        settings, principal_cache, token, {"days": 7}, usage_store
+    )
+    assert narrow.structured_content["window_days"] == 7
+    assert narrow.structured_content["totals"]["calls"] == 1
+    assert narrow.structured_content["totals"]["result_tokens_est"] == 1000
+
+    wide = await _call_af_usage(
+        settings, principal_cache, token, {"days": 30}, usage_store
+    )
+    body = wide.structured_content
+    # af_usage meters itself (issue #240): the narrow call above shows up
+    # here as one af-mcp call -- an accepted, deliberately visible side
+    # effect of routing af_* through the normal audit/metering path.
+    per_service = {s["service"]: s for s in body["by_service"]}
+    assert per_service["rucio"]["calls"] == 2
+    assert per_service["gateway_service"]["calls"] == 1
+    assert body["totals"]["calls"] == 3
+    assert per_service["rucio"]["result_tokens_est"] == 1500
+
+
+async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """A permission_required row carries the groups that grant the missing
+    permission; every row carries docs_url (issue #395), so an assistant can
+    pass on where the service is described and which group to ask to join."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    registry = ServiceRegistry()
+    registry.register(
+        ServiceSpec(
+            name="own-link",
+            prefix="ownlink",
+            url="http://ownlink.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            auth_type="none",
+            docs_url="https://docs.example.org/own",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="default-link",
+            prefix="defaultlink",
+            url="http://defaultlink.invalid/mcp",
+            transport="http",
+            required_permission="read_data",
+            auth_type="none",
+        )
+    )
+    registry.register(
+        ServiceSpec(
+            name="open",
+            prefix="open",
+            url="http://open.invalid/mcp",
+            transport="http",
+            required_permission="__none__",
+            auth_type="none",
+            docs_url="https://docs.example.org/open",
+        )
+    )
+
+    mcp = build_aggregator(
+        registry,
+        settings,
+        EntitlementPolicy(
+            group_permissions={"/connect/atlas-af": ["read_data"], "other": []}
+        ),
+        CredentialRegistry(),
+        **aggregator_inputs(),
+    )
+
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        result = await client.call_tool(LIST_MCP_SERVERS_TOOL_NAME, {})
+
+    rows = {row["name"]: row for row in result.structured_content["servers"]}
+    assert rows["own-link"]["status"] == "permission_required"
+    assert rows["own-link"]["granting_groups"] == ["/connect/atlas-af"]
+    assert rows["own-link"]["docs_url"] == "https://docs.example.org/own"
+    assert "Contact the AF admins." in rows["own-link"]["status_detail"]
+    assert rows["default-link"]["docs_url"] is None
+    assert rows["open"]["status"] == "available"
+    assert rows["open"]["granting_groups"] == []
+    assert rows["open"]["docs_url"] == "https://docs.example.org/open"
+
+
+async def test_af_usage_tool_description_carries_the_token_estimate_caveat(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """The LLM-facing description states how tokens are estimated, from the one shared caveat."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(),
+    )
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
+
+    description = {t.name: t for t in tools}[USAGE_TOOL_NAME].description
+    assert description is not None
+    assert TOKEN_ESTIMATE_CAVEAT in description

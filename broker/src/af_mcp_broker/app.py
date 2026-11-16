@@ -42,7 +42,7 @@ from af_mcp_broker.identity import (
 )
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.logging import (
-    bind_new_correlation_id,
+    bind_new_request_id,
     close_audit_logging,
     configure_logging,
     log_request_finished,
@@ -113,8 +113,8 @@ def _warn_replica_hazards(settings: Settings) -> None:
     # front of more than one replica.
     if not settings.mcp_stateless_http and multi_replica:
         logger.warning(
-            "mcp_stateful_multi_replica",
-            message=(
+            "mcp.stateful_multi_replica",
+            detail=(
                 "mcp_stateless_http=False with more than one broker replica: "
                 "streamable-HTTP sessions are in-process state, so a load "
                 "balancer without session affinity will route a session's "
@@ -136,8 +136,8 @@ def _warn_replica_hazards(settings: Settings) -> None:
     # legitimately wants this default with no extra infra.
     if settings.maintenance_mode_backend == "in_memory" and multi_replica:
         logger.warning(
-            "maintenance_mode_in_memory_multi_replica",
-            message=(
+            "maintenance.in_memory_multi_replica",
+            detail=(
                 "maintenance_mode_backend=in_memory with more than one "
                 "broker replica: toggling maintenance mode only affects the "
                 "replica that handled the toggle, so other replicas keep "
@@ -153,8 +153,8 @@ def _warn_replica_hazards(settings: Settings) -> None:
     # visible in pod logs, never silent.
     if not settings.shared_state_url and multi_replica:
         logger.warning(
-            "per_replica_state",
-            message=(
+            "shared_state.per_replica_state",
+            detail=(
                 "allow_per_replica_state with more than one broker replica "
                 "and no shared_state_url: the unlock brute-force budget is "
                 "multiplied by the replica count and replica-local caches "
@@ -310,7 +310,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
 
         await prime_jwks_cache(settings, http_client)
         logger.info(
-            "af_mcp_broker_started",
+            "broker.started",
             version=__version__,
             oidc_issuer=settings.oidc_issuer,
             policy_file=settings.policy_file,
@@ -329,7 +329,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             mcp_app.lifespan(application)
         )
         yield dict(mcp_lifespan_state or {})
-    logger.info("af_mcp_broker_stopped")
+    logger.info("broker.stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +342,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
 # binds is visible to its own ``finished`` line, whereas this
 # BaseHTTPMiddleware runs the app in a child task and never sees contextvars
 # bound inside it. Logging /mcp here too would emit a second
-# received/finished pair under a second correlation_id.
+# received/finished pair under a second request_id.
 _MCP_MOUNT_PATH = "/mcp"
 
 
@@ -423,7 +423,7 @@ def _path_template(request: Request) -> str:
 
 @app.middleware("http")
 async def _bind_request_logging_context(request: Request, call_next):  # type: ignore[no-untyped-def]
-    """Binds a fresh correlation_id to structlog's contextvars for every /v1 request (issue #281) and logs its receipt/completion (issue #322).
+    """Binds a fresh request_id to structlog's contextvars for every /v1 request (issue #281) and logs its receipt/completion (issue #322).
 
     ``keycloak_dependency`` binds ``subject`` alongside it once the caller's
     identity resolves (see identity.py's ``get_principal``/its own
@@ -431,7 +431,7 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     rest of the request -- including ``_http_exception_handler``'s --
     without every call site threading them through by hand. Requests under
     the /mcp mount are left to identity_mw.AsgiAuthMiddleware, which binds
-    their correlation_id and logs their received/finished pair (see
+    their request_id and logs their received/finished pair (see
     ``_MCP_MOUNT_PATH``).
 
     ``http.request.received``/``http.request.finished`` are the only trace
@@ -441,7 +441,7 @@ async def _bind_request_logging_context(request: Request, call_next):  # type: i
     ``call_next`` returns normally or raises, so ``finished`` is always
     logged exactly once per request.
     """
-    bind_new_correlation_id()
+    bind_new_request_id()
     if request.url.path in _REQUEST_LOGGING_EXCLUDED_PATHS or _is_mcp_path(
         request.url.path
     ):
@@ -506,7 +506,7 @@ try:
 except ImportError:
     # prometheus-fastapi-instrumentator is an optional dependency. The broker
     # functions correctly without it; metrics simply won't be available.
-    logger.debug("prometheus_instrumentator_not_installed")
+    logger.debug("metrics.instrumentator_not_installed")
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +523,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # expected refusal (auth, validation, rate limit) and stays at info.
     log = logger.error if exc.status_code >= 500 else logger.info
     log(
-        "http_exception",
+        "http.exception",
         status_code=exc.status_code,
         detail=exc.detail,
         path=request.url.path,
@@ -534,17 +534,17 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
             limiter=exc.limiter,
             retry_after_seconds=exc.retry_after_seconds,
         )
-    # af-mcp-platform#288: every /v1 request already gets a correlation_id
+    # af-mcp-platform#288: every /v1 request already gets a request_id
     # bound into structlog's contextvars at request start
     # (_bind_request_logging_context above / identity_mw's own equivalent
     # for /mcp), so it's already on the log line just above -- fold it into
     # the response body too, for any 5xx whose detail is a plain string, so
     # a user hitting a generic infra failure has something to quote back to
     # AF support instead of nothing. Scoped to 5xx only: 4xx details are
-    # already meant to be user-actionable on their own (a correlation ID
+    # already meant to be user-actionable on their own (a request ID
     # doesn't help "wrong password"), and a dict-shaped detail (identity.py's
     # TokenAudienceError, this route's own NeedsUnlockError-derived 409s) is
-    # already structured/already carries its own correlation_id where one
+    # already structured/already carries its own request_id where one
     # makes sense -- overwriting it here would be a regression, not a fix.
     # A 4xx opts in by raising CorrelatedHTTPException (issue #342).
     if isinstance(exc, RateLimitedHTTPException):
@@ -560,11 +560,11 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     if (
         exc.status_code >= 500 or isinstance(exc, CorrelatedHTTPException)
     ) and isinstance(exc.detail, str):
-        correlation_id = structlog.contextvars.get_contextvars().get("correlation_id")
-        if correlation_id:
+        request_id = structlog.contextvars.get_contextvars().get("request_id")
+        if request_id:
             return JSONResponse(
                 status_code=exc.status_code,
-                content={"detail": exc.detail, "correlation_id": correlation_id},
+                content={"detail": exc.detail, "request_id": request_id},
                 headers=exc.headers,
             )
     return await http_exception_handler(request, exc)
@@ -574,7 +574,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
 # HTTPException. identity.py's are also reached from /mcp, which translates
 # them itself in mcp/middleware/identity_mw.py; /v1 maps each onto an
 # HTTPException, routed through _http_exception_handler so logging and 5xx
-# correlation_id folding apply to it like to any other. The status code and
+# request_id folding apply to it like to any other. The status code and
 # headers live here, not on the domain classes.
 _IDENTITY_ERROR_RESPONSES: dict[
     type[IdentityError], tuple[int, dict[str, str] | None]
@@ -649,7 +649,7 @@ async def _validation_error_handler(
     # Bad request bodies raise RequestValidationError, which FastAPI's
     # default handler already turns into a 422.
     logger.error(
-        "internal_validation_error",
+        "http.internal_validation_error",
         path=request.url.path,
         errors=exc.errors(),
     )

@@ -102,7 +102,7 @@ class ProviderStores:
             self._x509 = VaultX509Store(
                 vault_kv=self._vault_kv(), kv_path_prefix=prefix
             )
-            logger.info("x509_voms_service_mode", kv_path_prefix=prefix)
+            logger.info("x509.voms_service_mode", kv_path_prefix=prefix)
         return self._x509
 
     def krb5(self) -> Krb5VaultStore:
@@ -112,7 +112,7 @@ class ProviderStores:
             self._krb5 = Krb5VaultStore(
                 vault_kv=self._vault_kv(), kv_path_prefix=prefix
             )
-            logger.info("krb5_vault_store_wired", kv_path_prefix=prefix)
+            logger.info("krb5.vault_store_wired", kv_path_prefix=prefix)
         return self._krb5
 
     def servicex(self) -> VaultServiceXStore:
@@ -122,7 +122,7 @@ class ProviderStores:
             self._servicex = VaultServiceXStore(
                 vault_kv=self._vault_kv(), kv_path_prefix=prefix
             )
-            logger.info("servicex_vault_store_wired", kv_path_prefix=prefix)
+            logger.info("servicex.vault_store_wired", kv_path_prefix=prefix)
         return self._servicex
 
     @property

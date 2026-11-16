@@ -1,0 +1,215 @@
+"""Tests for the servicex-token-service client (issue #295).
+
+``ServiceXTokenServiceClient`` speaks the contract documented in
+maniaclab/servicex-token-service: ``POST {url}/v1/redeem`` authenticated by
+an AF Broker Identity Token with ``aud=servicex-token-service``, JSON body
+``{"refresh_token"}``, returning ``{"access_token", "expires_in"}``.
+
+servicex-token-service draws one client-actionable distinction: 400 means
+ServiceX itself rejected the refresh token (``ServiceXBadRefreshTokenError``).
+Everything else (401/403/429/5xx, unreachable, timeout) is an infra failure
+(``ServiceXServiceMintError``) that must not be confused with a bad token.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from typing import TYPE_CHECKING
+
+import httpx2
+import jwt
+import pytest
+import structlog
+from pydantic import SecretStr
+
+from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
+from af_mcp_broker.credentials.errors import (
+    ServiceXBadRefreshTokenError,
+    ServiceXServiceMintError,
+)
+from af_mcp_broker.credentials.servicex_service import (
+    RedeemedServiceXToken,
+    ServiceXTokenServiceClient,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_ISSUER_URL = "https://mcp.example.com"
+_SERVICE_URL = "http://servicex-token-service.servicex-token.svc.cluster.local:8080"
+
+_REDEEM_RESPONSE = {"access_token": "fake-access-token", "expires_in": 3600}
+
+
+@pytest.fixture
+def issuer(broker_signing_key_pem: bytes) -> BrokerTokenIssuer:
+    return BrokerTokenIssuer(private_key_pem=broker_signing_key_pem, issuer=_ISSUER_URL)
+
+
+@pytest.fixture
+def make_client(
+    issuer: BrokerTokenIssuer,
+) -> Callable[..., tuple[ServiceXTokenServiceClient, list[httpx2.Request]]]:
+    """Build a client whose HTTP layer is a ``httpx2.MockTransport``.
+
+    Returns ``(client, requests)`` where *requests* records every request
+    the client sent. *responder* maps a request to a response (default: 200
+    with the canned redeem response); pass an exception instance to have the
+    transport raise it instead.
+    """
+
+    def _make(
+        responder: httpx2.Response | Exception | None = None,
+        service_url: str = _SERVICE_URL,
+        **kwargs: object,
+    ) -> tuple[ServiceXTokenServiceClient, list[httpx2.Request]]:
+        requests: list[httpx2.Request] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            requests.append(request)
+            if isinstance(responder, Exception):
+                raise responder
+            if responder is None:
+                return httpx2.Response(200, json=_REDEEM_RESPONSE)
+            return responder
+
+        http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+        client = ServiceXTokenServiceClient(
+            issuer=issuer,
+            service_url=service_url,
+            http_client=http_client,
+            **kwargs,  # type: ignore[arg-type]
+        )
+        return client, requests
+
+    return _make
+
+
+async def _redeem(
+    client: ServiceXTokenServiceClient, **kwargs: object
+) -> RedeemedServiceXToken:
+    kwargs.setdefault("subject", "user1")
+    kwargs.setdefault("refresh_token", SecretStr("a-refresh-token"))
+    return await client.redeem(**kwargs)  # type: ignore[arg-type]
+
+
+class TestRedeemResponse:
+    async def test_redeem_success_parses_response(self, make_client) -> None:
+        client, _ = make_client()
+        before = time.time()
+        redeemed = await _redeem(client)
+        assert redeemed.access_token == "fake-access-token"
+        assert redeemed.expires_at == pytest.approx(before + 3600, abs=5)
+
+    async def test_redeem_posts_refresh_token_and_bearer_auth(
+        self, make_client
+    ) -> None:
+        client, requests = make_client()
+        await _redeem(client, refresh_token=SecretStr("secret-refresh"))
+        assert len(requests) == 1
+        request = requests[0]
+        assert request.url == f"{_SERVICE_URL}/v1/redeem"
+        assert request.headers["authorization"].startswith("Bearer ")
+        body = json.loads(request.content.decode())
+        assert body == {"refresh_token": "secret-refresh"}
+
+    async def test_redeem_default_audience(self, make_client) -> None:
+        client, requests = make_client()
+        await _redeem(client)
+        # The broker token's aud claim defaults to servicex-token-service --
+        # decode without verification just to inspect the claim.
+        token = requests[0].headers["authorization"].removeprefix("Bearer ")
+        claims = jwt.decode(token, options={"verify_signature": False})
+        assert claims["aud"] == "servicex-token-service"
+
+
+class TestRedeemFailures:
+    async def test_redeem_400_raises_bad_refresh_token_error(self, make_client) -> None:
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad token"}))
+        with pytest.raises(ServiceXBadRefreshTokenError):
+            await _redeem(client)
+
+    def test_bad_refresh_token_message_does_not_guess_a_cause(self) -> None:
+        message = str(ServiceXBadRefreshTokenError())
+        assert "ServiceX rejected" in message
+        assert "revoked or expired" not in message
+        assert "new token" in message
+
+    @pytest.mark.parametrize(
+        ("status", "detail"),
+        [(401, "nope"), (429, "rate limited"), (502, "bad gateway")],
+    )
+    async def test_redeem_error_status_raises_mint_error(
+        self, make_client, status: int, detail: str
+    ) -> None:
+        client, _ = make_client(httpx2.Response(status, json={"detail": detail}))
+        with pytest.raises(ServiceXServiceMintError):
+            await _redeem(client)
+
+    async def test_redeem_unreachable_raises_mint_error(self, make_client) -> None:
+        client, _ = make_client(httpx2.ConnectError("connection refused"))
+        with pytest.raises(ServiceXServiceMintError):
+            await _redeem(client)
+
+    async def test_mint_error_message_never_carries_response_body(
+        self, make_client
+    ) -> None:
+        client, _ = make_client(
+            httpx2.Response(500, json={"detail": "some internal secret path"})
+        )
+        with pytest.raises(ServiceXServiceMintError) as exc_info:
+            await _redeem(client)
+        assert "some internal secret path" not in str(exc_info.value)
+
+
+class TestRequestCorrelation:
+    async def test_redeem_sends_the_bound_request_id_as_x_request_id(
+        self, make_client
+    ) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id="corr-342")
+        client, requests = make_client()
+        await _redeem(client)
+        assert requests[0].headers["x-request-id"] == "corr-342"
+
+    async def test_redeem_without_a_bound_request_id_sends_no_x_request_id(
+        self, make_client
+    ) -> None:
+        structlog.contextvars.clear_contextvars()
+        client, requests = make_client()
+        await _redeem(client)
+        assert "x-request-id" not in requests[0].headers
+
+    async def test_redeem_400_logs_a_warning_with_subject_status_and_request_id(
+        self, make_client
+    ) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id="corr-342")
+        client, _ = make_client(httpx2.Response(400, json={"detail": "bad token"}))
+        with (
+            structlog.testing.capture_logs(
+                processors=[structlog.contextvars.merge_contextvars]
+            ) as logs,
+            pytest.raises(ServiceXBadRefreshTokenError),
+        ):
+            await _redeem(
+                client, subject="user1", refresh_token=SecretStr("tok-s3cret")
+            )
+
+        [record] = [
+            r for r in logs if r["event"] == "servicex_service.redeem.bad_refresh_token"
+        ]
+        assert record["log_level"] == "warning"
+        assert record["subject"] == "user1"
+        assert record["upstream_status"] == 400
+        assert record["request_id"] == "corr-342"
+        assert "tok-s3cret" not in str(logs)
+        assert "bad token" not in str(logs)
+
+
+class TestEndpointJoin:
+    async def test_trailing_slash_on_service_url_is_stripped(self, make_client) -> None:
+        client, requests = make_client(service_url=f"{_SERVICE_URL}/")
+        await _redeem(client)
+        assert requests[0].url == f"{_SERVICE_URL}/v1/redeem"

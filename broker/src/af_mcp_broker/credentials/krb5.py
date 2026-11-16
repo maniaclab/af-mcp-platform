@@ -440,7 +440,7 @@ class KrbTokenProvider(CredentialProvider):
                 # it immediately would incorrectly treat
                 # "renew() timed out" as "give up entirely" when a perfectly
                 # good keytab remint was one call away.
-                self._log.info(
+                self._log.warning(
                     "krb5_token.issue.renew_infra_failure_falling_through",
                     subject=subject,
                     target=target,

@@ -18,6 +18,7 @@ from af_mcp_broker.credentials.base import (
     ExecutionModel,
     IssuedCredential,
 )
+from af_mcp_broker.logging import current_request_id
 
 if TYPE_CHECKING:
     import httpx2
@@ -276,7 +277,7 @@ class ServiceProvider(CredentialProvider):
         audit output goes through a single, consistently-formatted channel.
         """
         record = AuditRecord(
-            principal_sub=principal.subject,
+            subject=principal.subject,
             principal_uid=principal.uid,
             permission=self.cred_class,
             target=target,
@@ -287,7 +288,7 @@ class ServiceProvider(CredentialProvider):
                 f"username={principal.unixname or '<no-posix-identity>'}"
             ),
             timestamp=time.time(),
-            request_id=audit_id,
+            request_id=current_request_id(),
             audit_id=audit_id,
             execution_model=self.execution_model.value,
         )

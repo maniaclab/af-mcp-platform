@@ -342,7 +342,7 @@ async def unlink_identity(
             await state.credential_cache.revoke(principal.subject, target)
 
         logger.info(
-            "identity_unlink_completed",
+            "identity.unlink_completed",
             subject=principal.subject,
             provider=provider,
         )
@@ -356,7 +356,7 @@ async def unlink_identity(
             await state.credential_cache.revoke(principal.subject, target)
 
         logger.info(
-            "identity_unlink_completed",
+            "identity.unlink_completed",
             subject=principal.subject,
             provider=provider,
         )
@@ -370,7 +370,7 @@ async def unlink_identity(
             await state.credential_cache.revoke(principal.subject, target)
 
         logger.info(
-            "identity_unlink_completed",
+            "identity.unlink_completed",
             subject=principal.subject,
             provider=provider,
         )
@@ -390,7 +390,7 @@ async def unlink_identity(
     # stored passphrase is rejected. Adding one is tracked separately, not
     # part of issue #274's remember/keytab/renew work.
     logger.info(
-        "identity_unlink_requested",
+        "identity.unlink_requested",
         subject=principal.subject,
         provider=provider,
     )

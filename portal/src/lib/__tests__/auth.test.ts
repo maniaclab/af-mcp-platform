@@ -126,6 +126,7 @@ describe('auth — OIDC configured', () => {
         shortName: 'Example AF Ops',
         fullName: '',
         facilityName: 'Example Analysis Facility',
+        facilityUrl: 'https://af.example.org/',
         accentColor: '#800000',
         accentColorDark: '',
       },
@@ -251,6 +252,7 @@ describe('auth — OIDC configured', () => {
       shortName: 'Example AF Ops',
       fullName: DEFAULT_BRANDING.fullName,
       facilityName: 'Example Analysis Facility',
+      facilityUrl: 'https://af.example.org/',
       accentColor: '#800000',
     });
   });

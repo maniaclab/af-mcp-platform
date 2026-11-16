@@ -27,7 +27,7 @@ from af_mcp_broker.backend_errors import (
 )
 from af_mcp_broker.credentials import CredentialKind
 from af_mcp_broker.credentials.errors import CredentialError, NeedsUnlockError
-from af_mcp_broker.logging import current_correlation_id, request_id_headers
+from af_mcp_broker.logging import current_request_id, request_id_headers
 from af_mcp_broker.service_registry import namespaced_tool_name
 
 if TYPE_CHECKING:
@@ -102,7 +102,7 @@ def report_401(
 
 
 async def _stamp_request_id(request: httpx2.Request) -> None:
-    """Send the broker's own ``correlation_id`` to the backend as ``X-Request-ID``.
+    """Send the broker's own ``request_id`` to the backend as ``X-Request-ID``.
 
     Read when the request is sent, from the contextvars of the call that
     sends it, so the id is the one the broker logged for that client request.
@@ -582,7 +582,7 @@ async def resolve_list_time_credential(
         token, _ = issuer.mint(
             principal.subject,
             spec.effective_audience,
-            request_id=current_correlation_id(),
+            request_id=current_request_id(),
         )
         return ListTimeCredential({"Authorization": f"Bearer {token}"}, None)
     return await resolve_list_time_headers(spec, credential_registry, principal)

@@ -36,25 +36,25 @@ describe('servicexLinkErrorMessage', () => {
     expect(servicexLinkErrorMessage(err)).toMatch(/unavailable/i);
   });
 
-  it('includes the correlation_id on a 502 so it can be quoted to support (af-mcp-platform#288)', () => {
+  it('includes the request_id on a 502 so it can be quoted to support (af-mcp-platform#288)', () => {
     const err = new APIError(
       502,
       'Bad Gateway',
       JSON.stringify({
         detail: 'ServiceX token redemption is temporarily unavailable — retry later.',
-        correlation_id: 'abc123def456',
+        request_id: 'abc123def456',
       }),
     );
     expect(servicexLinkErrorMessage(err)).toContain('reference: abc123def456');
   });
 
-  it('does not repeat the correlation_id when the 400 detail already quotes it (af-mcp-platform#342)', () => {
+  it('does not repeat the request_id when the 400 detail already quotes it (af-mcp-platform#342)', () => {
     const detail =
       'ServiceX rejected this token. Generate a new token from your ServiceX profile page and re-link. (ref: abc123def456)';
     const err = new APIError(
       400,
       'Bad Request',
-      JSON.stringify({ detail, correlation_id: 'abc123def456' }),
+      JSON.stringify({ detail, request_id: 'abc123def456' }),
     );
     expect(servicexLinkErrorMessage(err)).toBe(detail);
   });

@@ -18,11 +18,11 @@ logger = structlog.get_logger(__name__)
 
 # The one log event every rate-limit refusal emits, on /v1 and /mcp, so a
 # single search finds every lockout.
-RATE_LIMIT_EVENT = "rate_limit_exceeded"
+RATE_LIMIT_EVENT = "rate_limit.exceeded"
 
 
 class RateLimiter(StrEnum):
-    """Which limiter refused a request, as the ``limiter`` field of ``rate_limit_exceeded``."""
+    """Which limiter refused a request, as the ``limiter`` field of ``rate_limit.exceeded``."""
 
     X509_UNLOCK = "x509_unlock"
     PAT_MINT = "pat_mint"
@@ -57,7 +57,7 @@ def log_rate_limited(
     retry_after_seconds: int,
     rule: str | None = None,
 ) -> None:
-    """Log the ``rate_limit_exceeded`` event for a refused request.
+    """Log the ``rate_limit.exceeded`` event for a refused request.
 
     *subject* is ``None`` when no caller identity was bound yet. *rule*
     names the configured rule where the limiter has several (a tool

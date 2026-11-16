@@ -114,7 +114,7 @@ class OAuth21DirectProviderConfig(BaseModel):
             return self
         if self.client_id is None:
             log.error(
-                "oauth21_config_invalid",
+                "config.oauth21_invalid",
                 alias=self.alias,
                 reason="confidential is true but client_id is unset",
             )
@@ -126,7 +126,7 @@ class OAuth21DirectProviderConfig(BaseModel):
         secret = os.environ.get(self.client_secret_env_var, "")
         if not secret:
             log.error(
-                "oauth21_config_invalid",
+                "config.oauth21_invalid",
                 alias=self.alias,
                 reason=f"{self.client_secret_env_var} is unset or empty",
             )
@@ -618,7 +618,7 @@ class Settings(BaseSettings):
 
     # Emit every tool call's usage record as an OTel LOG record over OTLP
     # (usage/otel_events.py), beside the usage store, which stays
-    # authoritative. Unlike metrics these carry principal_sub and token_id,
+    # authoritative. Unlike metrics these carry subject and token_id,
     # so the receiving log backend needs its own access control. Off by
     # default, and then the store is not wrapped. Collector, headers and TLS
     # come from the standard OTEL_EXPORTER_OTLP_* variables, shared with
@@ -1195,14 +1195,14 @@ class Settings(BaseSettings):
             ("credmon_user_domain", "CREDMON_USER_DOMAIN"),
         ):
             if not getattr(self, field_name):
-                log.error("credmon_config_invalid", missing=field_name)
+                log.error("config.credmon_invalid", missing=field_name)
                 raise ValueError(
                     f"{field_name} ({env_name}) must be set when "
                     "credmon_enabled is true -- the storer needs it to store "
                     "top tokens in credd through htcondor-api."
                 )
         if not self.uses_vault:
-            log.error("credmon_config_invalid", missing="vault")
+            log.error("config.credmon_invalid", missing="vault")
             raise ValueError(
                 "CREDMON_ENABLED requires Vault: the storer enumerates linked "
                 "users from the Vault-backed identity stores and coordinates "
@@ -1245,7 +1245,7 @@ class Settings(BaseSettings):
             return self
         if not self.broker_state_key.get_secret_value():
             log.error(
-                "oauth21_config_invalid",
+                "config.oauth21_invalid",
                 reason=(
                     "broker_state_key is empty but an oauth21-direct "
                     "identity provider is configured"
@@ -1263,7 +1263,7 @@ class Settings(BaseSettings):
             p.client_id is None for p in oauth21_providers
         ):
             log.error(
-                "oauth21_config_invalid",
+                "config.oauth21_invalid",
                 reason=(
                     "oauth21_client_id is empty but an oauth21-direct "
                     "identity provider without its own client_id is configured"
@@ -1286,7 +1286,7 @@ class Settings(BaseSettings):
         )
         if duplicates:
             log.error(
-                "oauth21_config_invalid",
+                "config.oauth21_invalid",
                 reason="confidential oauth21-direct aliases share a secret env var",
                 env_vars=duplicates,
             )
@@ -1297,7 +1297,7 @@ class Settings(BaseSettings):
             )
         if not self.broker_public_origin:
             log.error(
-                "oauth21_config_invalid",
+                "config.oauth21_invalid",
                 reason=(
                     "broker_public_origin is empty but an oauth21-direct "
                     "identity provider is configured"
@@ -1340,7 +1340,7 @@ class Settings(BaseSettings):
             return self
         if not self.keycloak_login_client_secret.get_secret_value():
             log.error(
-                "mcp_oauth_config_invalid",
+                "config.mcp_oauth_invalid",
                 reason=(
                     "keycloak_login_client_id is set but "
                     "keycloak_login_client_secret is empty"
@@ -1354,7 +1354,7 @@ class Settings(BaseSettings):
             )
         if not self.broker_state_key.get_secret_value():
             log.error(
-                "mcp_oauth_config_invalid",
+                "config.mcp_oauth_invalid",
                 reason=(
                     "broker_state_key is empty but keycloak_login_client_id "
                     "is configured"
@@ -1368,7 +1368,7 @@ class Settings(BaseSettings):
             )
         if not self.broker_public_origin:
             log.error(
-                "mcp_oauth_config_invalid",
+                "config.mcp_oauth_invalid",
                 reason=(
                     "broker_public_origin is empty but keycloak_login_client_id "
                     "is configured"
@@ -1389,7 +1389,7 @@ class Settings(BaseSettings):
             return self
         if not self.vault_addr:
             log.error(
-                "vault_config_invalid",
+                "config.vault_invalid",
                 reason=(
                     "vault_addr is empty but token_store_backend, "
                     "token_registry_backend, principal_cache_backend, "
@@ -1408,7 +1408,7 @@ class Settings(BaseSettings):
             )
         if not self.vault_auth_role:
             log.error(
-                "vault_config_invalid",
+                "config.vault_invalid",
                 reason=(
                     "vault_auth_role is empty but token_store_backend, "
                     "token_registry_backend, principal_cache_backend, "
@@ -1427,7 +1427,7 @@ class Settings(BaseSettings):
             )
         if not self.vault_kv_root.strip("/"):
             log.error(
-                "vault_config_invalid",
+                "config.vault_invalid",
                 reason="vault_kv_root is empty but a Vault-backed store is configured",
             )
             raise ValueError(
@@ -1448,7 +1448,7 @@ class Settings(BaseSettings):
             self.usage_postgres_dsn.get_secret_value()
         ):
             log.error(
-                "usage_store_config_invalid",
+                "config.usage_store_invalid",
                 reason=(
                     "usage_postgres_dsn is empty but usage_store_backend is 'postgres'"
                 ),
@@ -1468,7 +1468,7 @@ class Settings(BaseSettings):
         dsn = self.maintenance_mode_effective_postgres_dsn
         if dsn is None or not dsn.get_secret_value():
             log.error(
-                "maintenance_mode_config_invalid",
+                "config.maintenance_mode_invalid",
                 reason=(
                     "maintenance_mode_postgres_dsn and usage_postgres_dsn "
                     "are both empty but maintenance_mode_backend is "

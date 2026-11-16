@@ -178,7 +178,7 @@ describe('api client', () => {
           detail: {
             error: 'insufficient_scope',
             message: 'Your account is not authorized yet. Quote this ID: abc123',
-            correlation_id: 'abc123',
+            request_id: 'abc123',
           },
         }),
         { status: 401, headers: { 'Content-Type': 'application/json' } },
@@ -188,7 +188,7 @@ describe('api client', () => {
     expect(rejection).toBeInstanceOf(AccessDeniedError);
     expect(rejection).not.toBeInstanceOf(SessionExpiredError);
     expect(rejection.message).toBe('Your account is not authorized yet. Quote this ID: abc123');
-    expect(rejection.correlationId).toBe('abc123');
+    expect(rejection.requestId).toBe('abc123');
   });
 
   it('returns the parsed body on 200', async () => {
