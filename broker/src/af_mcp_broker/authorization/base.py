@@ -243,6 +243,22 @@ def is_admin(principal: Principal, settings: Settings) -> bool:
     return bool(settings.admin_group) and settings.admin_group in principal.groups
 
 
+def is_platform_member(principal: Principal, settings: Settings) -> bool:
+    """Return True when *principal* may use the platform at all.
+
+    Mirrors golang-htcondor's ``groupSet`` semantics: a principal is a member
+    when it holds ANY group in ``settings.access_groups``, compared
+    case-insensitively and exactly. The principal directory yields only the
+    groups a user is a direct member of, so a subgroup member is not matched
+    by its parent's name; list the subgroup itself. An empty list admits every
+    authenticated principal.
+    """
+    if not settings.access_groups:
+        return True
+    held = {group.casefold() for group in principal.groups}
+    return any(group.casefold() in held for group in settings.access_groups)
+
+
 def resolve_action_type(
     target: str,
     tool_name: str,

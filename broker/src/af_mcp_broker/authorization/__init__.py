@@ -12,6 +12,7 @@ from af_mcp_broker.authorization.base import (
     get_principal_permissions,
     groups_granting_any,
     is_admin,
+    is_platform_member,
     load_policy,
     resolve_action_type,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "get_principal_permissions",
     "groups_granting_any",
     "is_admin",
+    "is_platform_member",
     "load_policy",
     "resolve_action_type",
 ]

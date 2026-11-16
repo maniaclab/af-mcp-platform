@@ -16,6 +16,7 @@ from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
     InvalidTokenError,
+    NotAPlatformMemberError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
     TokenExpiredError,
@@ -550,6 +551,124 @@ async def test_valid_jwt_accepted_with_a_token_registry_that_raises_on_every_cal
 
     principal = await keycloak_dependency(
         fake_request, SimpleNamespace(credentials=token), settings
+    )
+
+    assert principal.subject == "user-123"
+
+
+# --- platform membership (Settings.access_groups) ---------------------------
+
+
+async def test_jwt_of_a_non_member_is_refused_naming_the_group(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["/example/other"]
+    prime_jwks([sig_key.jwk])
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+
+    with pytest.raises(NotAPlatformMemberError) as exc:
+        await get_principal(sig_key.sign(make_claims()), gated, cache, _NO_NETWORK)
+
+    assert exc.value.detail == {
+        "error": "not_a_platform_member",
+        "message": (
+            "You don't have access to this platform. It requires membership "
+            "in one of: /example/af. Ask to join one of these groups."
+        ),
+    }
+
+
+async def test_jwt_of_a_member_with_no_other_permission_is_admitted(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["/EXAMPLE/af"]
+    prime_jwks([sig_key.jwk])
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+
+    principal = await get_principal(
+        sig_key.sign(make_claims()), gated, cache, _NO_NETWORK
+    )
+
+    assert principal.subject == "user-123"
+
+
+async def test_non_member_denial_is_an_info_event_with_subject_and_reason(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    cache, _directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(NotAPlatformMemberError),
+    ):
+        await get_principal(sig_key.sign(make_claims()), gated, cache, _NO_NETWORK)
+
+    denial = [e for e in logs if e["event"] == "identity.not_a_member"]
+    assert len(denial) == 1
+    assert denial[0]["log_level"] == "info"
+    assert denial[0]["subject"] == "user-123"
+    assert denial[0]["reason"] == "not_in_access_groups"
+
+
+async def test_removed_member_loses_access_within_one_cache_refresh(
+    settings, sig_key, prime_jwks, static_principal_cache, monkeypatch
+):
+    cache, directory = static_principal_cache
+    prime_jwks([sig_key.jwk])
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+    directory.groups_by_subject["user-123"] = ["/example/af"]
+    token = sig_key.sign(make_claims())
+    await get_principal(token, gated, cache, _NO_NETWORK)
+
+    directory.groups_by_subject["user-123"] = []
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + 2000.0)
+
+    with pytest.raises(NotAPlatformMemberError):
+        await get_principal(token, gated, cache, _NO_NETWORK)
+
+
+async def _mint_pat_record(backend: InMemoryTokenRegistryBackend) -> str:
+    plaintext, lookup_id, secret_hash = mint_pat()
+    await backend.add(
+        TokenRecord(
+            lookup_id=lookup_id,
+            principal_id="user-123",
+            secret_hash=secret_hash,
+            name="t",
+            created_at=time.time(),
+            expires_at=time.time() + 3600,
+            revoked_at=None,
+            last_used_at=None,
+        )
+    )
+    return plaintext
+
+
+async def test_pat_of_a_non_member_is_refused(settings, static_principal_cache):
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["/example/other"]
+    backend = InMemoryTokenRegistryBackend()
+    plaintext = await _mint_pat_record(backend)
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+
+    with pytest.raises(NotAPlatformMemberError):
+        await resolve_pat_principal(plaintext, gated, backend, cache, LastUsedTracker())
+
+
+async def test_pat_of_a_member_is_admitted(settings, static_principal_cache):
+    cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["/example/af"]
+    backend = InMemoryTokenRegistryBackend()
+    plaintext = await _mint_pat_record(backend)
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+
+    principal = await resolve_pat_principal(
+        plaintext, gated, backend, cache, LastUsedTracker()
     )
 
     assert principal.subject == "user-123"

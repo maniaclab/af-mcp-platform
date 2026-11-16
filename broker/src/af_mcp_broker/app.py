@@ -35,6 +35,7 @@ from af_mcp_broker.identity import (
     IdentityError,
     InvalidTokenError,
     JwksUnavailableError,
+    NotAPlatformMemberError,
     NotAuthenticatedError,
     PrincipalDirectoryUnavailableError,
     TokenAudienceError,
@@ -78,6 +79,7 @@ from af_mcp_broker.wiring.identity import (
     build_mcp_auth_code_store,
     build_principal_cache,
     build_token_registry,
+    log_access_groups,
     require_oidc_issuer,
 )
 from af_mcp_broker.wiring.lifecycle import (
@@ -192,6 +194,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
 
         require_oidc_issuer(settings)
         dev_principal = build_dev_bypass_principal(settings)
+        log_access_groups(settings)
         _warn_replica_hazards(settings)
         shared_state = open_shared_state(settings, stack)
 
@@ -589,6 +592,7 @@ _IDENTITY_ERROR_RESPONSES: dict[
     ),
     JwksUnavailableError: (status.HTTP_502_BAD_GATEWAY, None),
     AdminRequiredError: (status.HTTP_403_FORBIDDEN, None),
+    NotAPlatformMemberError: (status.HTTP_403_FORBIDDEN, None),
 }
 
 _CREDENTIAL_ERROR_STATUS: dict[type[CredentialError], int] = {

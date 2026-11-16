@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx2
 import pytest
+import structlog
 from cryptography.fernet import Fernet
 
 from af_mcp_broker.config import KeycloakBrokeredProviderConfig, Settings
@@ -28,6 +29,7 @@ from af_mcp_broker.wiring.identity import (
     build_mcp_auth_code_store,
     build_principal_cache,
     build_token_registry,
+    log_access_groups,
 )
 from af_mcp_broker.wiring.vault import build_vault_connections
 
@@ -257,3 +259,22 @@ class TestBuildVaultConnections:
 
         assert settings.uses_vault is False
         assert _settings(principal_cache_backend="vault").uses_vault is True
+
+
+def test_log_access_groups_names_the_required_groups_at_info() -> None:
+    with structlog.testing.capture_logs() as logs:
+        log_access_groups(Settings(access_groups=["/example/af", "/example/ops"]))
+
+    (line,) = [e for e in logs if e["event"] == "identity.access_groups"]
+    assert line["log_level"] == "info"
+    assert line["mode"] == "restricted"
+    assert line["groups"] == ["/example/af", "/example/ops"]
+
+
+def test_log_access_groups_says_open_when_unset() -> None:
+    with structlog.testing.capture_logs() as logs:
+        log_access_groups(Settings())
+
+    (line,) = [e for e in logs if e["event"] == "identity.access_groups"]
+    assert line["mode"] == "open"
+    assert line["groups"] == []

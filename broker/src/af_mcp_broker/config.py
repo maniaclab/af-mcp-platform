@@ -18,7 +18,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
 from af_mcp_broker.vault_config import VaultConfig
@@ -500,6 +500,18 @@ class Settings(BaseSettings):
     # Empty means no admin surface is reachable by anyone: fail closed, no
     # magic default group name.
     admin_group: str = ""
+
+    # Groups that gate the whole platform (identity.require_platform_member):
+    # a principal holding ANY listed group, compared case-insensitively and
+    # exactly (a subgroup is not a member of its parent), may use /v1 and
+    # /mcp; everyone else gets a 403 naming these groups. Empty (the default)
+    # admits every authenticated principal. Entries use the spelling the
+    # principal directory yields (see principal_directory_group_full_path).
+    # Env form is a comma-separated list, like golang-htcondor's
+    # HTTP_API_MCP_ACCESS_GROUP: whitespace is trimmed and empty entries are
+    # dropped. NoDecode keeps pydantic-settings from demanding JSON for the
+    # env value.
+    access_groups: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
@@ -1213,6 +1225,15 @@ class Settings(BaseSettings):
                 "identity_providers entry, and set VAULT_ADDR."
             )
         return self
+
+    @field_validator("access_groups", mode="before")
+    @classmethod
+    def _parse_access_groups(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, list):
+            return [entry.strip() for entry in value if entry.strip()]
+        return value
 
     @field_validator("broker_token_ttl_seconds")
     @classmethod

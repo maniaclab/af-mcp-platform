@@ -960,3 +960,30 @@ def test_usage_rollup_interval_must_be_positive(value):
 def test_usage_batch_settings_must_be_positive(name, value):
     with pytest.raises(ValueError, match=name):
         Settings(**{name: value})
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("/example/af", ["/example/af"], id="single"),
+        pytest.param(
+            "/example/af, /example/ops", ["/example/af", "/example/ops"], id="trimmed"
+        ),
+        pytest.param("a,,b, ,", ["a", "b"], id="empty-entries-dropped"),
+        pytest.param("", [], id="empty-string"),
+        pytest.param("  ,  ", [], id="only-separators"),
+    ],
+)
+def test_access_groups_parses_a_comma_list_from_the_environment(
+    monkeypatch, raw, expected
+):
+    monkeypatch.setenv("ACCESS_GROUPS", raw)
+    assert Settings().access_groups == expected
+
+
+def test_access_groups_defaults_to_empty():
+    assert Settings().access_groups == []
+
+
+def test_access_groups_accepts_a_list_and_normalises_entries():
+    assert Settings(access_groups=[" a ", "", "b"]).access_groups == ["a", "b"]

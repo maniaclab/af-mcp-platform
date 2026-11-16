@@ -57,7 +57,11 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import SecretStr
 
-from af_mcp_broker.identity import InvalidTokenError, TokenExpiredError
+from af_mcp_broker.identity import (
+    InvalidTokenError,
+    TokenExpiredError,
+    require_platform_member,
+)
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.pat import parse_pat, verify_secret
 from af_mcp_broker.principal import Principal
@@ -156,7 +160,7 @@ async def resolve_pat_principal(
         raise _vague_401() from None
 
     bind_subject(record.principal_id)
-    return Principal(
+    principal = Principal(
         subject=record.principal_id,
         email=attributes.email,
         uid=attributes.uid,
@@ -169,6 +173,8 @@ async def resolve_pat_principal(
         # records attribute the call to this specific token (issue #247).
         token_id=lookup_id,
     )
+    require_platform_member(principal, settings)
+    return principal
 
 
 async def _resolve_authority(
