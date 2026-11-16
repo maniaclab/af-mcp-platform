@@ -815,6 +815,7 @@ describe('permissions client (issue #144 step 4: permission PATs)', () => {
   it('fetchRateLimits returns the rules with the caller usage of each', async () => {
     const fetchMock = mockJson(200, {
       usage_available: true,
+      unlisted_services: ['jhub'],
       rate_limits: [
         {
           action_type: 'state_change',
@@ -823,6 +824,7 @@ describe('permissions client (issue #144 step 4: permission PATs)', () => {
           window_seconds: 300,
           used: 12,
           resets_in_seconds: 180,
+          tools: ['condor_submit_job'],
         },
       ],
     });
@@ -833,6 +835,8 @@ describe('permissions client (issue #144 step 4: permission PATs)', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/v1/rate-limits');
     expect(result.usage_available).toBe(true);
     expect(result.rate_limits[0].used).toBe(12);
+    expect(result.rate_limits[0].tools).toEqual(['condor_submit_job']);
+    expect(result.unlisted_services).toEqual(['jhub']);
   });
 });
 

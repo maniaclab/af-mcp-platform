@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { CatalogTool, RateLimitStatus } from '../api';
+import type { RateLimitStatus } from '../api';
 import {
-  coveredToolNames,
   describeRule,
   formatDuration,
   ruleSentence,
@@ -18,12 +17,9 @@ function rule(overrides: Partial<RateLimitStatus> = {}): RateLimitStatus {
     window_seconds: 300,
     used: 0,
     resets_in_seconds: null,
+    tools: [],
     ...overrides,
   };
-}
-
-function tool(name: string, action_type: CatalogTool['action_type'] = 'read'): CatalogTool {
-  return { name, description: '', action_type, permission: '__none__' };
 }
 
 describe('windowLabel', () => {
@@ -125,60 +121,5 @@ describe('usageTone', () => {
     [75, 'bad'],
   ] as const)('%s of 60 used is %s', (used, tone) => {
     expect(usageTone(rule({ used }))).toBe(tone);
-  });
-});
-
-describe('coveredToolNames', () => {
-  const tools = [
-    tool('rucio_list_dids'),
-    tool('condor_submit_job', 'state_change'),
-    tool('condor_submit_dag', 'state_change'),
-    tool('condor_query_jobs'),
-    tool('jhub_create_jupyter_server', 'state_change'),
-  ];
-
-  it('matches a glob over the tool name, sorted', () => {
-    expect(coveredToolNames(rule({ tool: 'condor_submit_*' }), tools)).toEqual([
-      'condor_submit_dag',
-      'condor_submit_job',
-    ]);
-  });
-
-  it('matches an action type', () => {
-    expect(coveredToolNames(rule({ action_type: 'state_change' }), tools)).toEqual([
-      'condor_submit_dag',
-      'condor_submit_job',
-      'jhub_create_jupyter_server',
-    ]);
-  });
-
-  it('requires every selector the rule sets', () => {
-    expect(coveredToolNames(rule({ action_type: 'read', tool: 'condor_*' }), tools)).toEqual([
-      'condor_query_jobs',
-    ]);
-  });
-
-  it('matches an exact name only exactly', () => {
-    expect(coveredToolNames(rule({ tool: 'jhub_create_jupyter_server' }), tools)).toEqual([
-      'jhub_create_jupyter_server',
-    ]);
-    expect(coveredToolNames(rule({ tool: 'condor_submit' }), tools)).toEqual([]);
-  });
-
-  it('follows fnmatch: ? is one character, [seq] a set, [!seq] its complement', () => {
-    const names = [tool('a1'), tool('a2'), tool('ab'), tool('a10')];
-    expect(coveredToolNames(rule({ tool: 'a?' }), names)).toEqual(['a1', 'a2', 'ab']);
-    expect(coveredToolNames(rule({ tool: 'a[12]' }), names)).toEqual(['a1', 'a2']);
-    expect(coveredToolNames(rule({ tool: 'a[!12]' }), names)).toEqual(['ab']);
-  });
-
-  it('treats an unclosed [ and regex metacharacters literally', () => {
-    const names = [tool('a[b'), tool('a.b'), tool('axb')];
-    expect(coveredToolNames(rule({ tool: 'a[b' }), names)).toEqual(['a[b']);
-    expect(coveredToolNames(rule({ tool: 'a.b' }), names)).toEqual(['a.b']);
-  });
-
-  it('is case sensitive, as fnmatch is on the broker', () => {
-    expect(coveredToolNames(rule({ tool: 'CONDOR_*' }), tools)).toEqual([]);
   });
 });

@@ -62,7 +62,11 @@ async function mountPage(permissions = PERMISSIONS) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  vi.mocked(fetchRateLimits).mockResolvedValue({ rate_limits: [], usage_available: true });
+  vi.mocked(fetchRateLimits).mockResolvedValue({
+    rate_limits: [],
+    usage_available: true,
+    unlisted_services: [],
+  });
 });
 
 describe('EntitlementsPage', () => {

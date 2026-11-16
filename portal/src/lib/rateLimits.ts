@@ -1,12 +1,11 @@
 /**
- * rateLimits.ts — plain-language wording and tool matching for GET
- * /v1/rate-limits (broker/src/af_mcp_broker/api/rate_limits.py), the rules
+ * rateLimits.ts — plain-language wording for GET /v1/rate-limits (broker/src/af_mcp_broker/api/rate_limits.py), the rules
  * RateLimitsSection.vue renders. Pure data-in/data-out, like serverTools.ts.
  *
  * Action types are worded as the permission matrix words them ("read",
  * "state-changing"); tools are "methods", as everywhere else in the portal.
  */
-import type { CatalogTool, RateLimitStatus } from './api';
+import type { RateLimitStatus } from './api';
 
 const ACTION_ADJECTIVE = { read: 'Read', state_change: 'State-changing' } as const;
 
@@ -87,49 +86,4 @@ export function usageTone(rule: RateLimitStatus): 'ok' | 'warn' | 'bad' | 'off' 
   if (rule.used === null) return 'off';
   if (atLimit(rule)) return 'bad';
   return rule.used >= rule.limit * 0.8 ? 'warn' : 'ok';
-}
-
-// fnmatch.fnmatch on posix is case sensitive: `*` and `?` match any
-// character, `[seq]` a set, `[!seq]` its complement, and an unclosed `[` is
-// itself. Everything else is literal.
-function globToRegExp(glob: string): RegExp {
-  let pattern = '';
-  for (let i = 0; i < glob.length; i++) {
-    const ch = glob[i];
-    if (ch === '*') {
-      pattern += '[\\s\\S]*';
-    } else if (ch === '?') {
-      pattern += '[\\s\\S]';
-    } else if (ch === '[') {
-      let end = i + 1;
-      if (glob[end] === '!') end++;
-      if (glob[end] === ']') end++;
-      while (end < glob.length && glob[end] !== ']') end++;
-      if (end >= glob.length) {
-        pattern += '\\[';
-      } else {
-        let set = glob.slice(i + 1, end).replaceAll('\\', '\\\\');
-        if (set.startsWith('!')) set = `^${set.slice(1)}`;
-        else if (set.startsWith('^')) set = `\\${set}`;
-        pattern += `[${set}]`;
-        i = end;
-      }
-    } else {
-      pattern += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-  }
-  return new RegExp(`^${pattern}$`);
-}
-
-/** Names of *tools* the rule covers, sorted: every selector the rule sets must match. */
-export function coveredToolNames(rule: RateLimitStatus, tools: CatalogTool[]): string[] {
-  const matcher = rule.tool === null ? null : globToRegExp(rule.tool);
-  return tools
-    .filter(
-      (t) =>
-        (rule.action_type === null || rule.action_type === t.action_type) &&
-        (matcher === null || matcher.test(t.name)),
-    )
-    .map((t) => t.name)
-    .sort();
 }

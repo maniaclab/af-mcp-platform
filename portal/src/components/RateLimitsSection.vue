@@ -8,61 +8,29 @@
  * permission matrix, so a broker without the endpoint (or an outage of the
  * usage store) never hides the matrix.
  *
- * Which methods a rule covers is computed here, not by the broker: the broker
- * would have to list every backend to know. The page asks for the methods of
- * each service the caller can list (the Services page's own endpoint), and
- * says so when it could not list one, so the covered lists are never silently
- * incomplete. Only fetched when there are rules to match.
+ * Which methods a rule covers comes from the broker, matched with the same
+ * matcher that enforces the limit. The broker also names the services whose
+ * methods it could not list, and this section says so, so the covered lists
+ * are never silently incomplete.
  */
 import { onMounted, ref } from 'vue';
-import {
-  fetchCatalog,
-  fetchRateLimits,
-  fetchServerTools,
-  type CatalogTool,
-  type RateLimitsResponse,
-} from '../lib/api';
-import { coveredToolNames, describeRule, usageLabel, usageTone } from '../lib/rateLimits';
+import { fetchRateLimits, type RateLimitsResponse } from '../lib/api';
+import { describeRule, usageLabel, usageTone } from '../lib/rateLimits';
 import { useLoadState } from '../lib/useLoadState';
 import StatusMark from './ui/StatusMark.vue';
 import ToolNameList from './ui/ToolNameList.vue';
 import AsyncState from './ui/AsyncState.vue';
 
-const response = ref<RateLimitsResponse>({ rate_limits: [], usage_available: true });
-const tools = ref<CatalogTool[]>([]);
-const toolsLoading = ref(false);
-// Services whose methods are missing from `tools`: not available to the
-// caller, or the listing failed.
-const unlisted = ref<string[]>([]);
-const toolsFailed = ref(false);
+const response = ref<RateLimitsResponse>({
+  rate_limits: [],
+  usage_available: true,
+  unlisted_services: [],
+});
 const { loading, error, sessionExpired, accessDenied, run } = useLoadState();
-
-async function loadTools(): Promise<void> {
-  toolsLoading.value = true;
-  try {
-    const { servers } = await fetchCatalog();
-    const listable = servers.filter((s) => s.status === 'available');
-    unlisted.value = servers.filter((s) => s.status !== 'available').map((s) => s.name);
-    const listings = await Promise.allSettled(listable.map((s) => fetchServerTools(s.name)));
-    listings.forEach((result, i) => {
-      if (result.status === 'fulfilled' && result.value.status === 'ok') {
-        tools.value.push(...result.value.tools);
-      } else {
-        unlisted.value.push(listable[i].name);
-      }
-    });
-  } catch {
-    toolsFailed.value = true;
-  } finally {
-    toolsLoading.value = false;
-  }
-}
 
 onMounted(() =>
   run(async () => {
     response.value = await fetchRateLimits();
-    // Not awaited: the rules and usage are useful before the method lists arrive.
-    if (response.value.rate_limits.length > 0) void loadTools();
   }, 'Could not load rate limits.'),
 );
 </script>
@@ -122,12 +90,7 @@ onMounted(() =>
                 ><span>: {{ describeRule(rule).budget }}</span>
               </th>
               <td>
-                <span v-if="toolsLoading" class="af-sub">Loading methods…</span>
-                <span v-else-if="toolsFailed" class="af-sub">Could not list your methods.</span>
-                <ToolNameList
-                  v-else-if="coveredToolNames(rule, tools).length > 0"
-                  :names="coveredToolNames(rule, tools)"
-                />
+                <ToolNameList v-if="rule.tools.length > 0" :names="rule.tools" />
                 <span v-else class="af-sub">No tool of yours matches this limit.</span>
               </td>
               <td>
@@ -138,11 +101,11 @@ onMounted(() =>
         </table>
       </div>
 
-      <p v-if="unlisted.length > 0" class="af-help" data-testid="rl-unlisted">
+      <p v-if="response.unlisted_services.length > 0" class="af-help" data-testid="rl-unlisted">
         Methods of these services are not listed above, because they are unavailable to you or could
         not be fetched:
-        <code v-for="(name, i) in unlisted" :key="name"
-          >{{ name }}<template v-if="i < unlisted.length - 1">, </template></code
+        <code v-for="(name, i) in response.unlisted_services" :key="name"
+          >{{ name }}<template v-if="i < response.unlisted_services.length - 1">, </template></code
         >.
       </p>
     </AsyncState>
