@@ -620,7 +620,7 @@ def build_principal_cache_backend(
                 vault_kv=require(
                     vault_kv, "principal_cache_backend=vault requires a Vault client"
                 ),
-                kv_path_prefix=settings.principal_cache_kv_path_prefix,
+                kv_path_prefix=settings.vault_kv_paths.principal_cache,
             )
         case _:
             assert_never(backend)

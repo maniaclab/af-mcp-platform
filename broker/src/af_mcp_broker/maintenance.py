@@ -437,7 +437,7 @@ def build_maintenance_store(
                 vault_kv=require(
                     vault_kv, "maintenance_mode_backend=vault requires a Vault client"
                 ),
-                kv_path_prefix=settings.maintenance_mode_kv_path_prefix,
+                kv_path_prefix=settings.vault_kv_paths.maintenance_mode,
             )
         case PostgresMaintenanceStoreConfig(dsn=dsn):
             store = PostgresMaintenanceModeStore(dsn.get_secret_value())

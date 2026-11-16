@@ -82,6 +82,7 @@ def servicex_token_env(
         if with_vault:
             monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
             monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+            monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
             monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
         else:
             monkeypatch.delenv("VAULT_ADDR", raising=False)
