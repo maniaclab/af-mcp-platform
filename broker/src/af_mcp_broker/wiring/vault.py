@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.vault_kv import VaultConnections
 
 if TYPE_CHECKING:
     import httpx2
@@ -16,10 +16,10 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-async def build_vault_kv(
+async def build_vault_connections(
     settings: Settings, http_client: httpx2.AsyncClient
-) -> VaultKV | None:
-    """Return the authenticated Vault client, or None when no configured subsystem uses Vault (``Settings.uses_vault``).
+) -> VaultConnections:
+    """Return the process's Vault clients, trial-authenticating the deployment's Vault when a configured subsystem uses it (``Settings.uses_vault``).
 
     One VaultKV instance (one K8s auth login per process) is shared by every
     Vault-backed store -- the oauth21 token store, the token registry, the
@@ -30,17 +30,11 @@ async def build_vault_kv(
     *settings* without the connection settings whenever ``uses_vault``
     holds.
     """
+    connections = VaultConnections(http_client)
     vault = settings.vault
     if vault is None:
-        return None
-    vault_kv = VaultKV(
-        addr=vault.addr,
-        auth_mount=vault.auth_mount,
-        auth_role=vault.auth_role,
-        kv_mount=vault.kv_mount,
-        sa_token_path=vault.sa_token_path,
-        http_client=http_client,
-    )
+        return connections
+    vault_kv = connections.connect(vault)
     # Trial authentication only -- proves the K8s auth flow works (SA JWT
     # readable, Vault reachable, role accepted) without touching any
     # stored credential or token-registry entry. A misconfigured Vault
@@ -52,4 +46,4 @@ async def build_vault_kv(
         logger.exception("vault_auth.failed")
         raise RuntimeError(f"Vault K8s auth failed at startup: {exc}") from exc
     logger.info("vault_auth.ok", vault_addr=vault.addr)
-    return vault_kv
+    return connections

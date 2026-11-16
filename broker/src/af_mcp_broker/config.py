@@ -21,6 +21,7 @@ from pydantic import (
 from pydantic_settings import BaseSettings
 
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
+from af_mcp_broker.vault_config import VaultConfig
 
 log = structlog.get_logger(__name__)
 
@@ -313,18 +314,6 @@ IdentityProviderConfig = Annotated[
 PostgresDsn = Annotated[SecretStr, Field(min_length=1)]
 
 
-class VaultConfig(BaseModel):
-    """Connection settings of the Vault/OpenBao transport, shared by every Vault-backed store."""
-
-    model_config = ConfigDict(frozen=True)
-
-    addr: str = Field(min_length=1)
-    auth_mount: str
-    auth_role: str = Field(min_length=1)
-    kv_mount: str
-    sa_token_path: str
-
-
 class VaultKvPaths(BaseModel):
     """The KV-v2 path prefix of every Vault-backed store, derived from one root.
 
@@ -417,6 +406,25 @@ class InMemoryMaintenanceStoreConfig(BaseModel):
     """The maintenance-mode flag is kept in process memory."""
 
     model_config = ConfigDict(frozen=True)
+
+
+class InMemoryBackendConfig(BaseModel):
+    """The state is kept in process memory."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class VaultBackendConfig(BaseModel):
+    """The state is kept in Vault."""
+
+    model_config = ConfigDict(frozen=True)
+
+    vault: VaultConfig
+
+
+# The persistence choice of a store that is in memory or in Vault: the OAuth
+# 2.1 token store, the token registry and the principal cache.
+VaultSelectableBackendConfig = InMemoryBackendConfig | VaultBackendConfig
 
 
 class VaultMaintenanceStoreConfig(BaseModel):
@@ -1109,6 +1117,34 @@ class Settings(BaseSettings):
                 )
             case _:
                 assert_never(backend)
+
+    def _vault_selectable_backend(
+        self, backend: Literal["in_memory", "vault"]
+    ) -> VaultSelectableBackendConfig:
+        match backend:
+            case "in_memory":
+                return InMemoryBackendConfig()
+            case "vault":
+                # Parsed so ``_validate_vault_config``'s guarantee is
+                # re-proved by the model rather than assumed.
+                return VaultBackendConfig.model_validate({"vault": self.vault})
+            case _:
+                assert_never(backend)
+
+    @property
+    def token_store(self) -> VaultSelectableBackendConfig:
+        """The OAuth 2.1 token store selected by ``token_store_backend``, carrying the settings it needs."""
+        return self._vault_selectable_backend(self.token_store_backend)
+
+    @property
+    def token_registry(self) -> VaultSelectableBackendConfig:
+        """The token registry selected by ``token_registry_backend``, carrying the settings it needs."""
+        return self._vault_selectable_backend(self.token_registry_backend)
+
+    @property
+    def principal_cache(self) -> VaultSelectableBackendConfig:
+        """The principal cache selected by ``principal_cache_backend``, carrying the settings it needs."""
+        return self._vault_selectable_backend(self.principal_cache_backend)
 
     @property
     def maintenance_store(self) -> MaintenanceStoreConfig:

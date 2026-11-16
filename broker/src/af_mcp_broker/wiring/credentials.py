@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.mcp.aggregator import BackendProviders
     from af_mcp_broker.service_registry import ServiceRegistry
     from af_mcp_broker.shared_state import SharedState
-    from af_mcp_broker.vault_kv import VaultKV
+    from af_mcp_broker.vault_kv import VaultConnections
 
 
 def build_state_cipher(settings: Settings) -> Fernet | None:
@@ -84,12 +84,12 @@ def build_state_cipher(settings: Settings) -> Fernet | None:
 
 
 def build_oauth21_token_store(
-    settings: Settings, vault_kv: VaultKV | None
+    settings: Settings, vaults: VaultConnections
 ) -> InMemoryTokenStore | VaultTokenStore | None:
     """Build the token store the oauth21-direct providers share, or None when no such entry is configured."""
     if not any(cfg.type == "oauth21-direct" for cfg in settings.identity_providers):
         return None
-    return build_token_store(settings, vault_kv)
+    return build_token_store(settings, vaults)
 
 
 def build_broker_token_issuer(settings: Settings) -> BrokerTokenIssuer | None:

@@ -422,7 +422,8 @@ flowchart TB
         m_metrics["metrics"]
         m_version["_version"]
         m_pat["pat"]
-        m_errors ~~~ m_constants ~~~ m_principal ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat
+        m_vault_config["vault_config"]
+        m_errors ~~~ m_constants ~~~ m_principal ~~~ m_logging ~~~ m_metrics ~~~ m_version ~~~ m_pat ~~~ m_vault_config
     end
     appL --> wiring --> edges --> tokenid --> ident --> stateL --> features --> providers --> meteringL --> otelL --> usageL --> auditL --> platform --> stores --> settings --> leaf
 ```

@@ -93,7 +93,7 @@ from af_mcp_broker.wiring.lifecycle import (
 )
 from af_mcp_broker.wiring.services import build_identity_targets, build_service_catalog
 from af_mcp_broker.wiring.state import build_broker_state
-from af_mcp_broker.wiring.vault import build_vault_kv
+from af_mcp_broker.wiring.vault import build_vault_connections
 
 logger = structlog.get_logger(__name__)
 
@@ -210,8 +210,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         credential_cache = build_credential_cache(
             settings, shared_state, list_cache_invalidator, stack
         )
-        vault_kv = await build_vault_kv(settings, http_client)
-        oauth21_token_store = build_oauth21_token_store(settings, vault_kv)
+        vaults = await build_vault_connections(settings, http_client)
+        vault = settings.vault
+        vault_kv = vaults.connect(vault) if vault is not None else None
+        oauth21_token_store = build_oauth21_token_store(settings, vaults)
         oauth21_state_cipher = build_state_cipher(settings)
         broker_token_issuer = build_broker_token_issuer(settings)
         link_stores = (
@@ -236,16 +238,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         mcp_auth_code_store = build_mcp_auth_code_store(
             settings, oauth21_state_cipher, shared_state
         )
-        token_registries = build_token_registry(settings, vault_kv, shared_state)
+        token_registries = build_token_registry(settings, vaults, shared_state)
         principal_cache = build_principal_cache(
             settings,
-            vault_kv,
+            vaults,
             http_client,
             dev_bypass_active=dev_principal is not None,
         )
-        maintenance_mode_store = await start_maintenance_store(
-            settings, vault_kv, stack
-        )
+        maintenance_mode_store = await start_maintenance_store(settings, vaults, stack)
 
         # Where the tool-listing lint's findings are recorded for the admin
         # tables (lint_observations.py): shared, so every replica reports the

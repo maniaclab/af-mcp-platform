@@ -14,39 +14,37 @@ from typing import TYPE_CHECKING, assert_never
 
 import structlog
 
+from af_mcp_broker.config import InMemoryBackendConfig, VaultBackendConfig
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore
 from af_mcp_broker.credentials.oauth21 import InMemoryTokenStore
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore
 from af_mcp_broker.credentials.vault import VaultTokenStore
 from af_mcp_broker.credentials.x509_vault import VaultX509Store
-from af_mcp_broker.errors import require
 
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
-    from af_mcp_broker.vault_kv import VaultKV
+    from af_mcp_broker.vault_kv import VaultConnections, VaultKV
 
 logger = structlog.get_logger(__name__)
 
 
 def build_token_store(
-    settings: Settings, vault_kv: VaultKV | None
+    settings: Settings, vaults: VaultConnections
 ) -> InMemoryTokenStore | VaultTokenStore:
     """Build the OAuth 2.1 token store selected by ``settings.token_store_backend``.
 
-    *vault_kv* is the process-wide Vault transport, present whenever
-    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
-    ``match`` is exhaustive over the config Literal: ``assert_never`` makes
+    *vaults* hands out the process-wide Vault transport for the
+    ``VaultConfig`` the selected backend carries. The ``match`` is exhaustive
+    over the config union: ``assert_never`` makes
     mypy fail when a backend name is added without a branch here.
     """
-    backend = settings.token_store_backend
+    backend = settings.token_store
     match backend:
-        case "in_memory":
+        case InMemoryBackendConfig():
             return InMemoryTokenStore()
-        case "vault":
+        case VaultBackendConfig(vault=vault):
             return VaultTokenStore(
-                vault_kv=require(
-                    vault_kv, "token_store_backend=vault requires a Vault client"
-                ),
+                vault_kv=vaults.connect(vault),
                 kv_path_prefix=settings.vault_kv_paths.tokens,
             )
         case _:

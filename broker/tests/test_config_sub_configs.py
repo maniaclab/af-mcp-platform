@@ -6,11 +6,13 @@ import pytest
 
 from af_mcp_broker.config import (
     CredmonApiConfig,
+    InMemoryBackendConfig,
     InMemoryMaintenanceStoreConfig,
     InMemoryUsageStoreConfig,
     PostgresMaintenanceStoreConfig,
     PostgresUsageStoreConfig,
     Settings,
+    VaultBackendConfig,
     VaultConfig,
     VaultMaintenanceStoreConfig,
 )
@@ -83,6 +85,36 @@ class TestUsageStoreConfig:
         store = settings.usage_store
         assert isinstance(store, PostgresUsageStoreConfig)
         assert store.dsn.get_secret_value() == "postgresql://u:p@h/db"
+
+
+@pytest.mark.parametrize(
+    ("selector", "property_name"),
+    [
+        ("token_store_backend", "token_store"),
+        ("token_registry_backend", "token_registry"),
+        ("principal_cache_backend", "principal_cache"),
+    ],
+)
+class TestVaultSelectableBackendConfig:
+    def test_in_memory_by_default(self, selector: str, property_name: str) -> None:
+        assert isinstance(
+            getattr(Settings(_env_file=None), property_name), InMemoryBackendConfig
+        )
+
+    def test_vault_carries_the_vault_connection(
+        self, selector: str, property_name: str
+    ) -> None:
+        settings = Settings(_env_file=None, **{selector: "vault"}, **_VAULT)
+
+        backend = getattr(settings, property_name)
+        assert isinstance(backend, VaultBackendConfig)
+        assert backend.vault == settings.vault
+
+    def test_vault_without_connection_settings_fails_boot(
+        self, selector: str, property_name: str
+    ) -> None:
+        with pytest.raises(ValueError, match="VAULT_ADDR"):
+            Settings(_env_file=None, **{selector: "vault"})
 
 
 class TestMaintenanceStoreConfig:
