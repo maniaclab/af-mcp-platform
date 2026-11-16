@@ -595,23 +595,26 @@ async def test_jwt_of_a_member_with_no_other_permission_is_admitted(
 
 
 async def test_non_member_denial_is_an_info_event_with_subject_and_reason(
-    settings, sig_key, prime_jwks, static_principal_cache
+    settings, sig_key, prime_jwks, static_principal_cache, monkeypatch
 ):
+    """Patches ``identity.logger.info`` rather than using ``capture_logs`` for the reason the audience-mismatch test above gives."""
     cache, _directory = static_principal_cache
     prime_jwks([sig_key.jwk])
     gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+    events: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        identity_module.logger,
+        "info",
+        lambda event, **kwargs: events.append((event, kwargs)),
+    )
 
-    with (
-        structlog.testing.capture_logs() as logs,
-        pytest.raises(NotAPlatformMemberError),
-    ):
+    with pytest.raises(NotAPlatformMemberError):
         await get_principal(sig_key.sign(make_claims()), gated, cache, _NO_NETWORK)
 
-    denial = [e for e in logs if e["event"] == "identity.not_a_member"]
-    assert len(denial) == 1
-    assert denial[0]["log_level"] == "info"
-    assert denial[0]["subject"] == "user-123"
-    assert denial[0]["reason"] == "not_in_access_groups"
+    assert (
+        "identity.not_a_member",
+        {"subject": "user-123", "reason": "not_in_access_groups"},
+    ) in events
 
 
 async def test_removed_member_loses_access_within_one_cache_refresh(
