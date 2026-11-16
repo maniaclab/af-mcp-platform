@@ -826,3 +826,66 @@ async def test_missing_fastmcp_context_fails_closed(settings, monkeypatch):
 
     with pytest.raises(AuthorizationError):
         await mw.on_request(context, _call_next)
+
+
+# ---------------------------------------------------------------------------
+# Platform membership (Settings.access_groups): a non-member is refused with a
+# 403 naming the required group before the inner app (and so any tool) runs.
+# ---------------------------------------------------------------------------
+
+
+async def test_jwt_of_a_non_member_gets_a_403_naming_the_group(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["/example/other"]
+    prime_jwks([sig_key.jwk])
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, gated, principal_cache=principal_cache)
+    token = sig_key.sign(make_claims())
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert not inner.called
+    assert _status(messages) == 403
+    assert _header(messages, "www-authenticate") is None
+    assert json.loads(_body(messages))["detail"] == (
+        "You don't have access to this platform. It requires membership "
+        "in one of: /example/af. Ask to join one of these groups."
+    )
+
+
+async def test_jwt_of_a_member_reaches_the_inner_app(
+    settings, sig_key, prime_jwks, static_principal_cache
+):
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = ["/example/af"]
+    prime_jwks([sig_key.jwk])
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(inner, gated, principal_cache=principal_cache)
+    token = sig_key.sign(make_claims())
+
+    messages = await _run(middleware, _http_scope({"authorization": f"Bearer {token}"}))
+
+    assert inner.called
+    assert _status(messages) == 200
+
+
+async def test_pat_of_a_non_member_gets_a_403(settings):
+    backend, plaintext, principal_cache = await _pat_principal_cache_and_token(
+        groups=["/example/other"]
+    )
+    gated = settings.model_copy(update={"access_groups": ["/example/af"]})
+    inner = _InnerApp()
+    middleware = asgi_auth_middleware(
+        inner, gated, pat_backend=backend, principal_cache=principal_cache
+    )
+
+    messages = await _run(
+        middleware, _http_scope({"authorization": f"Bearer {plaintext}"})
+    )
+
+    assert not inner.called
+    assert _status(messages) == 403

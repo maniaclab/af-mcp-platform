@@ -125,6 +125,14 @@
         "adminGroup": {
           "type": "string"
         },
+        "accessGroups": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^,\\s](?:[^,]*[^,\\s])?$"
+          }
+        },
         "mcpStatelessHttp": {
           "type": "boolean"
         },

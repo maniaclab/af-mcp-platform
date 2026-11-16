@@ -36,6 +36,15 @@ def require_oidc_issuer(settings: Settings) -> None:
         raise RuntimeError(msg)
 
 
+def log_access_groups(settings: Settings) -> None:
+    """Log once at boot whether the platform is open to every authenticated principal or restricted to ``Settings.access_groups``."""
+    logger.info(
+        "identity.access_groups",
+        mode="restricted" if settings.access_groups else "open",
+        groups=settings.access_groups,
+    )
+
+
 def build_dev_bypass_principal(settings: Settings) -> Principal | None:
     """Return the local-development bypass principal, or None when the bypass is off.
 

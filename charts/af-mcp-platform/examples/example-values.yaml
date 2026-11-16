@@ -44,6 +44,8 @@ entitlements:
 broker:
   # Keycloak group whose members administer the broker.
   adminGroup: /example/admins
+  accessGroups:
+    - /example/users
   # Confidential client the broker reads group and POSIX attributes with.
   keycloakAdmin:
     clientId: example-keycloak-admin-client

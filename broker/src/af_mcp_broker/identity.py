@@ -11,6 +11,7 @@ import jwt
 import structlog
 from pydantic import SecretStr
 
+from af_mcp_broker.authorization import is_platform_member
 from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
@@ -251,6 +252,22 @@ class AdminRequiredError(IdentityError):
     """Raised by ``require_admin`` when the caller is not a member of the admin group."""
 
 
+class NotAPlatformMemberError(IdentityError):
+    """Raised when an authenticated principal holds none of ``Settings.access_groups``.
+
+    The credential is valid; the principal is simply not a member of this
+    platform, which re-authenticating cannot fix, so /v1 answers 403 (no
+    ``WWW-Authenticate`` challenge) and /mcp likewise. *detail* names the
+    groups so the user knows whom to ask. ``detail`` is a dict, like
+    ``TokenAudienceError``'s, so the portal can tell this 403 from every other
+    one by its stable ``error`` discriminator.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__({"error": "not_a_platform_member", "message": message})
+        self.message = message
+
+
 class PrincipalDirectoryUnavailableError(IdentityError):
     """Raised by ``get_principal`` (issue #144 steps 3 and 3b) when a validated JWT's current groups/POSIX identity cannot be determined because the ``PrincipalDirectory`` has no answer for this subject -- no ``PrincipalCache`` configured at all, or one configured but currently unable to reach the directory with nothing fresh-enough cached to fall back on.
 
@@ -319,6 +336,29 @@ async def _resolve_current_attributes(
         gid=attributes.gid,
         unixname=attributes.unixname,
         groups=attributes.groups,
+    )
+
+
+def require_platform_member(principal: Principal, settings: Settings) -> None:
+    """Raise ``NotAPlatformMemberError`` unless *principal* is a platform member (``Settings.access_groups``).
+
+    The single enforcement point: ``get_principal`` (JWT) and
+    ``pat_auth.resolve_pat_principal`` (PAT) call it right after resolving the
+    principal's current groups, so /v1 and /mcp share it and a removed member
+    loses access within one principal-cache refresh. The denial is an
+    expected policy outcome, hence info level.
+    """
+    if is_platform_member(principal, settings):
+        return
+    logger.info(
+        "identity.not_a_member",
+        subject=principal.subject,
+        reason="not_in_access_groups",
+    )
+    raise NotAPlatformMemberError(
+        "You don't have access to this platform. It requires membership "
+        f"in one of: {', '.join(settings.access_groups)}. Ask to join "
+        "one of these groups."
     )
 
 
@@ -392,6 +432,7 @@ async def get_principal(
         error = exc
     else:
         bind_subject(principal.subject)
+        require_platform_member(principal, settings)
         return principal
 
     logger.warning(

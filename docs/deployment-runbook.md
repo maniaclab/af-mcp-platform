@@ -221,6 +221,7 @@ The "Caught by" column says where each combination is refused. A render failure 
 Two values deserve a decision, not a copy:
 
 - **`broker.identityToken.issuer`.** Backends verify the `iss` against the origin that serves the JWKS, which is the `mcpHost` origin. When empty, the chart sets the issuer to `https://<ingress.mcpHost>` if the ingress is enabled, and never falls back to `broker.publicOrigin` (it can be the portal origin). With the ingress disabled and a signing key set the value is required. Set it explicitly when the JWKS is served from another origin.
+- **`broker.accessGroups`.** Empty admits every authenticated Keycloak user, including a first-time social login with no groups, to the gateway's own tools and PAT minting. List the groups that make someone a member of the platform; a user holding any of them (exact match, case-insensitive, direct memberships only, so list subgroups too) is admitted and everyone else gets a 403 naming them. See [Platform membership](auth.md#platform-membership-access_groups).
 - **`broker.adminGroup`.** Empty means nobody is an admin. Set it before relying on maintenance mode, which an admin-less broker cannot turn off through the API.
 
 ### Network policy values

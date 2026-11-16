@@ -120,6 +120,29 @@ async function throwForUnauthorized(res: Response): Promise<never> {
 }
 
 /**
+ * Called with a 403 *res*: throws AccessDeniedError when the broker says the
+ * signed-in user is not a member of the platform (identity.py's
+ * `not_a_platform_member` detail, naming the groups to ask to join), which
+ * every route would answer the same way. Any other 403 (an admin-only route,
+ * say) is left for the caller's own status handling, so the body is read
+ * from a clone.
+ */
+async function throwIfNotPlatformMember(res: Response): Promise<void> {
+  const body: { detail?: unknown } | null = await res
+    .clone()
+    .json()
+    .catch(() => null);
+  const detail = body?.detail;
+  if (
+    detail &&
+    typeof detail === 'object' &&
+    (detail as { error?: unknown }).error === 'not_a_platform_member'
+  ) {
+    throw new AccessDeniedError((detail as { message: string }).message, null);
+  }
+}
+
+/**
  * Bearer-authenticated fetch against an absolute *url* — the silent-renew-
  * on-401 logic shared by `apiFetch` (broker `/v1` paths, relative to
  * `API_BASE`) and `fetchOAuth21AuthorizeUrl` (an absolute `link_url` handed
@@ -156,6 +179,9 @@ async function authFetch(url: string, init?: RequestInit): Promise<Response> {
     if (res.status === 401) {
       await throwForUnauthorized(res);
     }
+  }
+  if (res.status === 403) {
+    await throwIfNotPlatformMember(res);
   }
   return res;
 }

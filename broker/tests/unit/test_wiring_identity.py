@@ -23,11 +23,13 @@ from af_mcp_broker.token_registry import (
     VaultTokenRegistryBackend,
 )
 from af_mcp_broker.vault_kv import VaultConnections, VaultKV
+from af_mcp_broker.wiring import identity as wiring_identity
 from af_mcp_broker.wiring.identity import (
     build_dev_bypass_principal,
     build_mcp_auth_code_store,
     build_principal_cache,
     build_token_registry,
+    log_access_groups,
 )
 from af_mcp_broker.wiring.vault import build_vault_connections
 
@@ -257,3 +259,35 @@ class TestBuildVaultConnections:
 
         assert settings.uses_vault is False
         assert _settings(principal_cache_backend="vault").uses_vault is True
+
+
+def _access_groups_log(monkeypatch: pytest.MonkeyPatch, settings: Settings):
+    """Run ``log_access_groups`` and return its ``identity.access_groups`` fields.
+
+    Patches ``logger.info`` rather than using ``capture_logs``: the app's
+    ``cache_logger_on_first_use`` keeps an earlier test's bound logger out of
+    reach of the processor swap.
+    """
+    events: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        wiring_identity.logger,
+        "info",
+        lambda event, **kwargs: events.append((event, kwargs)),
+    )
+    log_access_groups(settings)
+    (fields,) = [
+        kwargs for event, kwargs in events if event == "identity.access_groups"
+    ]
+    return fields
+
+
+def test_log_access_groups_names_the_required_groups(monkeypatch) -> None:
+    fields = _access_groups_log(
+        monkeypatch, Settings(access_groups=["/example/af", "/example/ops"])
+    )
+
+    assert fields == {"mode": "restricted", "groups": ["/example/af", "/example/ops"]}
+
+
+def test_log_access_groups_says_open_when_unset(monkeypatch) -> None:
+    assert _access_groups_log(monkeypatch, Settings()) == {"mode": "open", "groups": []}

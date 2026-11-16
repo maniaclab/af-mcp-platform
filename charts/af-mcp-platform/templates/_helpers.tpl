@@ -543,6 +543,13 @@ express it.
 - name: ADMIN_GROUP
   value: {{ .Values.broker.adminGroup | quote }}
 {{- end }}
+{{- if .Values.broker.accessGroups }}
+# Platform access groups -- a principal holding any of them is a member; the
+# rest get a 403 on /v1 and /mcp. Only rendered when non-empty; unset admits
+# every authenticated principal.
+- name: ACCESS_GROUPS
+  value: {{ join "," .Values.broker.accessGroups | quote }}
+{{- end }}
 {{- include "af-mcp-platform.validateOtlp" . }}
 {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled }}
 # OTLP transport (broker.otlp), rendered once for every enabled OpenTelemetry

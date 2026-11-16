@@ -191,6 +191,42 @@ describe('api client', () => {
     expect(rejection.requestId).toBe('abc123');
   });
 
+  it('throws AccessDeniedError when a 403 says the user is not a platform member', async () => {
+    // identity.py's NotAPlatformMemberError: the token is valid but the user
+    // holds none of the broker's access groups, so every page would 403.
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: {
+            error: 'not_a_platform_member',
+            message: "You don't have access to this platform. Ask to join /example/af.",
+          },
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const rejection = await fetchIdentities().catch((e) => e);
+    expect(rejection).toBeInstanceOf(AccessDeniedError);
+    expect(rejection.message).toBe(
+      "You don't have access to this platform. Ask to join /example/af.",
+    );
+  });
+
+  it('leaves every other 403 as an APIError', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ detail: 'This action requires membership in the admin group.' }),
+        {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+    const rejection = await fetchIdentities().catch((e) => e);
+    expect(rejection).toBeInstanceOf(APIError);
+    expect(rejection.status).toBe(403);
+  });
+
   it('returns the parsed body on 200', async () => {
     globalThis.fetch = mockJson(200, {
       subject: 's',

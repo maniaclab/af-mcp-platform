@@ -89,6 +89,15 @@ broker:
   # mode). Empty means no admin surface is reachable by anyone.
   adminGroup: ""
 
+  # Groups that gate the whole platform: a user holding ANY listed group (case
+  # insensitive, exact match -- a subgroup member must be listed explicitly,
+  # because the directory reports only direct memberships) may use the portal,
+  # /v1 and /mcp; everyone else gets a 403 naming these groups. Spell each
+  # entry the way the broker sees group names (bare names, or full paths when
+  # broker.groupFullPath is true). Empty means every authenticated Keycloak
+  # user is a member. Rendered comma-separated as ACCESS_GROUPS.
+  accessGroups: []
+
   # Whether the /mcp aggregator runs Streamable HTTP statelessly (issue #128).
   # Streamable-HTTP sessions
   # are in-process state, so a stateful session (false) only survives an

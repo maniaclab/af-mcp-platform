@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 
 from af_mcp_broker.identity import (
     IdentityError,
+    NotAPlatformMemberError,
     PrincipalDirectoryUnavailableError,
     TokenExpiredError,
     build_dev_principal,
@@ -311,6 +312,18 @@ class AsgiAuthMiddleware:
                     "Your access token has expired — mint a new one at "
                     f"{portal}/tokens",
                     settings,
+                )
+                return
+            except NotAPlatformMemberError as exc:
+                # The credential is valid; the principal is outside
+                # Settings.access_groups. 403 naming the groups (already
+                # logged at info by require_platform_member), no challenge.
+                await send_error(
+                    scope,
+                    receive,
+                    send,
+                    status.HTTP_403_FORBIDDEN,
+                    exc.message,
                 )
                 return
             except PrincipalDirectoryUnavailableError as exc:

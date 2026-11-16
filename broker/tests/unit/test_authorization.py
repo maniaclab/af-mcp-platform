@@ -15,6 +15,7 @@ from af_mcp_broker.authorization import (
     get_principal_permissions,
     groups_granting_any,
     is_admin,
+    is_platform_member,
     load_policy,
     resolve_action_type,
 )
@@ -309,6 +310,37 @@ def test_is_admin(
     settings = Settings(admin_group=admin_group)
     principal = make_principal(groups=groups)
     assert is_admin(principal, settings) is expected
+
+
+@pytest.mark.parametrize(
+    ("access_groups", "groups", "expected"),
+    [
+        pytest.param([], [], True, id="unset_admits_everyone"),
+        pytest.param([], ["atlas"], True, id="unset_admits_any_group"),
+        pytest.param(["/example/af"], ["/example/af"], True, id="member"),
+        pytest.param(["/example/af"], [], False, id="no_groups"),
+        pytest.param(["/example/af"], ["/example/other"], False, id="other_group"),
+        pytest.param(
+            ["/example/af", "/example/ops"], ["/example/ops"], True, id="any_of"
+        ),
+        pytest.param(["/Example/AF"], ["/example/af"], True, id="case_insensitive"),
+        pytest.param(
+            ["/example/af"], ["/example/af/sub"], False, id="subgroup_not_a_prefix"
+        ),
+        pytest.param(
+            ["/example/af"], ["/example/afx"], False, id="exact_not_substring"
+        ),
+    ],
+)
+def test_is_platform_member(
+    make_principal: Callable[..., object],
+    access_groups: list[str],
+    groups: list[str],
+    expected: bool,
+) -> None:
+    settings = Settings(access_groups=access_groups)
+    principal = make_principal(groups=groups)
+    assert is_platform_member(principal, settings) is expected
 
 
 # --- groups_granting_any (issue #395) ---------------------------------------
