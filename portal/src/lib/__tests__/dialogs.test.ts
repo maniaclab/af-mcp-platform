@@ -25,7 +25,7 @@ describe('dialog title', () => {
     expect(rule![1]).toMatch(/gap:\s*var\(--space-8\)/);
   });
 
-  it.each(['src/components/ui/ConfirmDialog.vue', 'src/components/TokensPage.vue'])(
+  it.each(['src/components/ui/ConfirmDialog.vue', 'src/components/MintTokenDialog.vue'])(
     '%s marks its dialog af-modal and titles it with a header h2',
     (file) => {
       const source = read(file);

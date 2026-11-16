@@ -1,0 +1,3 @@
+# A string where the chart needs an integer.
+broker:
+  replicaCount: abc

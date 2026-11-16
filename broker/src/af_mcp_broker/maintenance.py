@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, assert_never
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import structlog
 
 from af_mcp_broker import metrics

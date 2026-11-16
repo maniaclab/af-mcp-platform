@@ -1,0 +1,1166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "af-mcp-platform chart values",
+  "type": "object",
+  "required": [
+    "oidc",
+    "portal",
+    "aggregator",
+    "entitlements"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "registry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "broker": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "portal": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "oidc": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "issuer"
+      ],
+      "additionalProperties": false
+    },
+    "broker": {
+      "type": "object",
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "builtinServiceName": {
+          "type": "string"
+        },
+        "adminGroup": {
+          "type": "string"
+        },
+        "mcpStatelessHttp": {
+          "type": "boolean"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "audience": {
+              "type": "string"
+            },
+            "internalUrl": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "existingServiceTokenSecret": {
+          "type": "string"
+        },
+        "tokenMint": {
+          "type": "object",
+          "properties": {
+            "clientId": {
+              "type": "string"
+            },
+            "existingClientSecretSecret": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "keycloakAdmin": {
+          "type": "object",
+          "properties": {
+            "clientId": {
+              "type": "string"
+            },
+            "existingClientSecretSecret": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "posixAttributes": {
+          "type": "object",
+          "properties": {
+            "uid": {
+              "type": "string",
+              "minLength": 1
+            },
+            "gid": {
+              "type": "string",
+              "minLength": 1
+            },
+            "unixname": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "groupFullPath": {
+          "type": "boolean"
+        },
+        "cimd": {
+          "type": "object",
+          "properties": {
+            "clientName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "publicOrigin": {
+          "type": "string"
+        },
+        "identityProviders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "keycloak-brokered",
+                  "oauth21-direct",
+                  "broker-issued",
+                  "condor-token",
+                  "krb5-token",
+                  "x509",
+                  "servicex-token"
+                ]
+              },
+              "alias": {
+                "type": "string",
+                "minLength": 1
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "enables": {
+                "type": "string"
+              },
+              "authorizationEndpoint": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tokenEndpoint": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revocationEndpoint": {
+                "type": "string"
+              },
+              "issuer": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              },
+              "clientId": {
+                "type": "string"
+              },
+              "existingClientSecretSecret": {
+                "type": "string"
+              },
+              "serviceUrl": {
+                "type": "string",
+                "minLength": 1
+              },
+              "audience": {
+                "type": "string"
+              },
+              "voms": {
+                "type": "string"
+              },
+              "valid": {
+                "type": "string"
+              },
+              "externalLoginUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "alias"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "type": {
+                      "const": "oauth21-direct"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "authorizationEndpoint",
+                    "tokenEndpoint",
+                    "issuer"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "type": {
+                      "const": "condor-token"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "serviceUrl"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "type": {
+                      "const": "krb5-token"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "serviceUrl"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "type": {
+                      "const": "x509"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "serviceUrl"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "type": {
+                      "const": "servicex-token"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "serviceUrl"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "identityToken": {
+          "type": "object",
+          "properties": {
+            "existingSigningKeySecret": {
+              "type": "string"
+            },
+            "existingAdditionalPublicKeysSecret": {
+              "type": "string"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "ttlSeconds": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "credmon": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "htcondorApiUrl": {
+              "type": "string"
+            },
+            "userDomain": {
+              "type": "string"
+            },
+            "existingHtcondorApiTokenSecret": {
+              "type": "string"
+            },
+            "servicePrefix": {
+              "type": "string"
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "x509",
+                  "krb5",
+                  "servicex"
+                ]
+              }
+            },
+            "topTokenTtlSeconds": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
+            "syncIntervalSeconds": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
+            "prometheusRule": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "namespace": {
+                  "type": "string"
+                },
+                "labels": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "vault": {
+          "type": "object",
+          "properties": {
+            "x509KvPathPrefix": {
+              "type": "string"
+            },
+            "krb5KvPathPrefix": {
+              "type": "string"
+            },
+            "servicexKvPathPrefix": {
+              "type": "string"
+            },
+            "credmonKvPathPrefix": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "oauth21": {
+          "type": "object",
+          "properties": {
+            "existingStateKeySecret": {
+              "type": "string"
+            },
+            "stateIssuer": {
+              "type": "string"
+            },
+            "tokenStore": {
+              "type": "object",
+              "properties": {
+                "backend": {
+                  "enum": [
+                    "in_memory",
+                    "in-memory",
+                    "vault"
+                  ]
+                },
+                "vault": {
+                  "type": "object",
+                  "properties": {
+                    "addr": {
+                      "type": "string"
+                    },
+                    "authMount": {
+                      "type": "string"
+                    },
+                    "authRole": {
+                      "type": "string"
+                    },
+                    "kvMount": {
+                      "type": "string"
+                    },
+                    "kvPathPrefix": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "tokenRegistry": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "in_memory",
+                "in-memory",
+                "vault"
+              ]
+            },
+            "kvPathPrefix": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "principalCache": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "in_memory",
+                "in-memory",
+                "vault"
+              ]
+            },
+            "kvPathPrefix": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "metering": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "in_process",
+                "in-process",
+                "inline"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "in_memory",
+                "in-memory",
+                "postgres"
+              ]
+            },
+            "batchMax": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "batchIntervalMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "retentionDays": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "rollupIntervalSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "postgres": {
+              "type": "object",
+              "properties": {
+                "existingSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "networkPolicy": {
+                  "type": "object",
+                  "properties": {
+                    "namespace": {
+                      "type": "string"
+                    },
+                    "clusterName": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "sharedState": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "existingSecret": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "keyPrefix": {
+              "type": "string"
+            },
+            "allowPerReplicaState": {
+              "type": "boolean"
+            },
+            "networkPolicy": {
+              "type": "object",
+              "properties": {
+                "cidr": {
+                  "type": "string"
+                },
+                "namespaceSelector": {
+                  "type": "object"
+                },
+                "podSelector": {
+                  "type": "object"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "maintenanceMode": {
+          "type": "object",
+          "properties": {
+            "backend": {
+              "enum": [
+                "in_memory",
+                "in-memory",
+                "vault",
+                "postgres"
+              ]
+            },
+            "kvPathPrefix": {
+              "type": "string"
+            },
+            "cacheTtlSeconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "postgres": {
+              "type": "object",
+              "properties": {
+                "existingSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "otlp": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "headers": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "existingSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "networkPolicy": {
+              "type": "object",
+              "properties": {
+                "namespaceSelector": {
+                  "type": "object"
+                },
+                "podSelector": {
+                  "type": "object"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "tracing": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "sampleRatio": {
+              "type": [
+                "string",
+                "number"
+              ]
+            },
+            "endpoint": {},
+            "networkPolicy": {}
+          },
+          "additionalProperties": false
+        },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "otlp": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "usageEvents": {
+          "type": "object",
+          "properties": {
+            "otlp": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokenSweep": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "schedule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "graceSeconds": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "aggregator": {
+      "type": "object",
+      "properties": {
+        "services": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prefix": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "transport": {
+                "enum": [
+                  "http"
+                ]
+              },
+              "required_permission": {
+                "type": [
+                  "string",
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "auth_type": {
+                "enum": [
+                  "bearer",
+                  "x509",
+                  "krb5",
+                  "servicex",
+                  "none"
+                ]
+              },
+              "audience": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "apply_namespace": {
+                "type": "boolean"
+              },
+              "timeout_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "tools_cache_ttl": {
+                "type": "number",
+                "minimum": 0
+              },
+              "trust_tier": {
+                "enum": [
+                  "user-tier",
+                  "service-tier",
+                  "infrastructure-tier"
+                ]
+              },
+              "agent_policy": {
+                "type": "string"
+              },
+              "requires_posix": {
+                "type": "boolean"
+              },
+              "exclude_tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "docs_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "services"
+      ],
+      "additionalProperties": false
+    },
+    "entitlements": {
+      "type": "object",
+      "properties": {
+        "group_permissions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "custom_permissions": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "read",
+              "state_change"
+            ]
+          }
+        },
+        "target_action_types": {
+          "type": "object"
+        },
+        "rate_limits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "action_type": {
+                "type": "string"
+              },
+              "tool": {
+                "type": "string"
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "window_seconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "limit",
+              "window_seconds"
+            ]
+          }
+        }
+      },
+      "required": [
+        "group_permissions"
+      ],
+      "additionalProperties": false
+    },
+    "portal": {
+      "type": "object",
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resources": {
+          "type": "object"
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "clientId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "string"
+            },
+            "extraAuthorizeParams": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "clientId"
+          ],
+          "additionalProperties": false
+        },
+        "brokerOrigin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branding": {
+          "type": "object",
+          "properties": {
+            "shortName": {
+              "type": "string"
+            },
+            "fullName": {
+              "type": "string"
+            },
+            "facilityName": {
+              "type": "string"
+            },
+            "accentColor": {
+              "type": "string"
+            },
+            "accentColorDark": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "oidc",
+        "brokerOrigin"
+      ],
+      "additionalProperties": false
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "mcpHost": {
+          "type": "string"
+        },
+        "portalHost": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mcpSecretName": {
+              "type": "string"
+            },
+            "portalSecretName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "broker": {
+          "type": "object",
+          "properties": {
+            "servicePorts": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interval": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "prometheusRule": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "grafanaDashboard": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

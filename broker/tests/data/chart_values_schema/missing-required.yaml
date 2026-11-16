@@ -1,0 +1,7 @@
+# The three values with no cross-institution default.
+oidc:
+  issuer: ""
+portal:
+  oidc:
+    clientId: ""
+  brokerOrigin: ""
