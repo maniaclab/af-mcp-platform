@@ -17,11 +17,14 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CHART = _REPO_ROOT / "charts" / "af-mcp-platform"
 _BASE_VALUES = _CHART / "ci" / "test-values.yaml"
+_EXAMPLES = _CHART / "examples"
 _BAD_VALUES = Path(__file__).parent / "data" / "chart_values_schema"
 
 
-def _helm_template(*overlays: Path) -> subprocess.CompletedProcess[str]:
-    """Render the chart over the CI base values plus *overlays*; never raises on failure."""
+def _helm_template(
+    *overlays: Path, sets: tuple[str, ...] = ()
+) -> subprocess.CompletedProcess[str]:
+    """Render the chart over the CI base values plus *overlays* and ``--set`` *sets*; never raises on failure."""
     command = [
         "helm",
         "template",
@@ -36,6 +39,8 @@ def _helm_template(*overlays: Path) -> subprocess.CompletedProcess[str]:
     ]
     for overlay in overlays:
         command += ["-f", str(overlay)]
+    for assignment in sets:
+        command += ["--set", assignment]
     return subprocess.run(command, check=False, capture_output=True, text=True)
 
 
@@ -49,6 +54,8 @@ def _helm_template(*overlays: Path) -> subprocess.CompletedProcess[str]:
         ("empty-policy", ["entitlements", "group_permissions"]),
         ("service-typo", ["requried_permission"]),
         ("x509-without-service-url", ["serviceUrl"]),
+        ("x509-without-voms", ["voms"]),
+        ("ingress-without-hosts", ["mcpHost", "portalHost"]),
         ("missing-required", ["issuer", "clientId", "brokerOrigin"]),
         ("several-errors", ["keycloakAdmn", "replicaCount", "services"]),
     ],
@@ -68,3 +75,50 @@ def test_base_values_pass_the_schema() -> None:
     result = _helm_template()
 
     assert result.returncode == 0, result.stderr
+
+
+def test_ingress_disabled_needs_no_hosts() -> None:
+    result = _helm_template(
+        sets=("ingress.enabled=false", "ingress.mcpHost=", "ingress.portalHost=")
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_default_render_carries_no_facility_content() -> None:
+    # Template comments may cite an example; the rendered values must not.
+    rendered = "\n".join(
+        line
+        for line in _helm_template().stdout.lower().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+    for facility_marker in ("uchicago", "letsencrypt", "mwt2"):
+        assert facility_marker not in rendered
+
+
+@pytest.mark.parametrize(
+    "kind", ["kind: ServiceMonitor", "grafana_dashboard", "cert-manager.io"]
+)
+def test_optional_integrations_are_opt_in(kind: str) -> None:
+    assert kind not in _helm_template().stdout
+
+
+def test_tls_secret_names_derive_from_the_release() -> None:
+    rendered = _helm_template().stdout
+
+    assert 'secretName: "af-mcp-platform-mcp-tls"' in rendered
+    assert 'secretName: "af-mcp-platform-portal-tls"' in rendered
+
+
+def test_uchicago_example_values_render_the_reference_deployment() -> None:
+    result = _helm_template(_EXAMPLES / "uchicago-values.yaml")
+
+    assert result.returncode == 0, result.stderr
+    for expected in (
+        "kind: ServiceMonitor",
+        "grafana_dashboard",
+        "mcp.af.uchicago.edu",
+        "cert-manager.io/cluster-issuer",
+    ):
+        assert expected in result.stdout

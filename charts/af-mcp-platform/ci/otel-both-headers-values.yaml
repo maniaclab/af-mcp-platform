@@ -40,3 +40,8 @@ aggregator:
 entitlements:
   group_permissions:
     __authenticated__: [read_metadata]
+
+# An enabled Ingress needs both hostnames (values.schema.json).
+ingress:
+  mcpHost: "mcp.example.com"
+  portalHost: "mcp-portal.example.com"

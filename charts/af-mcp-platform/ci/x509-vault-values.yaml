@@ -26,6 +26,7 @@ broker:
       alias: x509-example
       targets: ["ami-example"]
       serviceUrl: "https://voms-token-service.example.com"
+      voms: "example"
       displayName: "Grid certificate (example)"
       enables: "Example VOMS proxy minting for x509 services"
   oauth21:
@@ -45,3 +46,8 @@ aggregator:
 entitlements:
   group_permissions:
     __authenticated__: [read_metadata]
+
+# An enabled Ingress needs both hostnames (values.schema.json).
+ingress:
+  mcpHost: "mcp.example.com"
+  portalHost: "mcp-portal.example.com"

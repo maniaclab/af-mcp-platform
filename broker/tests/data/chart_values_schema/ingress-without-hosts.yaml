@@ -1,0 +1,5 @@
+# An enabled Ingress needs both hostnames; there is no default host.
+ingress:
+  enabled: true
+  mcpHost: ""
+  portalHost: ""

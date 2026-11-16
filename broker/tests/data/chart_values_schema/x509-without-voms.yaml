@@ -1,0 +1,6 @@
+# An x509 identity provider entry names the VOMS attribute set explicitly.
+broker:
+  identityProviders:
+    - type: x509
+      alias: x509-example
+      serviceUrl: "https://voms-token-service.example.com"

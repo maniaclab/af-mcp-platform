@@ -1,11 +1,11 @@
 {{- if .Values.grafanaDashboard.enabled }}
-# Deployed to {{ .Values.grafanaDashboard.namespace }} so the Grafana sidecar
+# Deployed to {{ .Values.grafanaDashboard.namespace | default .Release.Namespace }} so the Grafana sidecar
 # (label grafana_dashboard: "1") picks it up automatically.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "af-mcp-platform.fullname" . }}-dashboard
-  namespace: {{ .Values.grafanaDashboard.namespace | quote }}
+  namespace: {{ .Values.grafanaDashboard.namespace | default .Release.Namespace | quote }}
   labels:
     {{- include "af-mcp-platform.labels" . | nindent 4 }}
     grafana_dashboard: "1"
@@ -202,7 +202,7 @@ data:
       ],
       "refresh": "30s",
       "schemaVersion": 38,
-      "tags": ["mcp", "atlas", "af"],
+      "tags": ["mcp", "af"],
       "templating": {
         "list": [
           {
