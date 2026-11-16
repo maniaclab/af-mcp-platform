@@ -255,7 +255,7 @@ async def test_delete_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 # App startup wiring: trial authentication fails fast on Vault misconfig.
 # ---------------------------------------------------------------------------
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
 STATE_ISSUER = "https://keycloak.invalid/realms/connect"
 CIMD_CLIENT_ID = "https://mcp.example.org/.well-known/cimd"

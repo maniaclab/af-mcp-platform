@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from fastmcp.utilities.http import find_available_port
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 CONTAINERFILE = REPO_ROOT / "Containerfile.broker"
 
 STARTUP_TIMEOUT_SECONDS = 30.0

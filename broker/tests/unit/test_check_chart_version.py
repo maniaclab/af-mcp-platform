@@ -18,7 +18,7 @@ import pytest
 if TYPE_CHECKING:
     from types import ModuleType
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _REPO_ROOT / "scripts" / "check-chart-version.py"
 _CHART_YAML = _REPO_ROOT / "charts" / "af-mcp-platform" / "Chart.yaml"
 _TBUMP_TOML = _REPO_ROOT / "tbump.toml"

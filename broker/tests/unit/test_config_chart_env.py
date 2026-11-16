@@ -26,9 +26,9 @@ from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPO_ROOT / "charts" / "af-mcp-platform"
-_FIXTURE_DIR = Path(__file__).parent / "data" / "chart_env"
+_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "data" / "chart_env"
 _VALUES_FILES = sorted((_CHART / "ci").glob("*-values.yaml"))
 _UPDATE = os.environ.get("UPDATE_CHART_ENV_FIXTURES") == "1"
 

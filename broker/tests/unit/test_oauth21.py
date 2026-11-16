@@ -62,7 +62,7 @@ SUBJECT = "kc-subject-123"
 # whenever OAUTH21_STATE_ISSUER is unset, which none of these tests set.
 EXPECTED_STATE_ISSUER = "https://keycloak.invalid/realms/connect"
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
 
 AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
