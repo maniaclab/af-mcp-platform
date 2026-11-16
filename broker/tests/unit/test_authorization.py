@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from authorization_support import (
+    _write_policy,
+)
 
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
@@ -306,12 +309,6 @@ def test_is_admin(
     settings = Settings(admin_group=admin_group)
     principal = make_principal(groups=groups)
     assert is_admin(principal, settings) is expected
-
-
-def _write_policy(tmp_path: Path, text: str) -> str:
-    path = tmp_path / "policy.yaml"
-    path.write_text(text)
-    return str(path)
 
 
 # --- groups_granting_any (issue #395) ---------------------------------------

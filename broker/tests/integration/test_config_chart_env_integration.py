@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
-from test_config_chart_env import (
+from config_chart_env_support import (
     _CHART,
     _VALUES_FILES,
     _clear_settings_env,
     _fixture_path,
 )
+from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings
 

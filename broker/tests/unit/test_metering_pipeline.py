@@ -19,18 +19,25 @@ explicit asyncio.Event rather than sleeps.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mcp.types as mt
 import pytest
 import structlog
 from fastmcp.tools.base import ToolResult
+from metering_pipeline_support import (  # noqa: F401
+    _NEVER_MS,
+    _SETTINGS,
+    _backend,
+    _lines,
+    _record,
+    _usage_record,
+    usage_store_fixture,
+)
 from prometheus_client import REGISTRY
 
 from af_mcp_broker import metering as pipeline
-from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.config import Settings
 from af_mcp_broker.metering import (
     InlineMeteringBackend,
@@ -38,7 +45,10 @@ from af_mcp_broker.metering import (
     MeteringBackend,
     build_metering_backend,
 )
-from af_mcp_broker.usage import InMemoryUsageStore, UsageStore
+from af_mcp_broker.usage import InMemoryUsageStore
+
+if TYPE_CHECKING:
+    from af_mcp_broker.audit import AuditRecord
 
 
 def _sample(name: str) -> float:
@@ -47,44 +57,6 @@ def _sample(name: str) -> float:
 
 def _overflow_count() -> float:
     return _sample("af_mcp_metering_queue_overflow_total")
-
-
-# Pins the encoding name so ambient env vars can't change test behavior
-# (mirrors test_measure.py).
-_SETTINGS = Settings(token_estimate_encoding="o200k_base")
-
-
-def _backend(
-    settings: Settings = _SETTINGS,
-    usage_store: UsageStore | None = None,
-    **kwargs: Any,
-) -> InProcessMeteringBackend:
-    """An (unstarted) in-process backend feeding *usage_store*, a fresh in-memory one when omitted."""
-    return InProcessMeteringBackend(
-        settings, usage_store or InMemoryUsageStore(), **kwargs
-    )
-
-
-def _record(**overrides: Any) -> AuditRecord:
-    fields: dict[str, Any] = {
-        "subject": "sub-abc",
-        "principal_uid": 1000,
-        "permission": "read_data",
-        "target": "rucio",
-        "action": "rucio_list_dids",
-        "action_type": "read",
-        "args_summary": "scope=...",
-        "timestamp": 1234.5,
-        "request_id": "req-1",
-        "outcome": "success",
-        "duration_ms": 12.5,
-    }
-    fields.update(overrides)
-    return AuditRecord(**fields)
-
-
-def _lines(audit_buffer) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in audit_buffer.getvalue().splitlines()]
 
 
 async def test_worker_measures_result_and_writes_the_line(audit_buffer) -> None:
@@ -417,19 +389,6 @@ async def test_worker_processed_total_counts_written_records(audit_buffer) -> No
     assert _sample("af_mcp_metering_worker_processed_total") == before + 2
 
 
-# ---------------------------------------------------------------------------
-# Usage store feed (PR C) -- after each audit write the record is accounted
-# in the installed UsageStore (tool-call records with outcome success/error
-# only). Best-effort: a store failure never affects the audit write, which
-# always happens FIRST.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def usage_store() -> InMemoryUsageStore:
-    return InMemoryUsageStore()
-
-
 async def test_worker_feeds_the_usage_store_after_the_audit_write(
     usage_store,
     audit_buffer,
@@ -521,17 +480,6 @@ async def test_usage_store_failure_never_affects_the_audit_write(
     assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
 
 
-# ---------------------------------------------------------------------------
-# Usage batching -- the worker buffers usage records and writes them with one
-# UsageStore.record_many per batch: at USAGE_BATCH_MAX records, after
-# USAGE_BATCH_INTERVAL_MS, or on aclose. The audit line is still written first
-# and per record; only the usage write is batched. The inline paths (overflow,
-# no pipeline running) are unbatched and covered above.
-# ---------------------------------------------------------------------------
-
-_NEVER_MS = 3_600_000  # an interval that cannot fire during a test
-
-
 class _BatchRecordingStore(InMemoryUsageStore):
     """In-memory store that remembers each record_many call's audit_ids."""
 
@@ -549,10 +497,6 @@ class _BatchRecordingStore(InMemoryUsageStore):
 @pytest.fixture
 def batch_store() -> _BatchRecordingStore:
     return _BatchRecordingStore()
-
-
-def _usage_record(**overrides: Any) -> AuditRecord:
-    return _record(mcp_service="rucio", timestamp=time.time(), **overrides)
 
 
 async def _until(predicate) -> None:

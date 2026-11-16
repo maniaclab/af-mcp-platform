@@ -11,6 +11,10 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pat_mint_shared_state_support import (  # noqa: F401
+    _MAX_MINTS,
+    subject_fixture,
+)
 
 from af_mcp_broker.shared_state import RedisSharedState
 from af_mcp_broker.token_registry import (
@@ -22,14 +26,6 @@ from af_mcp_broker.token_registry import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
-
-_MAX_MINTS = 10
-
-
-@pytest.fixture
-def subject() -> str:
-    # The server outlives each test, so every test gets its own subject.
-    return f"sub-{uuid.uuid4()}"
 
 
 @pytest.fixture

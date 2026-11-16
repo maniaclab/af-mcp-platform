@@ -26,11 +26,13 @@ Patching the instance attribute sidesteps that regardless of cache state.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
-import structlog
 from fastapi import FastAPI
+from request_logging_support import (
+    _capturing_info,
+)
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
@@ -43,40 +45,6 @@ if TYPE_CHECKING:
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.logging import bind_parent_request_id, bind_subject
-
-
-def _capturing_info(
-    monkeypatch: pytest.MonkeyPatch, logger: Any
-) -> list[dict[str, Any]]:
-    """Record every ``logger.info(...)``/``logger.error(...)`` call's level, event, explicit kwargs, and
-    currently-bound structlog contextvars (request_id/subject) together
-    -- the contextvar merge normally only happens inside structlog's
-    processor chain on the way to output, which patching the method this way
-    bypasses for the *recorded* copy (the original call still runs, so real
-    output/processing is unaffected).
-    """
-    events: list[dict[str, Any]] = []
-
-    def _patch(level: str) -> None:
-        original = getattr(logger, level)
-
-        def _capture(event: str, **kwargs: Any) -> Any:
-            events.append(
-                {
-                    "event": event,
-                    "level": level,
-                    **structlog.contextvars.get_contextvars(),
-                    **kwargs,
-                }
-            )
-            return original(event, **kwargs)
-
-        monkeypatch.setattr(logger, level, _capture)
-
-    _patch("info")
-    _patch("error")
-    return events
-
 
 # ---------------------------------------------------------------------------
 # /v1: app.py's _bind_request_logging_context

@@ -12,9 +12,11 @@ from opentelemetry.sdk._logs.export import (
     LogRecordExporter,
     LogRecordExportResult,
 )
-from test_usage_otel_events import (
+from usage_otel_events_support import (  # noqa: F401
     _full_record,
     _logs,
+    emitter_fixture,
+    exporter_fixture,
 )
 
 from af_mcp_broker.usage import (
@@ -24,7 +26,7 @@ from af_mcp_broker.usage import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator, Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     from opentelemetry.sdk._logs import ReadableLogRecord
 
@@ -50,18 +52,6 @@ class _BlockingExporter(LogRecordExporter):
 
     def shutdown(self) -> None:
         return
-
-
-@pytest.fixture
-def exporter() -> InMemoryLogRecordExporter:
-    return InMemoryLogRecordExporter()
-
-
-@pytest.fixture
-def emitter(exporter: InMemoryLogRecordExporter) -> Iterator[OtelUsageEventEmitter]:
-    e = OtelUsageEventEmitter(exporter)
-    yield e
-    e.shutdown()
 
 
 @pytest.fixture

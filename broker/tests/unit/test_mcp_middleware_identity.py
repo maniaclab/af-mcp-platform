@@ -10,6 +10,10 @@ import structlog
 from broker_state_helpers import asgi_auth_middleware
 from conftest import RaisingTokenRegistryBackend, make_claims
 from fastmcp.exceptions import AuthorizationError
+from mcp_middleware_identity_support import (
+    _InnerApp,
+    _run,
+)
 from prometheus_client import REGISTRY
 
 from af_mcp_broker.maintenance import (
@@ -42,30 +46,6 @@ from af_mcp_broker.token_registry import (
 if TYPE_CHECKING:
     from af_mcp_broker.config import Settings
 
-# ---------------------------------------------------------------------------
-# AsgiAuthMiddleware -- the ASGI-layer identity check that runs in front of
-# FastMCP's own message pipeline (issue #138/#144 step 1). These tests drive
-# it directly with a bare ASGI scope/receive/send rather than a live uvicorn
-# server -- no JSON-RPC dispatch is involved at this layer, so a raw ASGI
-# harness exercises it faithfully; the real-server round trip (initialize,
-# tools/list, tools/call through a live aggregator) is covered separately in
-# test_mcp_list_time_credentials.py / test_mcp_aggregator_integration.py.
-# ---------------------------------------------------------------------------
-
-
-class _InnerApp:
-    """Records the scope it was called with and answers a trivial 200."""
-
-    def __init__(self) -> None:
-        self.called = False
-        self.scope: dict[str, Any] | None = None
-
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        self.called = True
-        self.scope = scope
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"ok"})
-
 
 def _http_scope(headers: dict[str, str] | None = None) -> dict[str, Any]:
     headers = headers or {}
@@ -76,21 +56,6 @@ def _http_scope(headers: dict[str, str] | None = None) -> dict[str, Any]:
             for k, v in headers.items()
         ],
     }
-
-
-async def _run(
-    middleware: AsgiAuthMiddleware, scope: dict[str, Any]
-) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
-
-    async def receive() -> dict[str, Any]:
-        return {"type": "http.disconnect"}
-
-    async def send(message: dict[str, Any]) -> None:
-        messages.append(message)
-
-    await middleware(scope, receive, send)
-    return messages
 
 
 def _status(messages: list[dict[str, Any]]) -> int:

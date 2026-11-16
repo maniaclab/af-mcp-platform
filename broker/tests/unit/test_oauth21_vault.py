@@ -14,6 +14,11 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from oauth21_vault_support import (  # noqa: F401
+    ALIAS,
+    KV_PATH_PREFIX,
+    broker_signing_key_fixture,
+)
 from pydantic import SecretStr
 from vault_fakes import FakeVault, make_vault_kv
 
@@ -25,10 +30,7 @@ from af_mcp_broker.vault_kv import VaultError
 if TYPE_CHECKING:
     from pathlib import Path
 
-KV_PATH_PREFIX = "mcp/tokens"
-
 SUBJECT = "kc-subject-123"
-ALIAS = "rucio-mcp-atlas"
 
 
 def _make_cred(**overrides: Any) -> StoredOAuthCredential:
@@ -51,15 +53,6 @@ def _make_cred(**overrides: Any) -> StoredOAuthCredential:
 def _make_store(fake: FakeVault, sa_token_path: Path) -> VaultTokenStore:
     vault_kv = make_vault_kv(fake, sa_token_path)
     return VaultTokenStore(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
-
-
-@pytest.fixture(autouse=True)
-def _broker_signing_key(
-    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
-) -> None:
-    """The shipped "ami" service (covered by the x509 entry below) needs the broker signing key to boot."""
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
-    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
 
 
 # ---------------------------------------------------------------------------

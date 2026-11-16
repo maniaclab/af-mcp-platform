@@ -11,10 +11,10 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from conftest import TEST_SERVICES, configure_x509_service_env
+from conftest import TEST_SERVICES
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-from test_oauth21 import (
+from oauth21_support import (  # noqa: F401
     ALIAS,
     AUTHORIZATION_ENDPOINT,
     CLIENT_ID,
@@ -22,9 +22,11 @@ from test_oauth21 import (
     CONFIDENTIAL_CLIENT_SECRET,
     EXPECTED_STATE_ISSUER,
     PROVIDER_ISSUER,
+    SUBJECT,
     TOKEN_ENDPOINT,
     _FakeTokenClient,
     _make_cred,
+    x509_service_env_fixture,
 )
 
 from af_mcp_broker.api import oauth21 as oauth21_module
@@ -237,14 +239,6 @@ def test_authorize_400_for_unsafe_return_url(
     assert resp.status_code == 400
     assert resp.json()["detail"].startswith("return_url must ")
     assert repr(bad_return) in resp.json()["detail"]
-
-
-@pytest.fixture(autouse=True)
-def _x509_service_env(
-    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
-) -> None:
-    """The shipped "ami" service (covered by every IDENTITY_PROVIDERS override here) needs the signing key and Vault connection to boot."""
-    configure_x509_service_env(monkeypatch, broker_signing_key_file)
 
 
 def _bootstrap_no_override_env(monkeypatch: pytest.MonkeyPatch) -> None:

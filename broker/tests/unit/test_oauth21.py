@@ -11,14 +11,27 @@ from __future__ import annotations
 import json
 import time
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx2
 import pytest
 import structlog
-from conftest import configure_x509_service_env
 from cryptography.fernet import Fernet
+from oauth21_support import (  # noqa: F401
+    ALIAS,
+    AUTHORIZATION_ENDPOINT,
+    CLIENT_ID,
+    CONFIDENTIAL_CLIENT_ID,
+    CONFIDENTIAL_CLIENT_SECRET,
+    EXPECTED_STATE_ISSUER,
+    PROVIDER_ISSUER,
+    SUBJECT,
+    TOKEN_ENDPOINT,
+    _FakeTokenClient,
+    _make_cred,
+    x509_service_env_fixture,
+)
 from pydantic import SecretStr
 
 from af_mcp_broker.credentials import CredentialRegistry
@@ -45,49 +58,7 @@ from af_mcp_broker.principal import Principal
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 from af_mcp_broker.service_status import service_status
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-ALIAS = "rucio-mcp-atlas"
-SUBJECT = "kc-subject-123"
-
-# Matches the fixed OIDC_ISSUER `app_client_factory` (conftest.py) sets before
-# every test — `settings.oauth21_effective_state_issuer` falls back to it
-# whenever OAUTH21_STATE_ISSUER is unset, which none of these tests set.
-EXPECTED_STATE_ISSUER = "https://keycloak.invalid/realms/connect"
-
-AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
-TOKEN_ENDPOINT = "https://backend-as.example/token"
-PROVIDER_ISSUER = "https://backend-as.example"
-CLIENT_ID = "https://mcp.example.org/.well-known/cimd"
 REVOCATION_ENDPOINT = "https://backend-as.example/revoke"
-
-# A statically-registered confidential client (e.g. a JupyterHub service),
-# as opposed to the broker's shared CIMD client_id above.
-CONFIDENTIAL_CLIENT_ID = "service-af-mcp-platform"
-CONFIDENTIAL_CLIENT_SECRET = "confidential-s3cret"
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_cred(**overrides: Any) -> StoredOAuthCredential:
-    now = datetime.now(UTC)
-    defaults: dict[str, Any] = {
-        "alias": ALIAS,
-        "subject": SUBJECT,
-        "access_token": SecretStr("access-token-1"),
-        "refresh_token": SecretStr("refresh-token-1"),
-        "expires_at": now + timedelta(hours=1),
-        "refresh_expires_at": now + timedelta(days=30),
-        "scope": ["openid", "profile"],
-        "issuer": PROVIDER_ISSUER,
-        "token_endpoint": TOKEN_ENDPOINT,
-    }
-    defaults.update(overrides)
-    return StoredOAuthCredential(**defaults)
 
 
 def _principal(subject: str = SUBJECT) -> Principal:
@@ -122,27 +93,6 @@ def _make_provider(
         revocation_endpoint=revocation_endpoint,
         http_client=http_client or httpx2.AsyncClient(),
     )
-
-
-class _FakeTokenClient:
-    """Fake httpx2 client capturing token-endpoint POSTs, injected as the
-    provider's client (refresh) or as the app's shared client (exchange).
-    """
-
-    def __init__(self, status_code: int = 200, json_body: dict[str, Any] | None = None):
-        self.status_code = status_code
-        self.json_body = json_body or {}
-        self.calls: list[dict[str, Any]] = []
-
-    async def post(
-        self, url: str, data: dict[str, Any], **kwargs: Any
-    ) -> httpx2.Response:
-        self.calls.append({"url": url, "data": data})
-        # `request=` must be set -- `Response.raise_for_status()` (called by
-        # the production code on success too) requires it even for 2xx.
-        return httpx2.Response(
-            self.status_code, json=self.json_body, request=httpx2.Request("POST", url)
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1191,11 +1141,3 @@ async def test_revoke_when_nothing_stored_is_a_noop() -> None:
     await provider.revoke(_principal(), ALIAS)
 
     assert fake_client.calls == []
-
-
-@pytest.fixture(autouse=True)
-def _x509_service_env(
-    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
-) -> None:
-    """The shipped "ami" service (covered by every IDENTITY_PROVIDERS override here) needs the signing key and Vault connection to boot."""
-    configure_x509_service_env(monkeypatch, broker_signing_key_file)

@@ -11,25 +11,16 @@ import pytest
 from conftest import TEST_SERVICES
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-from test_oauth21_vault import (
+from oauth21_vault_support import (  # noqa: F401
     ALIAS,
     KV_PATH_PREFIX,
+    broker_signing_key_fixture,
 )
 from vault_fakes import ADDR, AUTH_ROLE, FakeVault
 
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials.vault import VaultTokenStore
-
-
-@pytest.fixture(autouse=True)
-def _broker_signing_key(
-    monkeypatch: pytest.MonkeyPatch, broker_signing_key_file: Path
-) -> None:
-    """The shipped "ami" service (covered by the x509 entry below) needs the broker signing key to boot."""
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
-    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
-
 
 # ---------------------------------------------------------------------------
 # App startup wiring: trial authentication fails fast on Vault misconfig.

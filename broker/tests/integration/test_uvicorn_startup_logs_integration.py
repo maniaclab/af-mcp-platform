@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fastmcp.utilities.http import find_available_port
-from test_uvicorn_startup_logs import (
+from uvicorn_startup_logs_support import (
     _container_log_config_args,
 )
 

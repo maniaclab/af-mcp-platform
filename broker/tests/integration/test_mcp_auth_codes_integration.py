@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from cryptography.fernet import Fernet
-from test_mcp_auth_codes import (
+from mcp_auth_codes_support import (  # noqa: F401
+    ISSUER,
+    _Clock,
     _record,
     _store,
+    key_fixture,
 )
 
 from af_mcp_broker.shared_state import (
@@ -18,11 +20,6 @@ from af_mcp_broker.shared_state import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-
-@pytest.fixture
-def key() -> bytes:
-    return Fernet.generate_key()
 
 
 @pytest.fixture

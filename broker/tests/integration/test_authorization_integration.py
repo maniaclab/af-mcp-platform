@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from test_authorization import (
+from authorization_support import (
     _write_policy,
 )
 

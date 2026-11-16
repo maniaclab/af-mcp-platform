@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from test_mcp_oauth_discovery import (
+from mcp_oauth_discovery_support import (
     ISSUER,
 )
 

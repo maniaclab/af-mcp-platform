@@ -14,32 +14,18 @@ broker/tests/integration/test_config_chart_env_integration.py`` and review the d
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
 import pytest
+from config_chart_env_support import (
+    _FIXTURE_DIR,
+    _VALUES_FILES,
+    _clear_settings_env,
+    _fixture_path,
+)
 from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CHART = _REPO_ROOT / "charts" / "af-mcp-platform"
-_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "data" / "chart_env"
-_VALUES_FILES = sorted((_CHART / "ci").glob("*-values.yaml"))
-
-
-def _fixture_path(values: Path) -> Path:
-    return _FIXTURE_DIR / f"{values.name.removesuffix('-values.yaml')}.json"
-
-
-def _clear_settings_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
-    """Make *env* the only source of settings, whatever the host environment sets."""
-    for name in list(os.environ):
-        if name.lower() in Settings.model_fields:
-            monkeypatch.delenv(name)
-    for name, value in env.items():
-        monkeypatch.setenv(name, value)
 
 
 def test_every_fixture_has_a_values_file() -> None:

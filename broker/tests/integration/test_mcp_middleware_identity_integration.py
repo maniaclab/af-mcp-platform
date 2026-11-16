@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from broker_state_helpers import asgi_auth_middleware
-from test_mcp_middleware_identity import (
+from mcp_middleware_identity_support import (
     _InnerApp,
     _run,
 )

@@ -7,15 +7,16 @@ tag whose version differs would publish the chart under the wrong version.
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from check_chart_version_support import (
+    _REPO_ROOT,
+)
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from types import ModuleType
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _REPO_ROOT / "scripts" / "check-chart-version.py"
 _CHART_YAML = _REPO_ROOT / "charts" / "af-mcp-platform" / "Chart.yaml"
 

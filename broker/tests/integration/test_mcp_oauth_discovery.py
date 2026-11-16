@@ -31,6 +31,9 @@ import pytest
 import structlog
 from conftest import configure_keyless_env
 from cryptography.fernet import Fernet
+from mcp_oauth_discovery_support import (
+    ISSUER,
+)
 from structlog.testing import capture_logs
 
 from af_mcp_broker.api import mcp_oauth
@@ -44,8 +47,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tests.conftest import RsaKey
-
-ISSUER = "https://keycloak.test/realms/connect"
 JWKS_URI = "https://keycloak.test/realms/connect/protocol/openid-connect/certs"
 BROKER_ORIGIN = "https://mcp.af.example.org"
 LOGIN_CLIENT_ID = "mcp-login-client"

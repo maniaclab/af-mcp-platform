@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
+from credential_cache_shared_state_support import (  # noqa: F401
+    uid_fixture,
+)
 
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
 from af_mcp_broker.shared_state import RedisSharedState
-
-
-@pytest.fixture
-def uid() -> int:
-    # The server outlives each test, so every test gets its own uid.
-    return uuid.uuid4().int % 1_000_000_000
 
 
 async def test_store_outage_falls_back_to_a_per_replica_limit(

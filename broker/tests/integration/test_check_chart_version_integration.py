@@ -8,7 +8,7 @@ import tomllib
 from typing import TYPE_CHECKING
 
 import pytest
-from test_check_chart_version import (
+from check_chart_version_support import (
     _REPO_ROOT,
 )
 

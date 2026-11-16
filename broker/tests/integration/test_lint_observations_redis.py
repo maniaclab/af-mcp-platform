@@ -3,36 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from lint_observations_redis_support import (  # noqa: F401
+    _mismatch,
+    service_fixture,
+)
 
 from af_mcp_broker.lint_observations import LintObservationStore
-from af_mcp_broker.service_registry import AnnotationMismatch
 from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 pytestmark = pytest.mark.usefixtures("unpinned_loggers")
-
-
-@pytest.fixture
-def service() -> str:
-    # The server outlives each test, so every test gets its own service.
-    return f"svc-{uuid.uuid4()}"
-
-
-def _mismatch(service: str) -> AnnotationMismatch:
-    return AnnotationMismatch(
-        service=service,
-        tool=f"{service}_tool",
-        declared_read_only_hint=True,
-        resolved_action_type="write",
-        resolved_via="default",
-        permission="read_data",
-    )
 
 
 @pytest.fixture

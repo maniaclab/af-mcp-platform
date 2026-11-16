@@ -6,10 +6,12 @@ broker replicas (see the ``shared_state_url`` fixture); nothing is mocked.
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from credential_cache_shared_state_support import (  # noqa: F401
+    uid_fixture,
+)
 
 from af_mcp_broker.credentials.cache import CredentialCache
 from af_mcp_broker.credentials.errors import UnlockRateLimitError
@@ -17,12 +19,6 @@ from af_mcp_broker.shared_state import RedisSharedState
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-
-@pytest.fixture
-def uid() -> int:
-    # The server outlives each test, so every test gets its own uid.
-    return uuid.uuid4().int % 1_000_000_000
 
 
 @pytest.fixture

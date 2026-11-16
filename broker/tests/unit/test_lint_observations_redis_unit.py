@@ -2,24 +2,17 @@
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 import structlog.testing
-from test_lint_observations_redis import (
+from lint_observations_redis_support import (  # noqa: F401
     _mismatch,
+    service_fixture,
 )
 
 from af_mcp_broker.lint_observations import LintObservationStore
 from af_mcp_broker.shared_state import RedisSharedState
 
 pytestmark = pytest.mark.usefixtures("unpinned_loggers")
-
-
-@pytest.fixture
-def service() -> str:
-    # The server outlives each test, so every test gets its own service.
-    return f"svc-{uuid.uuid4()}"
 
 
 async def test_store_down_falls_back_to_what_this_replica_observed(

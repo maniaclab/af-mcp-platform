@@ -8,12 +8,14 @@ import asyncpg
 import mcp.types as mt
 from fastmcp.tools.base import ToolResult
 from image_builders import png
-from test_metering_pipeline import (
+from metering_pipeline_support import (  # noqa: F401
     _NEVER_MS,
     _SETTINGS,
     _backend,
     _lines,
+    _record,
     _usage_record,
+    usage_store_fixture,
 )
 
 from af_mcp_broker.config import Settings

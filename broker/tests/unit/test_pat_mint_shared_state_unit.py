@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 import structlog
-from test_pat_mint_shared_state import (
+from pat_mint_shared_state_support import (  # noqa: F401
     _MAX_MINTS,
+    subject_fixture,
 )
 
 from af_mcp_broker.shared_state import RedisSharedState
@@ -16,12 +15,6 @@ from af_mcp_broker.token_registry import (
     PatMintRateLimitError,
     TokenRegistry,
 )
-
-
-@pytest.fixture
-def subject() -> str:
-    # The server outlives each test, so every test gets its own subject.
-    return f"sub-{uuid.uuid4()}"
 
 
 async def test_store_outage_falls_back_to_a_per_replica_cap(

@@ -14,14 +14,16 @@ Test doubles sit at the exporter boundary only:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from _otlp_collector import OtlpCollector
-from opentelemetry.sdk._logs.export import (
-    InMemoryLogRecordExporter,
+from usage_otel_events_support import (  # noqa: F401
+    _full_record,
+    _logs,
+    emitter_fixture,
+    exporter_fixture,
 )
-from test_usage_postgres import _record
 
 from af_mcp_broker import otel_metrics, tracing
 from af_mcp_broker.audit.measure import ContentMeasure
@@ -36,7 +38,9 @@ from af_mcp_broker.usage import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from opentelemetry.sdk._logs.export import (
+        InMemoryLogRecordExporter,
+    )
 
     from af_mcp_broker.audit.logger import AuditRecord
 
@@ -56,36 +60,6 @@ _EVENT_ATTRIBUTES = {
     "result_bytes",
     "result_tokens_est",
 }
-
-
-@pytest.fixture
-def exporter() -> InMemoryLogRecordExporter:
-    return InMemoryLogRecordExporter()
-
-
-@pytest.fixture
-def emitter(exporter: InMemoryLogRecordExporter) -> Iterator[OtelUsageEventEmitter]:
-    e = OtelUsageEventEmitter(exporter)
-    yield e
-    e.shutdown()
-
-
-def _full_record(**overrides: Any) -> AuditRecord:
-    fields: dict[str, Any] = {
-        "audit_id": "audit-1",
-        "trace_id": "a" * 32,
-        "subject": "alice-sub",
-        "token_id": "tok-1",
-        "args_summary": "scope=SECRET-ARGUMENT",
-        "duration_ms": 12.5,
-        "result_bytes": 321,
-        "result_tokens_est": 80,
-        # No breakdown: the base attribute set is asserted exactly; the
-        # per-content-type attributes have their own test.
-        "result_content": None,
-    }
-    fields.update(overrides)
-    return _record(**fields)
 
 
 def test_event_carries_a_breakdown_attribute_per_content_type(
@@ -110,10 +84,6 @@ def test_event_carries_a_breakdown_attribute_per_content_type(
     assert attributes["result_content.hologram.blocks"] == 2
     assert attributes["result_content.hologram.bytes"] == 7
     assert attributes["result_content.hologram.tokens_est"] == 0
-
-
-def _logs(exporter: InMemoryLogRecordExporter) -> list[Any]:
-    return [r.log_record for r in exporter.get_finished_logs()]
 
 
 # --- settings / wiring -----------------------------------------------------

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING
 
 import pytest
 import structlog.testing
-from test_cache_invalidation_redis import (
+from cache_invalidation_redis_support import (  # noqa: F401
     _eventually,
     _Replica,
+    alice_fixture,
 )
 from test_mcp_aggregator import (
     _CountingListClient,
@@ -18,17 +18,9 @@ from test_mcp_aggregator import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from af_mcp_broker.principal import Principal
 
 pytestmark = pytest.mark.usefixtures("unpinned_loggers")
-
-
-@pytest.fixture
-def alice(make_principal: Callable[..., Principal]) -> Principal:
-    # The server outlives each test, so every test gets its own subject.
-    return make_principal(subject=f"alice-{uuid.uuid4()}")
 
 
 async def test_store_down_keeps_the_local_drop_and_logs_the_broadcast_failure(

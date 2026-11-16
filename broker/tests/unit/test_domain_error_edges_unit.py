@@ -3,21 +3,40 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 
 import httpx2
 import pytest
 from broker_state_helpers import asgi_auth_middleware
 from conftest import make_claims
-from fastmcp.exceptions import ToolError
-from test_domain_error_edges import (
+from domain_error_edges_support import (  # noqa: F401
     _CONDOR_RATE_LIMITED_DETAIL,
     _CREDENTIAL_FAILURES,
     _IDS,
+    _OAUTH21_EXPIRED,
+    _OAUTH21_NOT_STORED,
+    _OAUTH21_REFRESH_FAILED,
+    _OAUTH21_REJECTED,
+    _OIDC_401,
+    _OIDC_403,
+    _OIDC_404,
+    _POSIX_REQUIRED_BROKER_ISSUED,
+    _POSIX_REQUIRED_CONDOR,
     _RATE_LIMITED_RESPONSES,
+    _broker_issued_no_posix,
     _condor_exchange_producer,
+    _condor_no_posix,
+    _condor_provider,
+    _KeycloakStatusClient,
+    _oauth21_expired_without_refresh,
+    _oauth21_not_stored,
+    _oauth21_refresh_rejected,
+    _oauth21_rejected,
+    _oidc_producer,
+    _raised,
     _UnreachableJwksClient,
+    unreachable_jwks_fixture,
 )
+from fastmcp.exceptions import ToolError
 from test_mcp_aggregator import _OPEN_POLICY, _FakeProvider, _patch_context, _spec
 from test_mcp_middleware_identity import (
     _header,
@@ -28,15 +47,11 @@ from test_mcp_middleware_identity import (
 )
 from test_request_logging import _capturing_info
 
-from af_mcp_broker import identity as identity_module
 from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.credentials import (
     CredentialRegistry,
 )
 from af_mcp_broker.mcp.aggregator import _make_client_factory
-
-if TYPE_CHECKING:
-    from af_mcp_broker.config import Settings
 
 
 @pytest.mark.parametrize(
@@ -98,13 +113,6 @@ async def test_mcp_edge_logs_the_dedicated_event_for_a_credential_429(
     assert event["subject"] == principal.subject
     assert event["limiter"] == "credential_service"
     assert event["retry_after_seconds"] == 17
-
-
-@pytest.fixture
-def unreachable_jwks(settings: Settings) -> _UnreachableJwksClient:
-    """A client that cannot reach the JWKS endpoint, with nothing cached for it."""
-    identity_module._jwks_cache.pop(settings.oidc_jwks_uri, None)
-    return _UnreachableJwksClient()
 
 
 async def test_mcp_edge_collapses_an_unreachable_jwks_into_the_vague_401(
