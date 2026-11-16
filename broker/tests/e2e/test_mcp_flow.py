@@ -13,6 +13,7 @@ import os
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+from e2e_flow_support import BearerToken, broker_origin
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 BROKER_URL_ENV_VAR = "E2E_BROKER_URL"
 TOKEN_ENV_VAR = "MCP_BEARER_TOKEN"
 TOOL_ENV_VAR = "E2E_TOOL"
+TIMEOUT_ENV_VAR = "E2E_TIMEOUT"
 
 # The gateway's own identity tool: read-only, and it needs no linked identity,
 # so it succeeds for any principal the broker accepts. E2E_TOOL names another
@@ -29,6 +31,11 @@ TOOL_ENV_VAR = "E2E_TOOL"
 # reached through the broker.
 DEFAULT_READ_ONLY_TOOL = "af_whoami"
 READ_ONLY_TOOL = os.environ.get(TOOL_ENV_VAR) or DEFAULT_READ_ONLY_TOOL
+
+# Seconds the client waits for one MCP response. A cold tools/list waits on
+# every backend, each bounded by the broker's MCP_LIST_TIMEOUT_SECONDS, so
+# this must exceed that deadline; E2E_TIMEOUT overrides it.
+REQUEST_TIMEOUT_SECONDS = float(os.environ.get(TIMEOUT_ENV_VAR) or 60)
 
 
 # Substring of a failure's message -> what it means and what to do. The strings
@@ -66,6 +73,16 @@ _HINTS: dict[str, str] = {
     "CERTIFICATE_VERIFY_FAILED": (
         "The broker's TLS certificate is not trusted by this machine: check "
         "E2E_BROKER_URL names the host the certificate was issued for."
+    ),
+    "Not Found": (
+        "Nothing serves MCP at E2E_BROKER_URL/mcp/: check E2E_BROKER_URL is the "
+        "broker's origin (e.g. https://mcp.example.org) and that its ingress "
+        "routes /mcp."
+    ),
+    "timed out": (
+        "The broker did not answer within E2E_TIMEOUT seconds. A first "
+        "tools/list waits on every backend; set E2E_TIMEOUT above the broker's "
+        "MCP_LIST_TIMEOUT_SECONDS."
     ),
     "401": (
         "The broker rejected the bearer token: it is expired, for another "
@@ -111,27 +128,29 @@ def broker_url() -> str:
             f"{BROKER_URL_ENV_VAR} is not set; e2e tests need the base URL of a "
             "deployed broker, e.g. https://mcp.example.org"
         )
-    return url.rstrip("/")
+    return broker_origin(url)
 
 
 @pytest.fixture(scope="session")
-def bearer_token() -> str:
+def bearer_token() -> BearerToken:
     token = os.environ.get(TOKEN_ENV_VAR)
     if not token:
         pytest.skip(
             f"{TOKEN_ENV_VAR} is not set; e2e tests need a real bearer token "
             "(a Keycloak access token or a PAT) for the deployment"
         )
-    return token
+    return BearerToken(token)
 
 
 @pytest.fixture
-async def mcp_client(broker_url: str, bearer_token: str) -> AsyncIterator[Client]:
+async def mcp_client(
+    broker_url: str, bearer_token: BearerToken
+) -> AsyncIterator[Client]:
     """A connected client: entering it performs the MCP initialize handshake."""
     transport = StreamableHttpTransport(
-        f"{broker_url}/mcp/", headers={"Authorization": f"Bearer {bearer_token}"}
+        f"{broker_url}/mcp/", headers=bearer_token.authorization_header()
     )
-    client = Client(transport)
+    client = Client(transport, timeout=REQUEST_TIMEOUT_SECONDS)
     try:
         await client.__aenter__()
     except Exception as exc:  # noqa: BLE001 -- report whatever the transport raises, with a hint

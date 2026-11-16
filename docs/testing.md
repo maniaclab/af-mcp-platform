@@ -63,9 +63,10 @@ missing variable, when a required one is unset:
 
 | Variable | Meaning |
 | --- | --- |
-| `E2E_BROKER_URL` | Base URL of the deployed broker, e.g. `https://mcp.example.org` (a local dev-bypass broker works too). |
+| `E2E_BROKER_URL` | Base URL of the deployed broker, e.g. `https://mcp.example.org`, or its MCP endpoint URL (a trailing `/mcp` is dropped). A local dev-bypass broker works too. |
 | `MCP_BEARER_TOKEN` | A real bearer token for it, a Keycloak access token or a PAT. Read it with `read -s` so it never lands in shell history or a file. |
 | `E2E_TOOL` | Optional. A read-only tool that takes no arguments, to call and to require in `tools/list`; defaults to the gateway's own `af_whoami`. Name a backend's tool (e.g. `rucio_whoami`) to prove the broker reaches it. |
+| `E2E_TIMEOUT` | Optional. Seconds the client waits for one MCP response; defaults to 60. A first `tools/list` waits on every backend, so keep it above the broker's `MCP_LIST_TIMEOUT_SECONDS`. |
 
 `test_mcp_flow.py` runs what a real MCP client does over the wire through the
 `fastmcp` client: initialize, `tools/list` (what is visible reflects the
