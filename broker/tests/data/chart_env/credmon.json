@@ -10,6 +10,8 @@
     "CREDMON_SYNC_INTERVAL_SECONDS": "14400",
     "CREDMON_USER_DOMAIN": "example.org",
     "IDENTITY_PROVIDERS": "[{\"alias\":\"krb5-example\",\"audience\":\"krb5-token-service\",\"display_name\":\"CERN Kerberos ticket (example)\",\"enables\":\"\",\"service_url\":\"http://krb5-token-service.example.svc.cluster.local:8080\",\"targets\":[\"example_krb5_service\"],\"type\":\"krb5-token\"}]",
+    "KEYCLOAK_ADMIN_CLIENT_ID": "example-keycloak-admin-client",
+    "KEYCLOAK_ADMIN_CLIENT_SECRET": "<secret:example-keycloak-admin-client-secret/keycloak-admin-client-secret>",
     "MAINTENANCE_MODE_BACKEND": "in_memory",
     "MAINTENANCE_MODE_CACHE_TTL_SECONDS": "5",
     "MCP_REPLICA_COUNT": "2",
@@ -75,8 +77,8 @@
         "type": "krb5-token"
       }
     ],
-    "keycloak_admin_client_id": "",
-    "keycloak_admin_client_secret": "",
+    "keycloak_admin_client_id": "example-keycloak-admin-client",
+    "keycloak_admin_client_secret": "**********",
     "keycloak_login_client_id": "",
     "keycloak_login_client_secret": "",
     "log_level": "INFO",

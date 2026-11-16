@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.principal import Principal
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistryBackend
-    from af_mcp_broker.vault_kv import VaultKV
+    from af_mcp_broker.vault_kv import VaultConnections
 
 logger = structlog.get_logger(__name__)
 
@@ -71,7 +71,7 @@ def build_dev_bypass_principal(settings: Settings) -> Principal | None:
 
 def build_principal_cache(
     settings: Settings,
-    vault_kv: VaultKV | None,
+    vaults: VaultConnections,
     http_client: httpx2.AsyncClient,
     *,
     dev_bypass_active: bool,
@@ -108,10 +108,10 @@ def build_principal_cache(
             return None
         msg = (
             "KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET are unset "
-            "and BROKER_DEV_INSECURE_PRINCIPAL is not active. As of issue "
-            "#144 step 3, every authenticated request (JWT or PAT) resolves "
-            "its current groups from the PrincipalDirectory, so the broker "
-            "cannot authenticate anyone without this service account. "
+            "and BROKER_DEV_INSECURE_PRINCIPAL is not active. Every "
+            "authenticated request (JWT or PAT) resolves its current groups "
+            "from the PrincipalDirectory, so the broker cannot authenticate "
+            "anyone without this service account. "
             "Configure the Keycloak admin service account (see "
             "docs/auth.md's 'Operator setup: the Keycloak admin service "
             "account'), or set BROKER_DEV_INSECURE_PRINCIPAL for local "
@@ -122,10 +122,10 @@ def build_principal_cache(
         settings, admin_client_id, admin_client_secret, http_client
     )
     # Persistence service for the cache (issue #144 step 2b), sharing the
-    # process-wide vault_kv transport instance when Vault-backed.
+    # process-wide Vault transport instance when Vault-backed.
     return PrincipalCache(
         principal_directory,
-        backend=build_principal_cache_backend(settings, vault_kv),
+        backend=build_principal_cache_backend(settings, vaults),
         refresh_interval_seconds=settings.principal_cache_refresh_seconds,
         max_staleness_seconds=settings.principal_cache_max_staleness_seconds,
         heartbeat_interval_seconds=settings.principal_cache_heartbeat_seconds,
@@ -141,14 +141,14 @@ class TokenRegistries:
 
 
 def build_token_registry(
-    settings: Settings, vault_kv: VaultKV | None, shared_state: SharedState
+    settings: Settings, vaults: VaultConnections, shared_state: SharedState
 ) -> TokenRegistries:
     """Build the durable registry backing the manual bearer-token bootstrap flow (POST/GET/DELETE /v1/tokens, issue #24).
 
     Vault/OpenBao-backed for HA-safe list/revoke across replicas (issue #115)
     with an in-memory local-dev fallback.
     """
-    backend = build_token_registry_backend(settings, vault_kv)
+    backend = build_token_registry_backend(settings, vaults)
     return TokenRegistries(
         backend=backend, registry=TokenRegistry(backend, shared_state)
     )

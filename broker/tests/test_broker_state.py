@@ -71,6 +71,7 @@ _FROM_GROUPS_OR_CREATED = {
     "identity_providers",
     "identity_provider_configs",
     "credential_registry",
+    "oauth21_token_store",
     "krb5_vault_store",
     "servicex_vault_store",
     "tool_listing_cache",
@@ -123,9 +124,10 @@ def test_build_flattens_the_groups_the_lifespan_builds() -> None:
         registry=marks["credential_registry"],
         providers=marks["identity_providers"],
         configs=marks["identity_provider_configs"],
-    )
-    link_stores = SimpleNamespace(
-        krb5=marks["krb5_vault_store"], servicex=marks["servicex_vault_store"]
+        oauth21_token_store=marks["oauth21_token_store"],
+        link_stores=SimpleNamespace(
+            krb5=marks["krb5_vault_store"], servicex=marks["servicex_vault_store"]
+        ),
     )
     passed_through = {name: marks[name] for name in _FIELDS - _FROM_GROUPS_OR_CREATED}
 
@@ -134,7 +136,6 @@ def test_build_flattens_the_groups_the_lifespan_builds() -> None:
         catalog=catalog,  # type: ignore[arg-type]
         targets=targets,  # type: ignore[arg-type]
         providers=providers,  # type: ignore[arg-type]
-        link_stores=link_stores,  # type: ignore[arg-type]
         **passed_through,
     )
 

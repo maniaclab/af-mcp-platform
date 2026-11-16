@@ -18,7 +18,13 @@ import httpx2
 import pytest
 from vault_fakes import ADDR, AUTH_MOUNT, AUTH_ROLE, KV_MOUNT, FakeVault
 
-from af_mcp_broker.vault_kv import CasConflictError, VaultError, VaultKV
+from af_mcp_broker.vault_config import VaultConfig
+from af_mcp_broker.vault_kv import (
+    CasConflictError,
+    VaultConnections,
+    VaultError,
+    VaultKV,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -259,3 +265,29 @@ async def test_delete_metadata_raises_vault_error_on_5xx(sa_token_path: Path) ->
 
     with pytest.raises(VaultError, match="vault"):
         await vault_kv.delete_metadata(PATH)
+
+
+def _vault_config(**overrides: Any) -> VaultConfig:
+    fields: dict[str, Any] = {
+        "addr": ADDR,
+        "auth_mount": AUTH_MOUNT,
+        "auth_role": AUTH_ROLE,
+        "kv_mount": KV_MOUNT,
+        "sa_token_path": "/sa/token",
+    }
+    return VaultConfig(**{**fields, **overrides})
+
+
+def test_connections_share_one_client_per_vault_config() -> None:
+    connections = VaultConnections(httpx2.AsyncClient())
+
+    assert connections.connect(_vault_config()) is connections.connect(_vault_config())
+
+
+def test_connections_keep_distinct_vaults_apart() -> None:
+    connections = VaultConnections(httpx2.AsyncClient())
+
+    first = connections.connect(_vault_config())
+    second = connections.connect(_vault_config(kv_mount="other"))
+
+    assert first is not second

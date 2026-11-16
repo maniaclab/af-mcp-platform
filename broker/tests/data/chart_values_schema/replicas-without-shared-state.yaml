@@ -1,0 +1,6 @@
+# Several replicas must agree on limiter and cache state.
+broker:
+  replicaCount: 2
+  sharedState:
+    existingSecret:
+      name: ""

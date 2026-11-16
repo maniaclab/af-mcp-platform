@@ -9,6 +9,9 @@ portal:
     scope: "openid profile email example-audience"
   brokerOrigin: "https://mcp.example.com"
 broker:
+  keycloakAdmin:
+    clientId: "example-keycloak-admin-client"
+    existingClientSecretSecret: "example-keycloak-admin-client-secret"
   sharedState:
     allowPerReplicaState: true
 aggregator:
