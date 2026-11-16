@@ -20,7 +20,7 @@ from pathlib import Path
 
 from af_mcp_broker.audit.logger import AuditRecord
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "af_mcp_broker"
 
 _LEVELS = {"debug", "info", "warning", "warn", "error", "exception", "critical"}
 # Levels below which a ``*failed`` event may not be logged.

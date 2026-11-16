@@ -41,7 +41,7 @@ def _install(client, url: str, *rules: RateLimitRule) -> None:
     policy = EntitlementPolicy()
     policy.rate_limits = list(rules)
     # An empty registry: these tests are about usage, and a rule over no tools
-    # needs no backend listing (tests/test_rate_limits_api_tools.py covers that).
+    # needs no backend listing (tests/integration/test_rate_limits_api_tools.py covers that).
     set_broker_state(
         client.app,
         entitlement_policy=policy,
