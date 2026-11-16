@@ -62,7 +62,10 @@ def _helm_template(
         ("x509-without-voms", ["voms"]),
         ("ingress-without-hosts", ["mcpHost", "portalHost"]),
         ("missing-required", ["issuer", "clientId", "brokerOrigin"]),
-        ("keycloak-admin-unset", ["keycloakAdmin", "clientId", "existingClientSecretSecret"]),
+        (
+            "keycloak-admin-unset",
+            ["keycloakAdmin", "clientId", "existingClientSecretSecret"],
+        ),
         ("replicas-without-shared-state", ["sharedState"]),
         ("several-errors", ["keycloakAdmn", "replicaCount", "services"]),
     ],
