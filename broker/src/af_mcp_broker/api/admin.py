@@ -129,7 +129,7 @@ async def get_maintenance_status(request: Request) -> MaintenanceStatusResponse:
     store = get_broker_state(request).maintenance_mode_store
     try:
         state = await store.get()
-    except Exception as exc:
+    except Exception:
         # Same event name/shape as maintenance.check_not_maintenance_or_fail_open's
         # store-unavailability handling: ERROR level with a traceback, plus
         # the same counter, so an operator's dashboard doesn't need a
@@ -138,7 +138,7 @@ async def get_maintenance_status(request: Request) -> MaintenanceStatusResponse:
         # exist is staying reachable precisely when everything else is
         # refusing traffic, so surfacing the outage as a 500 here would be
         # exactly backwards.
-        logger.exception("maintenance.store_unavailable", error=str(exc))
+        logger.exception("maintenance.store_unavailable")
         metrics.maintenance_store_unavailable_total.inc()
         state = _DISABLED_DEFAULT
     unixname, email = await _resolve_enabled_by(request, state.enabled_by)

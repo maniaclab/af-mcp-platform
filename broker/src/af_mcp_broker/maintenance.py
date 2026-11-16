@@ -400,7 +400,7 @@ async def check_not_maintenance_or_fail_open(
         await check_not_maintenance(principal, settings, store)
     except MaintenanceModeError as exc:
         return exc
-    except Exception as exc:
+    except Exception:
         # .exception(), not .warning(): this is silently overriding an
         # admin's explicit security-relevant lockdown action for every
         # non-admin caller, not merely serving stale group data (contrast
@@ -409,7 +409,6 @@ async def check_not_maintenance_or_fail_open(
         # identity.py already uses for _fetch_jwks's jwks_fetch_failed.
         logger.exception(
             "maintenance.store_unavailable",
-            error=str(exc),
             subject=principal.subject,
         )
         metrics.maintenance_store_unavailable_total.inc()
