@@ -17,6 +17,23 @@ Companion pages:
 - [Adding a Service](adding-a-service.md): the `aggregator.services` and `identityProviders` entries.
 - [Admin Capabilities](admin.md): the admin group and maintenance mode.
 
+## Chart source
+
+Each release publishes the chart to `oci://ghcr.io/maniaclab/charts/af-mcp-platform`. The chart version equals the release tag without its `v` (tag `v1.2.3` is chart `1.2.3`). The commands below use `X.Y.Z` for it; pick a release from the repository's tags.
+
+```bash
+# Install straight from the registry:
+helm install af-mcp oci://ghcr.io/maniaclab/charts/af-mcp-platform --version X.Y.Z -f my-values.yaml
+
+# Or pull it to inspect, lint and template locally:
+helm pull oci://ghcr.io/maniaclab/charts/af-mcp-platform --version X.Y.Z --untar
+helm lint af-mcp-platform -f my-values.yaml
+```
+
+Flux can consume the same artifact, either as an `OCIRepository` (`spec.url: oci://ghcr.io/maniaclab/charts/af-mcp-platform`, `spec.ref.tag: X.Y.Z`) that a `HelmRelease` references through `chartRef`, or as a `HelmRepository` with `spec.type: oci` and `spec.url: oci://ghcr.io/maniaclab/charts` that a `HelmRelease` references through `chart.spec.chart: af-mcp-platform`. Argo CD and other OCI-aware tools take the same URL. A checkout of this repository pointed at `charts/af-mcp-platform` also works, and is the way to test unreleased chart changes.
+
+Steps 8 and 9 below use the checkout path; substitute the registry reference or the pulled directory.
+
 ## The order of things
 
 Create things in this order; each step needs the output of the ones before it.

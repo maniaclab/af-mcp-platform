@@ -1,0 +1,50 @@
+name: Publish chart
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Package and push chart to ghcr.io
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # push the chart to ghcr.io/maniaclab/charts
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: "3.19.5"
+
+      # The registry version comes from Chart.yaml, so a tag that disagrees
+      # with it must stop the release before anything is pushed.
+      - name: Check the tag matches Chart.yaml
+        run: python3 scripts/check-chart-version.py "$GITHUB_REF_NAME" charts/af-mcp-platform/Chart.yaml
+
+      # Same lint as chart-lint.yaml; ci/test-values.yaml supplies the values
+      # the chart requires and has no default for.
+      - name: helm lint
+        run: helm lint charts/af-mcp-platform -f charts/af-mcp-platform/ci/test-values.yaml
+
+      - name: helm package
+        run: helm package charts/af-mcp-platform --destination "$RUNNER_TEMP/chart"
+
+      - name: Login to ghcr.io
+        run: echo "$GITHUB_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushes ghcr.io/maniaclab/charts/af-mcp-platform:<version>.
+      - name: helm push
+        run: helm push "$RUNNER_TEMP"/chart/af-mcp-platform-*.tgz oci://ghcr.io/maniaclab/charts

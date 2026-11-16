@@ -59,6 +59,9 @@ scripts/*
 # Exception: renders docs/values-reference.md from the chart; a test fails when
 # the committed table is stale.
 !scripts/gen-values-reference.py
+# Exception: the chart publish workflow runs it to check the release tag
+# against Chart.yaml; a test covers it.
+!scripts/check-chart-version.py
 
 # Helm — packed charts and downloaded dependencies
 charts/*/charts/
