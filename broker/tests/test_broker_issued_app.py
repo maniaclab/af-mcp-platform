@@ -23,8 +23,6 @@ from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from test_broker_issued import (
     _BASE_CLAIMS,
-    _make_rsa_key,
-    _private_pem,
     verify_against_jwks,
 )
 from test_mcp_aggregator import _FakeFastMCPContext
@@ -75,7 +73,7 @@ _BACKENDS_YAML = (
 
 @pytest.fixture
 def broker_issued_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, broker_signing_key_file: Path
 ) -> Callable[..., None]:
     """Point the app at a broker-issued identity provider and (optionally) a real signing key on disk."""
 
@@ -86,9 +84,7 @@ def broker_issued_env(
         monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_BROKER_ISSUED_PROVIDERS))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         if with_signing_key:
-            key_file = tmp_path / "signing-key.pem"
-            key_file.write_bytes(_private_pem(_make_rsa_key()))
-            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
         else:
             monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
 
@@ -143,14 +139,15 @@ def test_unconfigured_feature_boots_cleanly(
 
 
 def test_signing_key_without_broker_issued_entry_boots_and_serves_jwks(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_client_factory
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_client_factory,
+    broker_signing_key_file: Path,
 ) -> None:
     """The key being configured ahead of the first broker-issued entry (the
     publish-before-use half of the rotation story) is a valid state: the
     issuer loads and the JWKS is served even with no provider wired yet."""
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
 
     with app_client_factory() as (client, _):
@@ -223,7 +220,12 @@ async def toy_backend_url() -> AsyncIterator[str]:
 
 
 async def test_aggregator_injects_broker_identity_token(
-    settings, toy_backend_url, static_principal_cache, sig_key, prime_jwks
+    settings,
+    toy_backend_url,
+    static_principal_cache,
+    sig_key,
+    prime_jwks,
+    broker_signing_key_pem: bytes,
 ) -> None:
     prime_jwks([sig_key.jwk])
     principal_cache, directory = static_principal_cache
@@ -241,7 +243,7 @@ async def test_aggregator_injects_broker_identity_token(
         )
     )
     issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()), issuer=_AGG_ISSUER_URL
+        private_key_pem=broker_signing_key_pem, issuer=_AGG_ISSUER_URL
     )
     provider = BrokerIssuedProvider(
         issuer=issuer,
@@ -322,12 +324,11 @@ def test_lifespan_threads_issuer_into_x509_client_factory(
     tmp_path: Path,
     app_client_factory: Any,
     make_principal: Any,
+    broker_signing_key_file: Path,
 ) -> None:
     """The x509 client factory the lifespan wires up must mint with the same
     issuer the lifespan loaded onto ``app.state.broker.broker_token_issuer``."""
-    key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(_make_rsa_key()))
-    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+    monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
 
     with app_client_factory() as (client, _):

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from _credmon_fake_vault import FakeVault, make_vault_kv
+from vault_fakes import FakeVault, make_vault_kv
 
 from af_mcp_broker.credmon.vault import VaultCredmonSyncState, VaultSubjectSource
 
@@ -24,47 +24,47 @@ def fake_vault() -> FakeVault:
 
 
 async def test_lists_subjects_holding_a_record_of_the_kind(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
     fake_vault.entries["mcp/krb5/sub-a/krb5"] = {"data": {}, "version": 1}
     fake_vault.entries["mcp/krb5/sub-b/krb5"] = {"data": {}, "version": 1}
     source = VaultSubjectSource(
-        make_vault_kv(fake_vault, tmp_path), prefixes={"krb5": "mcp/krb5"}
+        make_vault_kv(fake_vault, sa_token_path), prefixes={"krb5": "mcp/krb5"}
     )
 
     assert sorted(await source.list_subjects("krb5")) == ["sub-a", "sub-b"]
 
 
 async def test_kind_with_no_records_lists_nothing(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
     source = VaultSubjectSource(
-        make_vault_kv(fake_vault, tmp_path), prefixes={"krb5": "mcp/krb5"}
+        make_vault_kv(fake_vault, sa_token_path), prefixes={"krb5": "mcp/krb5"}
     )
 
     assert await source.list_subjects("krb5") == []
 
 
 async def test_unconfigured_kind_lists_nothing(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
     """A kind with no configured Vault store prefix has nothing to enumerate."""
     fake_vault.entries["mcp/krb5/sub-a/krb5"] = {"data": {}, "version": 1}
     source = VaultSubjectSource(
-        make_vault_kv(fake_vault, tmp_path), prefixes={"krb5": "mcp/krb5"}
+        make_vault_kv(fake_vault, sa_token_path), prefixes={"krb5": "mcp/krb5"}
     )
 
     assert await source.list_subjects("x509") == []
 
 
 async def test_ignores_leaf_keys_directly_under_the_prefix(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
     """Only ``{subject}/`` folders are subjects; a stray leaf key is not."""
     fake_vault.entries["mcp/krb5/stray"] = {"data": {}, "version": 1}
     fake_vault.entries["mcp/krb5/sub-a/krb5"] = {"data": {}, "version": 1}
     source = VaultSubjectSource(
-        make_vault_kv(fake_vault, tmp_path), prefixes={"krb5": "mcp/krb5"}
+        make_vault_kv(fake_vault, sa_token_path), prefixes={"krb5": "mcp/krb5"}
     )
 
     assert await source.list_subjects("krb5") == ["sub-a"]
@@ -75,34 +75,34 @@ async def test_ignores_leaf_keys_directly_under_the_prefix(
 # ---------------------------------------------------------------------------
 
 
-def _state(fake_vault: FakeVault, tmp_path: Path) -> VaultCredmonSyncState:
+def _state(fake_vault: FakeVault, sa_token_path: Path) -> VaultCredmonSyncState:
     return VaultCredmonSyncState(
-        make_vault_kv(fake_vault, tmp_path), kv_path_prefix="mcp/credmon"
+        make_vault_kv(fake_vault, sa_token_path), kv_path_prefix="mcp/credmon"
     )
 
 
 async def test_lease_is_granted_when_nobody_holds_it(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
-    state = _state(fake_vault, tmp_path)
+    state = _state(fake_vault, sa_token_path)
 
     assert await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1000.0)
     assert fake_vault.entries["mcp/credmon/lease"]["data"]["holder"] == "pod-a"
 
 
 async def test_lease_is_refused_while_another_holder_is_unexpired(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
-    state = _state(fake_vault, tmp_path)
+    state = _state(fake_vault, sa_token_path)
     await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1000.0)
 
     assert not await state.try_acquire_lease("pod-b", ttl_seconds=60, now=1030.0)
 
 
 async def test_expired_lease_can_be_taken_over(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
-    state = _state(fake_vault, tmp_path)
+    state = _state(fake_vault, sa_token_path)
     await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1000.0)
 
     assert await state.try_acquire_lease("pod-b", ttl_seconds=60, now=1061.0)
@@ -110,20 +110,20 @@ async def test_expired_lease_can_be_taken_over(
 
 
 async def test_holder_can_renew_its_own_lease(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
-    state = _state(fake_vault, tmp_path)
+    state = _state(fake_vault, sa_token_path)
     await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1000.0)
 
     assert await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1030.0)
 
 
 async def test_concurrent_acquire_loses_on_cas_conflict(
-    fake_vault: FakeVault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fake_vault: FakeVault, sa_token_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two replicas read the same free lease; only the first CAS write wins."""
-    state_a = _state(fake_vault, tmp_path)
-    state_b = _state(fake_vault, tmp_path)
+    state_a = _state(fake_vault, sa_token_path)
+    state_b = _state(fake_vault, sa_token_path)
     original_get = state_b._vault_kv.get
 
     async def _get_then_race(path: str):  # type: ignore[no-untyped-def]
@@ -138,8 +138,8 @@ async def test_concurrent_acquire_loses_on_cas_conflict(
     assert fake_vault.entries["mcp/credmon/lease"]["data"]["holder"] == "pod-a"
 
 
-async def test_status_round_trips(fake_vault: FakeVault, tmp_path: Path) -> None:
-    state = _state(fake_vault, tmp_path)
+async def test_status_round_trips(fake_vault: FakeVault, sa_token_path: Path) -> None:
+    state = _state(fake_vault, sa_token_path)
     assert await state.read_status() is None
 
     await state.write_status({"outcome": "success", "stored": {"krb5": 2}})
@@ -149,9 +149,9 @@ async def test_status_round_trips(fake_vault: FakeVault, tmp_path: Path) -> None
 
 
 async def test_released_lease_can_be_taken_immediately(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
-    state = _state(fake_vault, tmp_path)
+    state = _state(fake_vault, sa_token_path)
     await state.try_acquire_lease("pod-a", ttl_seconds=600, now=1000.0)
 
     await state.release_lease("pod-a", now=1005.0)
@@ -160,11 +160,11 @@ async def test_released_lease_can_be_taken_immediately(
 
 
 async def test_release_never_clears_another_holders_lease(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
     """pod-a's lease expired and pod-b took it over; pod-a finishing late must
     not hand pod-b's lease to a third replica."""
-    state = _state(fake_vault, tmp_path)
+    state = _state(fake_vault, sa_token_path)
     await state.try_acquire_lease("pod-a", ttl_seconds=60, now=1000.0)
     await state.try_acquire_lease("pod-b", ttl_seconds=600, now=1061.0)
 
@@ -175,8 +175,8 @@ async def test_release_never_clears_another_holders_lease(
 
 
 async def test_release_without_a_lease_is_a_noop(
-    fake_vault: FakeVault, tmp_path: Path
+    fake_vault: FakeVault, sa_token_path: Path
 ) -> None:
-    await _state(fake_vault, tmp_path).release_lease("pod-a", now=1000.0)
+    await _state(fake_vault, sa_token_path).release_lease("pod-a", now=1000.0)
 
     assert "mcp/credmon/lease" not in fake_vault.entries

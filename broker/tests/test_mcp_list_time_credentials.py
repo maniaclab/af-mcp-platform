@@ -21,7 +21,6 @@ from fastmcp.utilities.http import find_available_port
 from fastmcp.utilities.tests import asgi_server
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
-from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
@@ -729,6 +728,7 @@ async def mint_and_inject_env(
     policy: EntitlementPolicy,
     open_backend_url: str,
     static_principal_cache: Any,
+    broker_signing_key_pem: bytes,
 ) -> AsyncIterator[_MintAndInjectEnv]:
     env = _MintAndInjectEnv()
     env.auth_type = request.param
@@ -743,7 +743,7 @@ async def mint_and_inject_env(
         }
 
     issuer = BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()),
+        private_key_pem=broker_signing_key_pem,
         issuer="https://mcp.example.com",
         ttl_seconds=600,
     )

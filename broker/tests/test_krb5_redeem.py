@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
 from test_krb5_token import FakeKrb5VaultStore, _FakeClient
 from test_krb5_token import _ticket as _minted_ticket
 from test_request_logging import _capturing_info
@@ -107,7 +106,7 @@ async def _fake_authenticate(self: VaultKV) -> str:
 
 @pytest.fixture
 def krb5_redeem_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, broker_signing_key_file: Path
 ) -> Callable[..., None]:
     """Configure a krb5-token identity provider for target 'krb5-backend' with a real signing key and a stubbed Vault."""
 
@@ -133,9 +132,7 @@ def krb5_redeem_env(
                 ]
             ),
         )
-        key_file = tmp_path / "signing-key.pem"
-        key_file.write_bytes(_private_pem(_make_rsa_key()))
-        monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+        monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
         # A krb5-token entry always requires Vault (config.py's
         # _validate_vault_config); stub the trial auth the same way
         # test_krb5_ticket_endpoint.py's krb5_app fixture does.

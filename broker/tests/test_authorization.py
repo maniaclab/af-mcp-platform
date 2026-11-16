@@ -282,36 +282,31 @@ def test_disabled_permission_action_type_defaults_to_read(
     )
 
 
-def test_is_admin_true_when_member_of_configured_admin_group(
+@pytest.mark.parametrize(
+    ("admin_group", "groups", "expected"),
+    [
+        pytest.param(
+            "af-admins",
+            ["atlas", "af-admins"],
+            True,
+            id="true_when_member_of_configured_admin_group",
+        ),
+        pytest.param("af-admins", ["atlas"], False, id="false_when_not_a_member"),
+        pytest.param(
+            "", ["af-admins"], False, id="false_when_admin_group_unconfigured"
+        ),
+        pytest.param("af-admins", [], False, id="false_when_principal_has_no_groups"),
+    ],
+)
+def test_is_admin(
     make_principal: Callable[..., object],
+    admin_group: str,
+    groups: list[str],
+    expected: bool,
 ) -> None:
-    settings = Settings(admin_group="af-admins")
-    principal = make_principal(groups=["atlas", "af-admins"])
-    assert is_admin(principal, settings) is True
-
-
-def test_is_admin_false_when_not_a_member(
-    make_principal: Callable[..., object],
-) -> None:
-    settings = Settings(admin_group="af-admins")
-    principal = make_principal(groups=["atlas"])
-    assert is_admin(principal, settings) is False
-
-
-def test_is_admin_false_when_admin_group_unconfigured(
-    make_principal: Callable[..., object],
-) -> None:
-    settings = Settings(admin_group="")
-    principal = make_principal(groups=["af-admins"])
-    assert is_admin(principal, settings) is False
-
-
-def test_is_admin_false_when_principal_has_no_groups(
-    make_principal: Callable[..., object],
-) -> None:
-    settings = Settings(admin_group="af-admins")
-    principal = make_principal(groups=[])
-    assert is_admin(principal, settings) is False
+    settings = Settings(admin_group=admin_group)
+    principal = make_principal(groups=groups)
+    assert is_admin(principal, settings) is expected
 
 
 def _write_policy(tmp_path: Path, text: str) -> str:

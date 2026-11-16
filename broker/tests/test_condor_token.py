@@ -22,8 +22,6 @@ import pytest
 import structlog
 from test_broker_issued import (
     ISSUER_URL,
-    _make_rsa_key,
-    _private_pem,
     verify_against_jwks,
 )
 
@@ -77,9 +75,9 @@ class _FakeCondorClient:
 
 
 @pytest.fixture
-def issuer() -> BrokerTokenIssuer:
+def issuer(broker_signing_key_pem: bytes) -> BrokerTokenIssuer:
     return BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()),
+        private_key_pem=broker_signing_key_pem,
         issuer=ISSUER_URL,
         ttl_seconds=600,
     )

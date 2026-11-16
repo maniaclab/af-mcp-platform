@@ -14,7 +14,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from test_broker_issued import _make_rsa_key, _private_pem
 from test_servicex import FakeServiceXClient, FakeServiceXStore
 
 from af_mcp_broker.credentials.errors import (
@@ -48,7 +47,7 @@ async def _fake_authenticate(self: VaultKV) -> str:
 
 @pytest.fixture
 def servicex_link_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, broker_signing_key_file: Path
 ) -> Callable[..., None]:
     def _apply() -> None:
         services_file = tmp_path / "services.yaml"
@@ -69,9 +68,7 @@ def servicex_link_env(
                 ]
             ),
         )
-        key_file = tmp_path / "signing-key.pem"
-        key_file.write_bytes(_private_pem(_make_rsa_key()))
-        monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+        monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
         monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
         monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
         monkeypatch.setenv("VAULT_KV_ROOT", "mcp")

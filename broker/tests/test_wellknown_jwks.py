@@ -13,10 +13,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from conftest import configure_keyless_env
+from signing_keys import make_rsa_key, private_pem, public_pem
 from test_broker_issued import (
-    _make_rsa_key,
-    _private_pem,
-    _public_pem,
     _rfc7638_thumbprint,
 )
 
@@ -28,9 +26,9 @@ if TYPE_CHECKING:
 
 
 def _configure_signing_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
-    key = _make_rsa_key()
+    key = make_rsa_key()
     key_file = tmp_path / "signing-key.pem"
-    key_file.write_bytes(_private_pem(key))
+    key_file.write_bytes(private_pem(key))
     monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
     return key
@@ -86,10 +84,10 @@ def test_jwks_includes_additional_rotation_keys(
     app_client_factory: Callable[..., Any],
 ) -> None:
     active_key = _configure_signing_key(monkeypatch, tmp_path)
-    retiring_key = _make_rsa_key()
+    retiring_key = make_rsa_key()
     extra_dir = tmp_path / "additional"
     extra_dir.mkdir()
-    (extra_dir / "retiring.pem").write_bytes(_public_pem(retiring_key))
+    (extra_dir / "retiring.pem").write_bytes(public_pem(retiring_key))
     monkeypatch.setenv("BROKER_ADDITIONAL_PUBLIC_KEYS_DIR", str(extra_dir))
 
     with app_client_factory() as (client, _):

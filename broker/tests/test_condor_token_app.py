@@ -15,7 +15,6 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials import CondorTokenProvider
 
@@ -45,7 +44,7 @@ _BACKENDS_YAML = (
 
 @pytest.fixture
 def condor_token_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, broker_signing_key_file: Path
 ) -> Callable[..., None]:
     """Point the app at a condor-token identity provider and (optionally) a real signing key on disk."""
 
@@ -56,9 +55,7 @@ def condor_token_env(
         monkeypatch.setenv("IDENTITY_PROVIDERS", json.dumps(_CONDOR_TOKEN_PROVIDERS))
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         if with_signing_key:
-            key_file = tmp_path / "signing-key.pem"
-            key_file.write_bytes(_private_pem(_make_rsa_key()))
-            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
         else:
             monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
 

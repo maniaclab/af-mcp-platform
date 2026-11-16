@@ -22,7 +22,6 @@ import jwt
 import pytest
 import structlog
 from pydantic import SecretStr
-from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credentials.errors import (
@@ -44,10 +43,8 @@ _REDEEM_RESPONSE = {"access_token": "fake-access-token", "expires_in": 3600}
 
 
 @pytest.fixture
-def issuer() -> BrokerTokenIssuer:
-    return BrokerTokenIssuer(
-        private_key_pem=_private_pem(_make_rsa_key()), issuer=_ISSUER_URL
-    )
+def issuer(broker_signing_key_pem: bytes) -> BrokerTokenIssuer:
+    return BrokerTokenIssuer(private_key_pem=broker_signing_key_pem, issuer=_ISSUER_URL)
 
 
 @pytest.fixture
@@ -139,18 +136,14 @@ class TestRedeemFailures:
         assert "revoked or expired" not in message
         assert "new token" in message
 
-    async def test_redeem_401_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(401, json={"detail": "nope"}))
-        with pytest.raises(ServiceXServiceMintError):
-            await _redeem(client)
-
-    async def test_redeem_429_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(429, json={"detail": "rate limited"}))
-        with pytest.raises(ServiceXServiceMintError):
-            await _redeem(client)
-
-    async def test_redeem_502_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(502, json={"detail": "bad gateway"}))
+    @pytest.mark.parametrize(
+        ("status", "detail"),
+        [(401, "nope"), (429, "rate limited"), (502, "bad gateway")],
+    )
+    async def test_redeem_error_status_raises_mint_error(
+        self, make_client, status: int, detail: str
+    ) -> None:
+        client, _ = make_client(httpx2.Response(status, json={"detail": detail}))
         with pytest.raises(ServiceXServiceMintError):
             await _redeem(client)
 

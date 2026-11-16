@@ -1342,31 +1342,25 @@ def test_authorize_returns_json_when_accept_json(
     assert resp.cookies.get(NONCE_COOKIE_NAME) is not None
 
 
-def test_authorize_returns_302_when_accept_html(
-    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param({"Accept": "text/html"}, id="accept_html"),
+        pytest.param({}, id="no_accept"),
+    ],
+)
+def test_authorize_returns_302(
+    monkeypatch: pytest.MonkeyPatch,
+    app_client_factory: Any,
+    headers: dict[str, str],
 ) -> None:
     fernet_key = Fernet.generate_key().decode()
     _configure_oauth21_env(monkeypatch, fernet_key)
 
     with app_client_factory() as (client, _state):
         resp = client.get(
-            f"/v1/oauth/authorize/{ALIAS}",
-            headers={"Accept": "text/html"},
-            follow_redirects=False,
+            f"/v1/oauth/authorize/{ALIAS}", headers=headers, follow_redirects=False
         )
-
-    assert resp.status_code == 302, resp.text
-    assert resp.headers["location"].startswith(AUTHORIZATION_ENDPOINT + "?")
-
-
-def test_authorize_returns_302_when_no_accept(
-    monkeypatch: pytest.MonkeyPatch, app_client_factory: Any
-) -> None:
-    fernet_key = Fernet.generate_key().decode()
-    _configure_oauth21_env(monkeypatch, fernet_key)
-
-    with app_client_factory() as (client, _state):
-        resp = client.get(f"/v1/oauth/authorize/{ALIAS}", follow_redirects=False)
 
     assert resp.status_code == 302, resp.text
     assert resp.headers["location"].startswith(AUTHORIZATION_ENDPOINT + "?")

@@ -91,13 +91,22 @@ def test_mint_without_name_generates_a_default(
     assert body["lookup_id"][:8] in body["name"]
 
 
-def test_mint_rejects_name_above_max_length(
-    app_client: tuple[TestClient, dict],
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("name", "x" * 201, id="name_above_max_length"),
+        pytest.param("expires_in_days", 0, id="expires_in_days_below_minimum"),
+        pytest.param("expires_in_days", 3651, id="expires_in_days_above_maximum"),
+        pytest.param("note", "x" * 257, id="note_above_max_length"),
+    ],
+)
+def test_mint_rejects_out_of_range_field(
+    app_client: tuple[TestClient, dict], field: str, value: object
 ) -> None:
     client, _ = app_client
-    resp = _mint(client, name="x" * 201)
+    resp = _mint(client, **{field: value})
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"][0]["loc"] == ["body", "name"]
+    assert resp.json()["detail"][0]["loc"] == ["body", field]
     assert _listed_ids(client) == set()
 
 
@@ -187,26 +196,6 @@ def test_mint_rejects_never_expires_and_expires_in_days_together(
     assert _listed_ids(client) == set()
 
 
-def test_mint_rejects_expires_in_days_below_minimum(
-    app_client: tuple[TestClient, dict],
-) -> None:
-    client, _ = app_client
-    resp = _mint(client, expires_in_days=0)
-    assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"][0]["loc"] == ["body", "expires_in_days"]
-    assert _listed_ids(client) == set()
-
-
-def test_mint_rejects_expires_in_days_above_maximum(
-    app_client: tuple[TestClient, dict],
-) -> None:
-    client, _ = app_client
-    resp = _mint(client, expires_in_days=3651)
-    assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"][0]["loc"] == ["body", "expires_in_days"]
-    assert _listed_ids(client) == set()
-
-
 def test_mint_note_round_trips_through_list(
     app_client: tuple[TestClient, dict],
 ) -> None:
@@ -230,14 +219,6 @@ def test_mint_note_absent_by_default(app_client: tuple[TestClient, dict]) -> Non
 
     listed = client.get("/v1/tokens", headers=_AUTH)
     assert listed.json()[0]["note"] is None
-
-
-def test_mint_rejects_note_above_max_length(
-    app_client: tuple[TestClient, dict],
-) -> None:
-    client, _ = app_client
-    resp = _mint(client, note="x" * 257)
-    assert resp.status_code == 422, resp.text
 
 
 # ---------------------------------------------------------------------------

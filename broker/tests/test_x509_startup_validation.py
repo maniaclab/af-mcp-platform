@@ -13,7 +13,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from test_broker_issued import _make_rsa_key, _private_pem
 
 from af_mcp_broker.vault_kv import VaultKV
 
@@ -55,7 +54,9 @@ async def _fake_authenticate(self: VaultKV) -> str:
 
 
 @pytest.fixture
-def boot_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., None]:
+def boot_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, broker_signing_key_file: Path
+) -> Callable[..., None]:
     """Point the app at *entries* with Vault stubbed, and a signing key only when asked.
 
     Applied from inside the test body so it runs after ``app_client_factory``'s
@@ -73,9 +74,7 @@ def boot_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., N
         monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
         monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
         if with_signing_key:
-            key_file = tmp_path / "signing-key.pem"
-            key_file.write_bytes(_private_pem(_make_rsa_key()))
-            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
+            monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(broker_signing_key_file))
         else:
             monkeypatch.delenv("BROKER_SIGNING_KEY_FILE", raising=False)
 
