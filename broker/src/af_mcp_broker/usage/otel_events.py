@@ -179,8 +179,5 @@ class EventEmittingUsageStore(UsageStore):
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
         return await self._store.query(subject, days)
 
-    async def list_subjects(self, days: int) -> list[str]:
-        return await self._store.list_subjects(days)
-
     async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
         return await self._store.list_subject_activity(days)

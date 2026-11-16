@@ -107,15 +107,6 @@ class UsageStore(abc.ABC):
         """Return aggregates for *subject* over the trailing *days* UTC calendar days, today inclusive."""
 
     @abc.abstractmethod
-    async def list_subjects(self, days: int) -> list[str]:
-        """Return distinct principal subjects with recorded usage in the trailing *days*-day window.
-
-        Backs the admin-only usage-for-other-users view -- this only ever
-        lists people with broker activity, never a full Keycloak user
-        directory.
-        """
-
-    @abc.abstractmethod
     async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
         """Return each subject with usage in the trailing *days*-day window and when it was last seen, most recently seen first.
 
@@ -230,12 +221,6 @@ class InMemoryUsageStore(UsageStore):
             )
             if sub == subject and day >= start
         ]
-
-    async def list_subjects(self, days: int) -> list[str]:
-        start = window_start(days)
-        return sorted(
-            {sub for (sub, day, _s, _m, _o) in self._counters if day >= start}
-        )
 
     async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
         start = window_start(days)

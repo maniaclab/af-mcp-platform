@@ -44,17 +44,16 @@ FastAPI dependency):
   the real enforcement is server-side on the API calls the page makes, not
   the nav visibility. The page hosts both the usage-by-subject view below
   and the maintenance-mode toggle described next.
-- **Usage for other subjects.** `GET /v1/usage/subjects` lists the distinct
-  subjects with recorded usage in a trailing window (resolved to
-  unixname/email where the principal cache can), and is admin-only end to
-  end (`require_admin`). `GET /v1/usage` itself is normally scoped to the
+- **Usage for other subjects.** `GET /v1/usage` is normally scoped to the
   caller's own `principal.subject`; passing `?subject=<other>` is rejected
   with 403 unless the caller is in the admin group, in which case it
-  returns that subject's usage instead. Both only ever surface subjects
-  with actual broker activity — never a full Keycloak user directory.
+  returns that subject's usage instead. The portal's Admin page picks the
+  subject with the user search below.
 - **Finding a user.** `GET /v1/admin/users?search=<text>&limit=<n>` (default
   20, at most 50) searches the users the platform has seen: those with
-  recorded usage in the trailing 365 days, never the whole Keycloak realm. The
+  recorded usage in the trailing 365 days, never the whole Keycloak realm. A
+  token that was minted but never used creates no usage, so it does not make
+  its owner appear in the picker. The
   match is a server-side, case-insensitive substring over username (the POSIX
   unix name when the user has one, else the Keycloak username), email, display
   name and subject; rows come back most recently seen first with `subject`,

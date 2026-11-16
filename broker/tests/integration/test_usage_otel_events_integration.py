@@ -106,7 +106,9 @@ async def test_reads_delegate_to_the_wrapped_store(
 
     (agg,) = await store.query("alice-sub", days=1)
     assert agg.calls == 1
-    assert await store.list_subjects(days=1) == ["alice-sub"]
+    assert [a.subject for a in await store.list_subject_activity(days=1)] == [
+        "alice-sub"
+    ]
 
 
 # --- a bad collector never affects the call path or the Postgres write -----

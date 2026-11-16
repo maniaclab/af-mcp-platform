@@ -225,18 +225,6 @@ async def test_query_is_scoped_to_the_subject(store: PostgresUsageStore) -> None
     assert sum(a.calls for a in aggs) == 1
 
 
-async def test_list_subjects_returns_distinct_subjects_in_window(
-    store: PostgresUsageStore,
-) -> None:
-    await store.record(_record(subject="alice"))
-    await store.record(_record(subject="bob", audit_id="audit-2"))
-    await store.record(_record(subject="alice", audit_id="audit-3"))
-
-    subjects = await store.list_subjects(days=30)
-
-    assert sorted(subjects) == ["alice", "bob"]
-
-
 async def test_list_subject_activity_reports_latest_call_per_subject(
     store: PostgresUsageStore,
 ) -> None:

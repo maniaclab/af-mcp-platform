@@ -192,17 +192,21 @@ async def test_rollup_with_retention_disabled_keeps_every_raw_row(
     assert await _count(postgres_dsn, "af_mcp_usage_daily") == 0
 
 
+async def _seen_subjects(store: PostgresUsageStore, *, days: int) -> list[str]:
+    return sorted(a.subject for a in await store.list_subject_activity(days))
+
+
 async def test_query_is_identical_before_and_after_rollup(
     store: PostgresUsageStore,
 ) -> None:
     await _seed_old_and_new(store)
     before = await store.query("sub-abc", days=365)
-    assert await store.list_subjects(days=365) == ["other", "sub-abc"]
+    assert await _seen_subjects(store, days=365) == ["other", "sub-abc"]
 
     await store.rollup_and_prune(retention_days=90)
 
     assert await store.query("sub-abc", days=365) == before
-    assert await store.list_subjects(days=365) == ["other", "sub-abc"]
+    assert await _seen_subjects(store, days=365) == ["other", "sub-abc"]
 
 
 async def test_query_merges_raw_and_rolled_up_rows_of_the_same_key(
@@ -232,7 +236,7 @@ async def test_query_window_excludes_rolled_up_days_outside_it(
     await store.rollup_and_prune(retention_days=90)
 
     assert sum(a.calls for a in await store.query("sub-abc", days=30)) == 2
-    assert await store.list_subjects(days=30) == ["sub-abc"]
+    assert await _seen_subjects(store, days=30) == ["sub-abc"]
     assert sum(a.calls for a in await store.query("sub-abc", days=365)) == 5
 
 
@@ -308,9 +312,9 @@ async def test_background_job_is_off_without_retention(postgres_dsn: str) -> Non
     ("sql", "args"),
     [
         (usage_postgres._RAW_QUERY, ("sub-abc", datetime.now(tz=UTC))),
-        (usage_postgres._RAW_SUBJECTS_QUERY, (datetime.now(tz=UTC),)),
+        (usage_postgres._RAW_SUBJECT_ACTIVITY_QUERY, (datetime.now(tz=UTC),)),
     ],
-    ids=["query", "list_subjects"],
+    ids=["query", "list_subject_activity"],
 )
 async def test_raw_queries_can_use_the_ts_indexes(
     store: PostgresUsageStore, postgres_dsn: str, sql: str, args: tuple[Any, ...]

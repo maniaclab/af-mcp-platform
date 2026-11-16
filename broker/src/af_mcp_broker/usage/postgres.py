@@ -294,31 +294,23 @@ FROM (
 GROUP BY day, service, method, outcome, content_type
 """  # noqa: S608 -- interpolates only the module-level constant _CONTENT_RAW_QUERY; request values are bound parameters ($1..$3)
 
-_RAW_SUBJECTS_QUERY = """
-SELECT DISTINCT subject
-FROM af_mcp_usage_events
-WHERE ts >= $1
-"""
-
-_LIST_SUBJECTS_QUERY = f"""
-{_RAW_SUBJECTS_QUERY}
-UNION
-SELECT subject FROM af_mcp_usage_daily WHERE day >= $2
-"""  # noqa: S608 -- interpolates only the module-level constant _RAW_SUBJECTS_QUERY; request values are bound parameters ($1, $2)
-
 # Latest call per subject: the raw rows' own timestamps plus each rolled-up
 # day's midnight (a rolled-up row has no finer time than its day).
-_SUBJECT_ACTIVITY_QUERY = """
+_RAW_SUBJECT_ACTIVITY_QUERY = """
+SELECT subject, ts AS seen FROM af_mcp_usage_events WHERE ts >= $1
+"""
+
+_SUBJECT_ACTIVITY_QUERY = f"""
 SELECT subject, max(seen) AS last_seen
 FROM (
-    SELECT subject, ts AS seen FROM af_mcp_usage_events WHERE ts >= $1
+    {_RAW_SUBJECT_ACTIVITY_QUERY}
     UNION ALL
     SELECT subject, day::timestamp AT TIME ZONE 'UTC' AS seen
     FROM af_mcp_usage_daily WHERE day >= $2
 ) AS merged
 GROUP BY subject
 ORDER BY last_seen DESC
-"""
+"""  # noqa: S608 -- interpolates only the module-level constant _RAW_SUBJECT_ACTIVITY_QUERY; request values are bound parameters ($1, $2)
 
 # Folds every raw row older than $1 into the daily rollup and deletes it in
 # ONE statement: the rows the DELETE returns are exactly the rows summed, so
@@ -505,13 +497,6 @@ class PostgresUsageStore(UsageStore):
             )
             for row in rows
         ]
-
-    async def list_subjects(self, days: int) -> list[str]:
-        start = window_start(days)
-        rows = await self._require_pool().fetch(
-            _LIST_SUBJECTS_QUERY, _utc_midnight(start), start
-        )
-        return sorted(row["subject"] for row in rows)
 
     async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
         start = window_start(days)
