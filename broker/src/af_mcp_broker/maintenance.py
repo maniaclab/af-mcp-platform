@@ -37,8 +37,8 @@ from af_mcp_broker.config import (
     VaultMaintenanceStoreConfig,
 )
 from af_mcp_broker.constants import POOL_MAX_SIZE, POOL_MIN_SIZE
-from af_mcp_broker.errors import BrokerError, require
-from af_mcp_broker.vault_kv import CasConflictError, VaultKV
+from af_mcp_broker.errors import BrokerError
+from af_mcp_broker.vault_kv import CasConflictError, VaultConnections, VaultKV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -417,13 +417,13 @@ async def check_not_maintenance_or_fail_open(
 
 
 def build_maintenance_store(
-    settings: Settings, vault_kv: VaultKV | None
+    settings: Settings, vaults: VaultConnections
 ) -> MaintenanceModeStore:
     """Build the (not yet started) store selected by ``settings.maintenance_store``.
 
-    *vault_kv* is the process-wide Vault transport, present whenever
-    ``Settings.uses_vault`` holds (which the ``vault`` backend implies). The
-    ``match`` is exhaustive over the ``MaintenanceStoreConfig`` union:
+    *vaults* hands out the process-wide Vault transport for the
+    ``VaultConfig`` the selected backend carries. The ``match`` is exhaustive
+    over the ``MaintenanceStoreConfig`` union:
     ``assert_never`` makes mypy fail when a backend is added without a branch
     here.
     """
@@ -432,11 +432,9 @@ def build_maintenance_store(
     match backend:
         case InMemoryMaintenanceStoreConfig():
             store = InMemoryMaintenanceModeStore()
-        case VaultMaintenanceStoreConfig():
+        case VaultMaintenanceStoreConfig(vault=vault):
             store = VaultMaintenanceModeStore(
-                vault_kv=require(
-                    vault_kv, "maintenance_mode_backend=vault requires a Vault client"
-                ),
+                vault_kv=vaults.connect(vault),
                 kv_path_prefix=settings.vault_kv_paths.maintenance_mode,
             )
         case PostgresMaintenanceStoreConfig(dsn=dsn):

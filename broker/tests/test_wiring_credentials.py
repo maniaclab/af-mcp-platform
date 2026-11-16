@@ -31,7 +31,7 @@ from af_mcp_broker.credentials import (
 from af_mcp_broker.credentials.stores import VaultLinkStores
 from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.shared_state import InMemorySharedState
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.vault_kv import VaultConnections
 from af_mcp_broker.wiring.credentials import (
     build_broker_token_issuer,
     build_credential_cache,
@@ -72,15 +72,8 @@ def _settings(**overrides: Any) -> Settings:
 
 
 @pytest.fixture
-def vault_kv() -> VaultKV:
-    return VaultKV(
-        addr="https://vault.invalid",
-        auth_mount="kubernetes",
-        auth_role="r",
-        kv_mount="secret",
-        sa_token_path="/nonexistent",
-        http_client=httpx2.AsyncClient(),
-    )
+def vaults() -> VaultConnections:
+    return VaultConnections(httpx2.AsyncClient())
 
 
 class TestBuildStateCipher:
@@ -137,20 +130,25 @@ class TestBuildBrokerTokenIssuer:
 
 class TestBuildOauth21TokenStore:
     def test_is_none_without_an_oauth21_direct_entry(self) -> None:
-        assert build_oauth21_token_store(_settings(), None) is None
+        assert (
+            build_oauth21_token_store(
+                _settings(), VaultConnections(httpx2.AsyncClient())
+            )
+            is None
+        )
 
     @pytest.mark.parametrize(
         ("backend", "expected"),
         [("in_memory", InMemoryTokenStore), ("vault", VaultTokenStore)],
     )
     def test_follows_the_token_store_backend(
-        self, backend: str, expected: type, vault_kv: VaultKV
+        self, backend: str, expected: type, vaults: VaultConnections
     ) -> None:
         settings = _settings(
             identity_providers=[_oauth21_entry()], token_store_backend=backend
         )
 
-        assert isinstance(build_oauth21_token_store(settings, vault_kv), expected)
+        assert isinstance(build_oauth21_token_store(settings, vaults), expected)
 
 
 class TestStartedResourcesCloseWithTheStack:

@@ -257,7 +257,7 @@ layers = [
   "tracing | principal_cache | mcp_auth_codes | authorization",
   "principal_directory | token_registry",
   "config | otel_resource | vault_kv | shared_state | oauth_state | cimd_client | backend_errors",
-  "errors | constants | principal | logging | metrics | _version | pat | retry_after",
+  "errors | constants | principal | logging | metrics | _version | pat | retry_after | vault_config",
 ]
 
 [[tool.importlinter.contracts]]
