@@ -523,9 +523,10 @@ rate_limits:
       `action_type`, `tool`, `limit`, `window_seconds`, and the caller's
       `used` (calls counted in the open window, refused attempts included, so
       it can exceed `limit`), `resets_in_seconds` (null while no window is
-      open) and `tools` (the caller's tools the rule covers, sorted, matched
+      open), `tools` (the caller's tools the rule covers, sorted, matched
       with `RateLimitRule.matches`, the matcher the limiter counts calls
-      with), plus `usage_available` and `unlisted_services`. It is separate
+      with, capped at 20) and `tool_count` (the uncapped number), plus
+      `usage_available` and `unlisted_services`. It is separate
       from `GET /v1/entitlements`, which is static policy identical for
       every caller; this response reads live per-caller counters. The
       counters are read with `SharedState.get_window` under the same
@@ -533,13 +534,17 @@ rate_limits:
       subject only. `tools` needs every service's tool list, so with at
       least one rule the route lists each registered service the way
       `GET /v1/catalog/{service}/tools` does (same credentials, same
-      per-service cache); with no rules it contacts no backend.
+      per-service cache); with no rules it contacts no backend. Services are
+      listed concurrently on every request: a cached listing costs no
+      backend call, while a cold cache or a failed listing (failures are not
+      cached) costs one, bounded by `mcp_list_timeout_seconds`.
       `unlisted_services` names the services missing from every `tools`:
       the caller lacks the permission to see any of them, or listing failed
       (logged as `rate_limits.service_tools_failed` when it raised).
     - *Gateway tool.* `af_rate_limits` returns the same rules and usage and
       also lists, per rule, up to 20 of the caller's entitled tools it
-      covers (`tools`, with `tool_count` for the full number), after a
+      covers (`tools`, capped as in the API, with `tool_count` for the full
+      number), after a
       one-line `summary`. It is read-only and needs no permission. Calling it
       is itself a tool call, so a rule that matches `af_rate_limits` (for
       example `action_type: read`) counts it. The rate-limit error text
