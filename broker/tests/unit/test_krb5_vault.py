@@ -223,7 +223,9 @@ class TestRenewableTicket:
         get_ticket has already said no, but the method itself makes no such
         assumption)."""
         await _store_ticket(store, remaining=3600.0, renew_remaining=7200.0)
-        assert await store.get_renewable_ticket(SUBJECT) is not None
+        record = await store.get_renewable_ticket(SUBJECT)
+        assert record is not None
+        assert record.ccache_b64.get_secret_value() == _CCACHE
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +281,9 @@ class TestDelete:
         await _link(store)
         await store.delete(SUBJECT)
         await _link(store)
-        assert await store.get_link(SUBJECT) is not None
+        link = await store.get_link(SUBJECT)
+        assert link is not None
+        assert link.username == "auser"
 
 
 # ---------------------------------------------------------------------------
@@ -312,3 +316,4 @@ class TestCas:
         await _store_ticket(store)
         record = await store.get_ticket(SUBJECT)
         assert record is not None
+        assert record.ccache_b64.get_secret_value() == _CCACHE

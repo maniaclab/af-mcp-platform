@@ -73,7 +73,8 @@ async def test_start_ddl_is_idempotent(postgres_dsn: str) -> None:
     conn = await asyncpg.connect(postgres_dsn)
     try:
         assert (
-            await conn.fetchval("SELECT to_regclass('af_mcp_usage_events')") is not None
+            await conn.fetchval("SELECT to_regclass('af_mcp_usage_events')")
+            == "af_mcp_usage_events"
         )
     finally:
         await conn.close()

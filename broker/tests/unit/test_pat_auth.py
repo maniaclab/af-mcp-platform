@@ -443,11 +443,13 @@ async def test_successful_validation_touches_last_used_at(
     token = await _mint_and_store(pat_backend, principal_id="kc-sub-1")
     lookup_id = token.split("_")[2]
 
+    before = time.time()
     await resolve_pat_principal(token, settings, pat_backend, principal_cache, tracker)
 
     record = await pat_backend.get_by_lookup_id(lookup_id)
     assert record is not None
     assert record.last_used_at is not None
+    assert before <= record.last_used_at <= time.time()
 
 
 async def test_last_used_at_write_is_throttled(
@@ -485,12 +487,14 @@ async def test_last_used_at_write_happens_again_after_throttle_window(
     lookup_id = token.split("_")[2]
     tracker = LastUsedTracker(throttle_seconds=0.0)
 
+    before = time.time()
     await resolve_pat_principal(token, settings, pat_backend, principal_cache, tracker)
     await pat_backend.touch_last_used("kc-sub-1", lookup_id, at=0.0)
     await resolve_pat_principal(token, settings, pat_backend, principal_cache, tracker)
 
     record = await pat_backend.get_by_lookup_id(lookup_id)
-    assert record.last_used_at != 0.0
+    assert record is not None
+    assert record.last_used_at >= before
 
 
 def test_last_used_tracker_due_is_false_within_window() -> None:

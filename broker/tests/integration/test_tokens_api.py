@@ -75,9 +75,10 @@ def test_mint_happy_path(app_client: tuple[TestClient, dict]) -> None:
     assert body["token"].startswith(PAT_PREFIX)
     assert isinstance(body["lookup_id"], str)
     assert body["lookup_id"]
+    assert body["token"].split("_")[2] == body["lookup_id"]
     assert body["name"] == "claude-desktop"
-    assert "created_at" in body
-    assert body["expires_at"] is not None
+    created_at = dt.datetime.fromisoformat(body["created_at"])
+    assert created_at < dt.datetime.fromisoformat(body["expires_at"])
 
 
 def test_mint_without_name_generates_a_default(
@@ -424,10 +425,12 @@ def test_revoke_marks_the_record_revoked(
     mint_resp = _mint(client, name="to-be-revoked")
     lookup_id = mint_resp.json()["lookup_id"]
 
+    before = dt.datetime.now(dt.UTC).replace(microsecond=0)
     client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
 
     rows = {r["lookup_id"]: r for r in client.get("/v1/tokens", headers=_AUTH).json()}
-    assert rows[lookup_id]["revoked_at"] is not None
+    revoked_at = dt.datetime.fromisoformat(rows[lookup_id]["revoked_at"])
+    assert before <= revoked_at <= dt.datetime.now(dt.UTC)
 
 
 # ---------------------------------------------------------------------------

@@ -871,7 +871,9 @@ async def test_delete_inactive_never_touches_other_principals(
 
     await backend.delete_inactive("p1", now=time.time())
 
-    assert await backend.get("p2", "other") is not None
+    other = await backend.get("p2", "other")
+    assert other is not None
+    assert other.name == "o"
 
 
 async def test_delete_inactive_for_unknown_principal_returns_empty(
