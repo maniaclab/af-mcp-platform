@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from af_mcp_broker.credentials import BrokerTokenIssuer
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:
@@ -117,7 +118,9 @@ def test_x509_entry_with_signing_key_boots(
     boot_env([_X509_ENTRY], with_signing_key=True)
 
     with app_client_factory() as (client, _):
-        assert client.app.state.broker.broker_token_issuer is not None
+        assert isinstance(
+            client.app.state.broker.broker_token_issuer, BrokerTokenIssuer
+        )
 
 
 def test_x509_entry_without_service_url_refuses_to_boot(

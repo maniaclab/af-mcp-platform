@@ -243,7 +243,9 @@ class TestDelete:
         await _link(store)
         await store.delete(SUBJECT)
         await _link(store)
-        assert await store.get_link(SUBJECT) is not None
+        link = await store.get_link(SUBJECT)
+        assert link is not None
+        assert link.unixname == "auser"
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +278,7 @@ class TestCas:
         await _store_proxy(store)
         record = await store.get_proxy(SUBJECT)
         assert record is not None
+        assert record.proxy_pem.get_secret_value() == _PEM
 
 
 # ---------------------------------------------------------------------------

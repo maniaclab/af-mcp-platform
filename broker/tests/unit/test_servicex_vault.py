@@ -180,3 +180,4 @@ class TestCasRetry:
         )
         record = await store.get_token(SUBJECT, min_remaining=0.0)
         assert record is not None
+        assert record.access_token.get_secret_value() == _ACCESS_TOKEN

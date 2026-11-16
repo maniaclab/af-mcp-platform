@@ -547,7 +547,7 @@ class TestCustodyConsent:
 
         link = await store.get_link("user-123")
         assert link is not None
-        assert link.passphrase is not None
+        assert link.passphrase.get_secret_value() == "hunter2"
 
     async def test_remember_false_bad_passphrase_still_counts_against_limiter(
         self,

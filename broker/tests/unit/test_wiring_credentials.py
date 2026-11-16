@@ -19,6 +19,7 @@ from af_mcp_broker.config import (
 )
 from af_mcp_broker.credentials import (
     BrokerIssuedProvider,
+    BrokerTokenIssuer,
     CredentialCache,
     CredentialRegistry,
     InMemoryTokenStore,
@@ -110,7 +111,7 @@ class TestBuildBrokerTokenIssuer:
     ) -> None:
         settings = _settings(broker_signing_key_file=str(broker_signing_key_file))
 
-        assert build_broker_token_issuer(settings) is not None
+        assert isinstance(build_broker_token_issuer(settings), BrokerTokenIssuer)
 
     def test_refuses_an_entry_that_needs_a_key_when_none_is_configured(self) -> None:
         settings = _settings(

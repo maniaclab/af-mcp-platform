@@ -14,6 +14,7 @@ from af_mcp_broker.config import (
     Settings,
     X509ProviderConfig,
 )
+from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.wiring.services import (
     IdentityTargets,
     build_identity_targets,
@@ -81,7 +82,11 @@ class TestBuildServiceCatalog:
 
         catalog = build_service_catalog(settings)
 
-        assert catalog.services
+        shipped = ServiceRegistry()
+        shipped.load(str(TEST_SERVICES))
+        assert [spec.name for spec in catalog.services] == [
+            spec.name for spec in shipped.all_services() if not spec.builtin
+        ]
 
     def test_refuses_a_missing_services_file(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path, None)
@@ -134,7 +139,7 @@ class TestBuildServiceCatalog:
 
         catalog = build_service_catalog(settings)
 
-        assert catalog.entitlement_policy.group_permissions["atlas"]
+        assert "read_data" in catalog.entitlement_policy.group_permissions["atlas"]
 
     def test_refuses_a_missing_policy_file(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path, "")
