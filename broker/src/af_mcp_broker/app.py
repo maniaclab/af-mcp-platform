@@ -290,7 +290,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             credential_registry=providers.registry,
             issuer=broker_token_issuer,
             link_stores=link_stores,
-            vault_kv=vault_kv,
+            vaults=vaults,
             principal_cache=principal_cache,
             http_client=http_client,
             stack=stack,

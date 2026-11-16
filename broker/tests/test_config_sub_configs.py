@@ -67,6 +67,17 @@ class TestCredmonApiConfig:
         assert str(api.url) == "https://htcondor-api.example/"
         assert api.token_file == "/token"
         assert api.user_domain == "af.example.org"
+        assert api.vault == settings.vault
+
+    def test_enabled_without_vault_fails_boot(self) -> None:
+        with pytest.raises(ValueError, match=r"CREDMON_ENABLED.*Vault"):
+            Settings(
+                _env_file=None,
+                credmon_enabled=True,
+                credmon_htcondor_api_url="https://htcondor-api.example",
+                credmon_htcondor_api_token_file="/token",
+                credmon_user_domain="af.example.org",
+            )
 
 
 class TestUsageStoreConfig:

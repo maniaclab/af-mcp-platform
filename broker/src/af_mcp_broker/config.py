@@ -383,6 +383,9 @@ class CredmonApiConfig(BaseModel):
     url: AnyHttpUrl
     token_file: str = Field(min_length=1)
     user_domain: str = Field(min_length=1)
+    # The storer enumerates linked users from the Vault-backed identity stores
+    # and coordinates replicas through a Vault lease.
+    vault: VaultConfig
 
 
 class InMemoryUsageStoreConfig(BaseModel):
@@ -1099,6 +1102,7 @@ class Settings(BaseSettings):
                 "url": self.credmon_htcondor_api_url,
                 "token_file": self.credmon_htcondor_api_token_file,
                 "user_domain": self.credmon_user_domain,
+                "vault": self.vault,
             }
         )
 
@@ -1187,6 +1191,17 @@ class Settings(BaseSettings):
                     "credmon_enabled is true -- the storer needs it to store "
                     "top tokens in credd through htcondor-api."
                 )
+        if not self.uses_vault:
+            log.error("credmon_config_invalid", missing="vault")
+            raise ValueError(
+                "CREDMON_ENABLED requires Vault: the storer enumerates linked "
+                "users from the Vault-backed identity stores and coordinates "
+                "replicas through a Vault lease. Select a vault backend "
+                "(TOKEN_STORE_BACKEND, TOKEN_REGISTRY_BACKEND, "
+                "PRINCIPAL_CACHE_BACKEND or MAINTENANCE_MODE_BACKEND) or "
+                "configure an x509, krb5-token or servicex-token "
+                "identity_providers entry, and set VAULT_ADDR."
+            )
         return self
 
     @field_validator("broker_token_ttl_seconds")
