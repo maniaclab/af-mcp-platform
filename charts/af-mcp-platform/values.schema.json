@@ -785,7 +785,480 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "oauth21": {
+                    "properties": {
+                      "tokenStore": {
+                        "properties": {
+                          "backend": {
+                            "const": "vault"
+                          }
+                        },
+                        "required": [
+                          "backend"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "tokenStore"
+                    ]
+                  }
+                },
+                "required": [
+                  "oauth21"
+                ]
+              },
+              {
+                "properties": {
+                  "tokenRegistry": {
+                    "properties": {
+                      "backend": {
+                        "const": "vault"
+                      }
+                    },
+                    "required": [
+                      "backend"
+                    ]
+                  }
+                },
+                "required": [
+                  "tokenRegistry"
+                ]
+              },
+              {
+                "properties": {
+                  "principalCache": {
+                    "properties": {
+                      "backend": {
+                        "const": "vault"
+                      }
+                    },
+                    "required": [
+                      "backend"
+                    ]
+                  }
+                },
+                "required": [
+                  "principalCache"
+                ]
+              },
+              {
+                "properties": {
+                  "maintenanceMode": {
+                    "properties": {
+                      "backend": {
+                        "const": "vault"
+                      }
+                    },
+                    "required": [
+                      "backend"
+                    ]
+                  }
+                },
+                "required": [
+                  "maintenanceMode"
+                ]
+              },
+              {
+                "properties": {
+                  "identityProviders": {
+                    "contains": {
+                      "properties": {
+                        "type": {
+                          "enum": [
+                            "x509",
+                            "krb5-token",
+                            "servicex-token"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "identityProviders"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "oauth21": {
+                "properties": {
+                  "tokenStore": {
+                    "properties": {
+                      "vault": {
+                        "properties": {
+                          "addr": {
+                            "minLength": 1
+                          },
+                          "authRole": {
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "addr",
+                          "authRole"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "vault"
+                    ]
+                  }
+                },
+                "required": [
+                  "tokenStore"
+                ]
+              },
+              "vault": {
+                "properties": {
+                  "kvRoot": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kvRoot"
+                ]
+              }
+            },
+            "required": [
+              "oauth21",
+              "vault"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "usage": {
+                "properties": {
+                  "backend": {
+                    "const": "postgres"
+                  }
+                },
+                "required": [
+                  "backend"
+                ]
+              }
+            },
+            "required": [
+              "usage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "properties": {
+                  "postgres": {
+                    "properties": {
+                      "existingSecret": {
+                        "properties": {
+                          "name": {
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "existingSecret"
+                    ]
+                  }
+                },
+                "required": [
+                  "postgres"
+                ]
+              }
+            },
+            "required": [
+              "usage"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "credmon": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            },
+            "required": [
+              "credmon"
+            ]
+          },
+          "then": {
+            "properties": {
+              "credmon": {
+                "properties": {
+                  "htcondorApiUrl": {
+                    "minLength": 1
+                  },
+                  "userDomain": {
+                    "minLength": 1
+                  },
+                  "existingHtcondorApiTokenSecret": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "htcondorApiUrl",
+                  "userDomain",
+                  "existingHtcondorApiTokenSecret"
+                ]
+              }
+            },
+            "required": [
+              "credmon"
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "tracing": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  }
+                },
+                "required": [
+                  "tracing"
+                ]
+              },
+              {
+                "properties": {
+                  "metrics": {
+                    "properties": {
+                      "otlp": {
+                        "properties": {
+                          "enabled": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "enabled"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "otlp"
+                    ]
+                  }
+                },
+                "required": [
+                  "metrics"
+                ]
+              },
+              {
+                "properties": {
+                  "usageEvents": {
+                    "properties": {
+                      "otlp": {
+                        "properties": {
+                          "enabled": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "enabled"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "otlp"
+                    ]
+                  }
+                },
+                "required": [
+                  "usageEvents"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "otlp": {
+                "properties": {
+                  "endpoint": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "endpoint"
+                ]
+              }
+            },
+            "required": [
+              "otlp"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "identityProviders": {
+                "contains": {
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "broker-issued",
+                        "condor-token",
+                        "krb5-token",
+                        "servicex-token",
+                        "x509"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "identityProviders"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identityToken": {
+                "properties": {
+                  "existingSigningKeySecret": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "existingSigningKeySecret"
+                ]
+              }
+            },
+            "required": [
+              "identityToken"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "identityProviders": {
+                "contains": {
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "oauth21-direct"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "identityProviders"
+            ]
+          },
+          "then": {
+            "properties": {
+              "publicOrigin": {
+                "minLength": 1
+              },
+              "oauth21": {
+                "properties": {
+                  "existingStateKeySecret": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "existingStateKeySecret"
+                ]
+              }
+            },
+            "required": [
+              "publicOrigin",
+              "oauth21"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tokenMint": {
+                "properties": {
+                  "clientId": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "clientId"
+                ]
+              }
+            },
+            "required": [
+              "tokenMint"
+            ]
+          },
+          "then": {
+            "properties": {
+              "tokenMint": {
+                "properties": {
+                  "existingClientSecretSecret": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "existingClientSecretSecret"
+                ]
+              },
+              "publicOrigin": {
+                "minLength": 1
+              },
+              "oauth21": {
+                "properties": {
+                  "existingStateKeySecret": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "existingStateKeySecret"
+                ]
+              }
+            },
+            "required": [
+              "tokenMint",
+              "publicOrigin",
+              "oauth21"
+            ]
+          }
+        }
+      ]
     },
     "tokenSweep": {
       "type": "object",
@@ -1324,5 +1797,72 @@
       },
       "additionalProperties": false
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ingress": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "broker": {
+            "properties": {
+              "identityToken": {
+                "properties": {
+                  "existingSigningKeySecret": {
+                    "minLength": 1
+                  },
+                  "issuer": {
+                    "maxLength": 0
+                  }
+                },
+                "required": [
+                  "existingSigningKeySecret",
+                  "issuer"
+                ]
+              }
+            },
+            "required": [
+              "identityToken"
+            ]
+          }
+        },
+        "required": [
+          "ingress",
+          "broker"
+        ]
+      },
+      "then": {
+        "properties": {
+          "broker": {
+            "properties": {
+              "identityToken": {
+                "properties": {
+                  "issuer": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "issuer"
+                ]
+              }
+            },
+            "required": [
+              "identityToken"
+            ]
+          }
+        },
+        "required": [
+          "broker"
+        ]
+      }
+    }
+  ]
 }

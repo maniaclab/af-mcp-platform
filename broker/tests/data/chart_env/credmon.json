@@ -2,6 +2,7 @@
   "env": {
     "ALLOW_PER_REPLICA_STATE": "true",
     "BROKER_SIGNING_KEY_FILE": "/etc/af-mcp/identity-token/signing-key.pem",
+    "BROKER_TOKEN_ISSUER": "https://mcp.example.com",
     "CREDMON_ENABLED": "true",
     "CREDMON_HTCONDOR_API_TOKEN_FILE": "/etc/af-mcp/credmon/token",
     "CREDMON_HTCONDOR_API_URL": "http://condor-mcp.example.svc.cluster.local:8080",
@@ -43,7 +44,7 @@
     "broker_public_origin": "",
     "broker_signing_key_file": "/etc/af-mcp/identity-token/signing-key.pem",
     "broker_state_key": "",
-    "broker_token_issuer": "",
+    "broker_token_issuer": "https://mcp.example.com",
     "broker_token_ttl_seconds": 600,
     "builtin_service_name": "gateway_service",
     "cimd_client_name": "AF MCP Broker",

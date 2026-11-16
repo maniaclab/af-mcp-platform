@@ -89,7 +89,7 @@ explained in the Deployment Runbook.
 | `broker.identityProviders` | array | `[]` | no | Identity providers — one entry per identity provider the broker can link a user's account to, either Keycloak's stored-broker-token pattern (type: keycloak-brokered, e.g. a VO IAM) or the broker ... |
 | `broker.identityToken.existingSigningKeySecret` | string | `""` | no | Name of a pre-existing Secret providing the RS256 private key PEM. |
 | `broker.identityToken.existingAdditionalPublicKeysSecret` | string | `""` | no | Optional pre-existing Secret of ADDITIONAL public key PEMs published in the JWKS alongside the active key, for rotation overlap: publish the successor key here before switching signing to it, and ... |
-| `broker.identityToken.issuer` | string | `""` | no | `iss` claim minted into every token. Empty means "use broker.publicOrigin" — check that value before relying on the fallback: at AF, publicOrigin is the PORTAL origin while consumers verify iss ... |
+| `broker.identityToken.issuer` | string | `""` | no | `iss` claim minted into every token. Consumers verify it against the origin that serves the broker's JWKS, the MCP host. |
 | `broker.identityToken.ttlSeconds` | string / integer | `""` | no | Token TTL in seconds. Empty means the broker default (600). |
 | `broker.credmon.enabled` | boolean | `false` | no | HTCondor credmon integration (docs/credmon.md). |
 | `broker.credmon.htcondorApiUrl` | string | `""` | no | htcondor-api base URL, e.g. `http://condor-mcp.mcp.svc.cluster.local:8080` |

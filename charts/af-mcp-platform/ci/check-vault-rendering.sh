@@ -61,7 +61,7 @@ if err=$(render -f "$ci/vault-values.yaml" --set broker.vault.kvRoot= 2>&1); the
   echo "FAIL (missing kvRoot): render succeeded" >&2
   exit 1
 fi
-expect_has "missing kvRoot" 'broker.vault.kvRoot is required' "$err"
+expect_has "missing kvRoot" '/broker/vault/kvRoot' "$err"
 
 # No Vault consumer: no root needed and none rendered.
 rendered=$(render -f "$ci/vault-values.yaml" \

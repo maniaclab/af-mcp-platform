@@ -13,6 +13,8 @@ portal:
 broker:
   vault:
     kvRoot: "mcp"
+  # An oauth21-direct entry needs these (values.schema.json).
+  publicOrigin: "https://mcp.example.com"
   sharedState:
     allowPerReplicaState: true
   identityProviders:
@@ -26,6 +28,7 @@ broker:
   maintenanceMode:
     backend: vault
   oauth21:
+    existingStateKeySecret: "example-broker-state-key"
     tokenStore:
       vault:
         addr: "https://vault.example.com"
