@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 import httpx2
 import pytest
 from cryptography.fernet import Fernet
-from x509_fakes import FakeX509Store
 
 from af_mcp_broker.config import (
     BrokerIssuedProviderConfig,
@@ -29,6 +28,7 @@ from af_mcp_broker.credentials import (
     X509Provider,
 )
 from af_mcp_broker.credentials.stores import VaultLinkStores
+from af_mcp_broker.credentials.x509_vault import VaultX509Store
 from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.shared_state import InMemorySharedState
 from af_mcp_broker.vault_kv import VaultConnections
@@ -37,7 +37,6 @@ from af_mcp_broker.wiring.credentials import (
     build_credential_cache,
     build_credential_providers,
     build_list_cache_invalidator,
-    build_oauth21_token_store,
     build_state_cipher,
     resolve_x509_provider,
 )
@@ -128,29 +127,6 @@ class TestBuildBrokerTokenIssuer:
             build_broker_token_issuer(settings)
 
 
-class TestBuildOauth21TokenStore:
-    def test_is_none_without_an_oauth21_direct_entry(self) -> None:
-        assert (
-            build_oauth21_token_store(
-                _settings(), VaultConnections(httpx2.AsyncClient())
-            )
-            is None
-        )
-
-    @pytest.mark.parametrize(
-        ("backend", "expected"),
-        [("in_memory", InMemoryTokenStore), ("vault", VaultTokenStore)],
-    )
-    def test_follows_the_token_store_backend(
-        self, backend: str, expected: type, vaults: VaultConnections
-    ) -> None:
-        settings = _settings(
-            identity_providers=[_oauth21_entry()], token_store_backend=backend
-        )
-
-        assert isinstance(build_oauth21_token_store(settings, vaults), expected)
-
-
 class TestStartedResourcesCloseWithTheStack:
     async def test_invalidator_and_cache_janitor_stop_when_the_stack_closes(
         self,
@@ -186,8 +162,6 @@ class TestBuildCredentialProviders:
         settings: Settings,
         *,
         issuer: Any = None,
-        token_store: Any = None,
-        link_stores: VaultLinkStores | None = None,
     ):
         registry = ServiceRegistry()
         cache = build_credential_cache_for_tests(settings)
@@ -196,8 +170,7 @@ class TestBuildCredentialProviders:
             service_registry=registry,
             cache=cache,
             issuer=issuer,
-            token_store=token_store,
-            link_stores=link_stores or VaultLinkStores(),
+            vaults=VaultConnections(httpx2.AsyncClient()),
             http_client=httpx2.AsyncClient(),
         )
 
@@ -211,7 +184,7 @@ class TestBuildCredentialProviders:
             ]
         )
 
-        built = self._build(settings, token_store=InMemoryTokenStore())
+        built = self._build(settings)
 
         assert list(built.providers) == ["oidc", "backend-as"]
         assert isinstance(built.providers["oidc"], OIDCProvider)
@@ -248,7 +221,7 @@ class TestBuildCredentialProviders:
         with pytest.raises(RuntimeError, match="no signing key is configured"):
             self._build(settings)
 
-    def test_an_x509_entry_needs_the_x509_store(
+    def test_an_x509_entry_builds_the_x509_store_it_shares_with_its_provider(
         self, broker_signing_key_file: Path
     ) -> None:
         settings = _settings(
@@ -262,23 +235,38 @@ class TestBuildCredentialProviders:
             ],
             broker_signing_key_file=str(broker_signing_key_file),
         )
-        issuer = build_broker_token_issuer(settings)
 
-        with pytest.raises(RuntimeError, match="no x509 Vault store was built"):
-            self._build(settings, issuer=issuer)
+        built = self._build(settings, issuer=build_broker_token_issuer(settings))
 
-        built = self._build(
-            settings,
-            issuer=issuer,
-            link_stores=VaultLinkStores(x509=FakeX509Store()),  # type: ignore[arg-type]
+        provider = built.providers["x509"]
+        assert isinstance(provider, X509Provider)
+        assert isinstance(built.link_stores.x509, VaultX509Store)
+        assert provider.vault_store is built.link_stores.x509
+        assert built.link_stores.krb5 is None
+        assert built.link_stores.servicex is None
+
+    def test_no_link_store_is_built_without_an_entry_that_needs_one(self) -> None:
+        built = self._build(_settings())
+
+        assert built.link_stores == VaultLinkStores()
+
+    def test_no_token_store_is_built_without_an_oauth21_entry(self) -> None:
+        assert self._build(_settings()).oauth21_token_store is None
+
+    @pytest.mark.parametrize(
+        ("backend", "expected"),
+        [("in_memory", InMemoryTokenStore), ("vault", VaultTokenStore)],
+    )
+    def test_an_oauth21_entry_builds_the_token_store_its_backend_selects(
+        self, backend: str, expected: type
+    ) -> None:
+        settings = _settings(
+            identity_providers=[_oauth21_entry()], token_store_backend=backend
         )
-        assert isinstance(built.providers["x509"], X509Provider)
 
-    def test_an_oauth21_entry_needs_a_token_store(self) -> None:
-        settings = _settings(identity_providers=[_oauth21_entry()])
+        built = self._build(settings)
 
-        with pytest.raises(RuntimeError, match="no token store was built"):
-            self._build(settings)
+        assert isinstance(built.oauth21_token_store, expected)
 
 
 def build_credential_cache_for_tests(settings: Settings) -> Any:
@@ -312,8 +300,7 @@ class TestResolveX509Provider:
             service_registry=ServiceRegistry(),
             cache=build_credential_cache_for_tests(settings),
             issuer=build_broker_token_issuer(settings),
-            token_store=None,
-            link_stores=VaultLinkStores(x509=FakeX509Store()),  # type: ignore[arg-type]
+            vaults=VaultConnections(httpx2.AsyncClient()),
             http_client=httpx2.AsyncClient(),
         )
 
@@ -332,8 +319,7 @@ class TestResolveX509Provider:
             service_registry=ServiceRegistry(),
             cache=build_credential_cache_for_tests(settings),
             issuer=None,
-            token_store=None,
-            link_stores=VaultLinkStores(),
+            vaults=VaultConnections(httpx2.AsyncClient()),
             http_client=httpx2.AsyncClient(),
         )
 

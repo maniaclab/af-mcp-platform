@@ -32,7 +32,7 @@ from af_mcp_broker.credentials import (
     X509Provider,
     load_broker_token_issuer,
 )
-from af_mcp_broker.credentials.stores import build_token_store
+from af_mcp_broker.credentials.stores import ProviderStores
 from af_mcp_broker.errors import require
 from af_mcp_broker.mcp.aggregator import (
     invalidate_all_subject_caches,
@@ -54,7 +54,6 @@ if TYPE_CHECKING:
         BrokerTokenIssuer,
         CredentialProvider,
         InMemoryTokenStore,
-        TokenStore,
         VaultTokenStore,
     )
     from af_mcp_broker.credentials.stores import VaultLinkStores
@@ -81,15 +80,6 @@ def build_state_cipher(settings: Settings) -> Fernet | None:
     if has_oauth21_provider or settings.keycloak_login_client_id:
         return Fernet(settings.broker_state_key.get_secret_value().encode())
     return None
-
-
-def build_oauth21_token_store(
-    settings: Settings, vaults: VaultConnections
-) -> InMemoryTokenStore | VaultTokenStore | None:
-    """Build the token store the oauth21-direct providers share, or None when no such entry is configured."""
-    if not any(cfg.type == "oauth21-direct" for cfg in settings.identity_providers):
-        return None
-    return build_token_store(settings, vaults)
 
 
 def build_broker_token_issuer(settings: Settings) -> BrokerTokenIssuer | None:
@@ -191,6 +181,8 @@ class CredentialProviders:
     registry: CredentialRegistry
     providers: dict[str, CredentialProvider]
     configs: dict[str, IdentityProviderConfig]
+    oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None
+    link_stores: VaultLinkStores
 
 
 # The identity_providers entries whose provider mints AF Broker Identity Tokens.
@@ -211,14 +203,12 @@ class _ProviderDeps:
     service_registry: ServiceRegistry
     cache: CredentialCache
     issuer: BrokerTokenIssuer | None
-    token_store: TokenStore | None
-    link_stores: VaultLinkStores
+    stores: ProviderStores
     http_client: httpx2.AsyncClient
 
 
-# The invariants below are established by build_broker_token_issuer's
-# fail-closed check, build_vault_link_stores (each entry type implies its
-# store) and Settings' oauth21 validation.
+# The invariant below is established by build_broker_token_issuer's
+# fail-closed check.
 _ISSUER_INVARIANT = (
     "an entry that signs AF Broker Identity Tokens exists but no signing key "
     "is configured (build_broker_token_issuer's fail-closed check)"
@@ -261,10 +251,7 @@ def _build_oauth21_provider(
         token_endpoint=str(cfg.token_endpoint),
         issuer=cfg.issuer,
         scope=cfg.scope,
-        store=require(
-            deps.token_store,
-            "an oauth21-direct entry exists but no token store was built",
-        ),
+        store=deps.stores.token_store(),
         # A provider registered under its own client_id uses it;
         # otherwise the broker identifies itself by its CIMD URL.
         client_id=cfg.client_id or deps.settings.oauth21_client_id,
@@ -304,10 +291,7 @@ def _build_signed_provider(
                 cache=deps.cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
-                vault_store=require(
-                    deps.link_stores.krb5,
-                    "a krb5-token entry exists but no krb5 Vault store was built",
-                ),
+                vault_store=deps.stores.krb5(),
             )
         case X509ProviderConfig():
             # Mint at the entry's voms-token-service (the only component that
@@ -326,10 +310,7 @@ def _build_signed_provider(
                     valid=cfg.valid,
                     http_client=deps.http_client,
                 ),
-                vault_store=require(
-                    deps.link_stores.x509,
-                    "an x509 entry exists but no x509 Vault store was built",
-                ),
+                vault_store=deps.stores.x509(),
             )
         case ServiceXTokenProviderConfig():
             return ServiceXProvider(
@@ -339,11 +320,7 @@ def _build_signed_provider(
                     audience=cfg.audience,
                     http_client=deps.http_client,
                 ),
-                vault_store=require(
-                    deps.link_stores.servicex,
-                    "a servicex-token entry exists but no ServiceX Vault store "
-                    "was built",
-                ),
+                vault_store=deps.stores.servicex(),
                 cache=deps.cache,
                 alias=cfg.alias,
                 targets=frozenset(cfg.targets),
@@ -391,8 +368,7 @@ def build_credential_providers(
     service_registry: ServiceRegistry,
     cache: CredentialCache,
     issuer: BrokerTokenIssuer | None,
-    token_store: TokenStore | None,
-    link_stores: VaultLinkStores,
+    vaults: VaultConnections,
     http_client: httpx2.AsyncClient,
 ) -> CredentialProviders:
     """Build one ``CredentialProvider`` per configured ``identity_providers`` entry, registered for the entry's targets.
@@ -409,13 +385,13 @@ def build_credential_providers(
     aliases. `none` requires no user credential, so no provider is
     registered.
     """
+    stores = ProviderStores(settings, vaults)
     deps = _ProviderDeps(
         settings=settings,
         service_registry=service_registry,
         cache=cache,
         issuer=issuer,
-        token_store=token_store,
-        link_stores=link_stores,
+        stores=stores,
         http_client=http_client,
     )
     registry = CredentialRegistry()
@@ -427,7 +403,13 @@ def build_credential_providers(
         configs[cfg.alias] = cfg
         for target in cfg.targets:
             registry.register(target, provider)
-    return CredentialProviders(registry=registry, providers=providers, configs=configs)
+    return CredentialProviders(
+        registry=registry,
+        providers=providers,
+        configs=configs,
+        oauth21_token_store=stores.token_store_built,
+        link_stores=stores.link_stores(),
+    )
 
 
 async def resolve_x509_provider(

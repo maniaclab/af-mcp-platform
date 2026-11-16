@@ -1,10 +1,10 @@
 """Builders for the credential stores selected by ``Settings``.
 
 ``build_token_store`` picks the OAuth 2.1 token store from
-``settings.token_store_backend``; ``build_vault_link_stores`` builds the three
-per-user Vault link stores (x509, krb5, servicex) that exist whenever an
-``identity_providers`` entry of that type is configured, with no backend
-setting of their own.
+``settings.token_store_backend``; ``ProviderStores`` builds that store and the
+three per-user Vault link stores (x509, krb5, servicex) for the providers that
+need them, the link stores existing whenever an ``identity_providers`` entry of
+that type is configured, with no backend setting of their own.
 """
 
 from __future__ import annotations
@@ -64,41 +64,74 @@ class VaultLinkStores:
     servicex: VaultServiceXStore | None = None
 
 
-def build_vault_link_stores(settings: Settings, vault_kv: VaultKV) -> VaultLinkStores:
-    """Build the Vault link store of every credential kind *settings* configures an entry for.
+class ProviderStores:
+    """The stores the credential providers share, each built the first time a provider of its kind asks for it.
 
-    Each store is implied by its entry unconditionally (x509 proxies and
-    passphrases, krb5 tickets and keytabs, ServiceX refresh tokens have no
-    in-memory fallback), which is why ``Settings._validate_vault_config``
-    already refused to construct *settings* without the Vault connection
-    settings and *vault_kv* is non-optional here.
+    A store is built from the Vault connection settings (``Settings.vault_connection``)
+    only when an ``identity_providers`` entry that persists in it is
+    configured, which is why ``Settings._validate_vault_config`` already
+    refused to construct *settings* without them. The x509, krb5 and ServiceX
+    link stores are implied unconditionally by their entry types (x509
+    proxies and passphrases, krb5 tickets and keytabs, ServiceX refresh tokens
+    have no in-memory fallback). Each is one KV record per subject regardless
+    of how many entries of a type exist: the link is per user, not per
+    service (issue #112's custodianship model).
     """
-    entry_types = {cfg.type for cfg in settings.identity_providers}
-    x509_store: VaultX509Store | None = None
-    krb5_store: Krb5VaultStore | None = None
-    servicex_store: VaultServiceXStore | None = None
-    if "x509" in entry_types:
-        x509_store = VaultX509Store(
-            vault_kv=vault_kv, kv_path_prefix=settings.vault_kv_paths.x509
+
+    def __init__(self, settings: Settings, vaults: VaultConnections) -> None:
+        self._settings = settings
+        self._vaults = vaults
+        self._token_store: InMemoryTokenStore | VaultTokenStore | None = None
+        self._x509: VaultX509Store | None = None
+        self._krb5: Krb5VaultStore | None = None
+        self._servicex: VaultServiceXStore | None = None
+
+    def _vault_kv(self) -> VaultKV:
+        return self._vaults.connect(self._settings.vault_connection)
+
+    def token_store(self) -> InMemoryTokenStore | VaultTokenStore:
+        """Return the OAuth 2.1 token store the oauth21-direct providers share."""
+        if self._token_store is None:
+            self._token_store = build_token_store(self._settings, self._vaults)
+        return self._token_store
+
+    def x509(self) -> VaultX509Store:
+        """Return the x509 proxy and link store."""
+        if self._x509 is None:
+            prefix = self._settings.vault_kv_paths.x509
+            self._x509 = VaultX509Store(
+                vault_kv=self._vault_kv(), kv_path_prefix=prefix
+            )
+            logger.info("x509_voms_service_mode", kv_path_prefix=prefix)
+        return self._x509
+
+    def krb5(self) -> Krb5VaultStore:
+        """Return the krb5 ticket and link store."""
+        if self._krb5 is None:
+            prefix = self._settings.vault_kv_paths.krb5
+            self._krb5 = Krb5VaultStore(
+                vault_kv=self._vault_kv(), kv_path_prefix=prefix
+            )
+            logger.info("krb5_vault_store_wired", kv_path_prefix=prefix)
+        return self._krb5
+
+    def servicex(self) -> VaultServiceXStore:
+        """Return the ServiceX refresh-token link store."""
+        if self._servicex is None:
+            prefix = self._settings.vault_kv_paths.servicex
+            self._servicex = VaultServiceXStore(
+                vault_kv=self._vault_kv(), kv_path_prefix=prefix
+            )
+            logger.info("servicex_vault_store_wired", kv_path_prefix=prefix)
+        return self._servicex
+
+    @property
+    def token_store_built(self) -> InMemoryTokenStore | VaultTokenStore | None:
+        """Return the OAuth 2.1 token store, or None when no oauth21-direct provider asked for one."""
+        return self._token_store
+
+    def link_stores(self) -> VaultLinkStores:
+        """Return the link stores built so far."""
+        return VaultLinkStores(
+            x509=self._x509, krb5=self._krb5, servicex=self._servicex
         )
-        logger.info(
-            "x509_voms_service_mode",
-            kv_path_prefix=settings.vault_kv_paths.x509,
-        )
-    if "krb5-token" in entry_types:
-        krb5_store = Krb5VaultStore(
-            vault_kv=vault_kv, kv_path_prefix=settings.vault_kv_paths.krb5
-        )
-        logger.info(
-            "krb5_vault_store_wired",
-            kv_path_prefix=settings.vault_kv_paths.krb5,
-        )
-    if "servicex-token" in entry_types:
-        servicex_store = VaultServiceXStore(
-            vault_kv=vault_kv, kv_path_prefix=settings.vault_kv_paths.servicex
-        )
-        logger.info(
-            "servicex_vault_store_wired",
-            kv_path_prefix=settings.vault_kv_paths.servicex,
-        )
-    return VaultLinkStores(x509=x509_store, krb5=krb5_store, servicex=servicex_store)

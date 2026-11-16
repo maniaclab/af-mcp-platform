@@ -17,11 +17,8 @@ if TYPE_CHECKING:
     from af_mcp_broker.credentials import (
         BrokerTokenIssuer,
         CredentialCache,
-        InMemoryTokenStore,
-        VaultTokenStore,
         X509Provider,
     )
-    from af_mcp_broker.credentials.stores import VaultLinkStores
     from af_mcp_broker.credmon.sync import CredmonSyncService
     from af_mcp_broker.lint_observations import LintObservationStore
     from af_mcp_broker.maintenance import MaintenanceModeStore
@@ -44,7 +41,6 @@ def build_broker_state(
     providers: CredentialProviders,
     credential_cache: CredentialCache,
     x509_provider: X509Provider | None,
-    oauth21_token_store: InMemoryTokenStore | VaultTokenStore | None,
     oauth21_state_cipher: Fernet | None,
     token_registry: TokenRegistry,
     principal_cache: PrincipalCache | None,
@@ -54,7 +50,6 @@ def build_broker_state(
     maintenance_mode_store: MaintenanceModeStore,
     lint_observations: LintObservationStore,
     shared_state: SharedState,
-    link_stores: VaultLinkStores,
     credmon_sync: CredmonSyncService | None,
     mcp_aggregator: FastMCP,
     mcp_app: ASGIApp,
@@ -80,7 +75,7 @@ def build_broker_state(
         target_to_alias=targets.target_to_alias,
         identity_providers=providers.providers,
         identity_provider_configs=providers.configs,
-        oauth21_token_store=oauth21_token_store,
+        oauth21_token_store=providers.oauth21_token_store,
         oauth21_state_cipher=oauth21_state_cipher,
         token_registry=token_registry,
         principal_cache=principal_cache,
@@ -90,8 +85,8 @@ def build_broker_state(
         maintenance_mode_store=maintenance_mode_store,
         lint_observations=lint_observations,
         shared_state=shared_state,
-        krb5_vault_store=link_stores.krb5,
-        servicex_vault_store=link_stores.servicex,
+        krb5_vault_store=providers.link_stores.krb5,
+        servicex_vault_store=providers.link_stores.servicex,
         credmon_sync=credmon_sync,
         tool_listing_cache=ToolListingCache(),
         mcp_aggregator=mcp_aggregator,
