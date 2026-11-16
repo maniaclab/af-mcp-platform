@@ -23,7 +23,7 @@ from af_mcp_broker.oauth_state import (
     decrypt_mcp_authorize_state,
 )
 
-EXPECTED_ISS = "https://mcp.af.uchicago.edu"
+EXPECTED_ISS = "https://mcp.example.org"
 
 
 def _build(cipher: Fernet, **overrides: Any) -> str:

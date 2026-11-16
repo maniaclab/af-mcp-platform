@@ -367,7 +367,7 @@ def test_get_by_tool_prefix_unaffected_by_apply_namespace() -> None:
 # "Trust tiers" section defines the vocabulary; ServiceSpec.trust_tier lets
 # services.yaml/the chart *declare* a service's posture machine-checkably
 # (re-review finding #5). The authoritative per-deployment assignment still
-# lives in the GitOps repo (maniaclab/flux_apps#32); this field is the
+# lives in the GitOps repo; this field is the
 # declaration, not the policy.
 # ---------------------------------------------------------------------------
 
@@ -590,10 +590,10 @@ def test_identity_provider_url_strips_trailing_slash_from_portal_url() -> None:
     settings = Settings(
         oidc_issuer="https://issuer.example",
         oidc_audience="test-audience",
-        portal_url="https://mcp-portal.af.uchicago.edu/",
+        portal_url="https://mcp-portal.example.org/",
     )
     url = identity_provider_url(settings, "x509")
-    assert url == "https://mcp-portal.af.uchicago.edu/identities#identity-card-x509"
+    assert url == "https://mcp-portal.example.org/identities#identity-card-x509"
 
 
 # ---------------------------------------------------------------------------

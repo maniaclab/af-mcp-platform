@@ -7,7 +7,7 @@
 # service that acts only with per-user credentials on the caller's own
 # resources; infrastructure-tier for anything holding platform-wide secrets.
 # It is a declaration only — the authoritative per-deployment assignment lives
-# alongside each app's manifests in the GitOps repo (maniaclab/flux_apps#32).
+# alongside each app's manifests in the GitOps repo.
 services:
   - name: rucio
     prefix: rucio
