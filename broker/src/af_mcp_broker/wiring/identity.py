@@ -26,6 +26,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def require_oidc_issuer(settings: Settings) -> None:
+    """Refuse to boot without an OIDC issuer: JWTs would otherwise be validated against, and JWKS fetched from, a realm the deployer never chose."""
+    if not settings.oidc_issuer:
+        msg = (
+            "OIDC_ISSUER must be set to the deployment's Keycloak realm URL "
+            "(e.g. https://keycloak.example.com/realms/example)."
+        )
+        raise RuntimeError(msg)
+
+
 def build_dev_bypass_principal(settings: Settings) -> Principal | None:
     """Return the local-development bypass principal, or None when the bypass is off.
 

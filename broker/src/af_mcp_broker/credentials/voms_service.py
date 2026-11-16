@@ -99,8 +99,8 @@ class VomsTokenServiceClient:
         *,
         issuer: BrokerTokenIssuer,
         service_url: str,
+        voms: str,
         audience: str = "voms-token-service",
-        voms: str = "atlas",
         valid: str = "192:00",
         http_client: httpx2.AsyncClient,
     ) -> None:

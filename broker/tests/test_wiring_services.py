@@ -200,7 +200,10 @@ class TestBuildIdentityTargets:
             identity_providers=[
                 KeycloakBrokeredProviderConfig(alias="oidc", targets=["rucio"]),
                 X509ProviderConfig(
-                    alias="x509", targets=["ami"], service_url="http://v.invalid"
+                    voms="atlas",
+                    alias="x509",
+                    targets=["ami"],
+                    service_url="http://v.invalid",
                 ),
                 KrbTokenProviderConfig(
                     alias="krb", targets=["krbsvc"], service_url="http://k.invalid"

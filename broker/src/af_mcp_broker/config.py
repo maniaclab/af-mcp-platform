@@ -233,7 +233,7 @@ class X509ProviderConfig(BaseModel):
     alias: str
     targets: list[str] = Field(default_factory=list)
     service_url: AnyHttpUrl
-    voms: str = "atlas"
+    voms: str
     valid: str = "192:00"
     audience: str = "voms-token-service"
 
@@ -396,10 +396,11 @@ class Settings(BaseSettings):
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
 
-    # OIDC configuration. The default below is the reference deployment's
-    # (UChicago AF) realm URL, not a canonical value -- every deployment
-    # overrides it via OIDC_ISSUER.
-    oidc_issuer: str = "https://auth.af.uchicago.edu/realms/connect"
+    # OIDC configuration. The issuer is a fact about the deployer's own
+    # Keycloak realm, so it has no default: an empty value is a boot error
+    # (``wiring.identity.require_oidc_issuer``) rather than a silent fallback
+    # to another facility's realm for JWT validation and JWKS fetches.
+    oidc_issuer: str = ""
     oidc_audience: str = "mcp-gateway"
     # Optional realm URL for server-to-server (back-channel) Keycloak calls
     # -- JWKS, token endpoint, Admin REST API, brokered-token fetch. Set it
@@ -563,10 +564,9 @@ class Settings(BaseSettings):
     metrics_port: int = 9090
 
     # User-facing portal, used in unlock hints and identity-linking redirects.
-    # The default below is the reference deployment's (UChicago AF) portal
-    # hostname, not a canonical value -- every deployment overrides it via
-    # PORTAL_URL.
-    portal_url: str = "https://mcp-portal.af.uchicago.edu"
+    # No default: the portal hostname is the deployer's own (PORTAL_URL).
+    # Left empty, hints and redirects carry host-relative portal paths.
+    portal_url: str = ""
 
     # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
     # are in-process state: a stateful session (the fastmcp/mcp SDK default)

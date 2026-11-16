@@ -716,6 +716,7 @@ def test_servicex_kv_path_prefix_default():
 
 _X509_ENTRY = {
     "type": "x509",
+    "voms": "atlas",
     "alias": "x509",
     "targets": ["ami"],
     "service_url": "http://voms-token-service.af-mcp.svc:8080",

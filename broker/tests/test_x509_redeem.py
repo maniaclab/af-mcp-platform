@@ -88,6 +88,7 @@ def x509_redeem_env(
                     [
                         {
                             "type": "x509",
+                            "voms": "atlas",
                             "alias": "x509",
                             "display_name": "Grid certificate (x509)",
                             "targets": x509_targets,

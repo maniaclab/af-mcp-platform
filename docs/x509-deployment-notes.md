@@ -62,7 +62,7 @@ such backend needs an explicit `identityProviders` entry (step 3 below).
          enables: "VOMS proxy minting for x509-authenticated backends"
          targets: ["ami"]
          serviceUrl: "http://voms-token-service.<namespace>.svc.cluster.local:8080"
-         voms: "atlas"      # optional, default
+         voms: "atlas"      # required: the experiment's VOMS attribute set
          valid: "192:00"    # optional, default
    ```
 

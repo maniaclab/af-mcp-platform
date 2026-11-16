@@ -97,7 +97,7 @@ def make_client(
             issuer=issuer,
             service_url=service_url,
             http_client=http_client,
-            **kwargs,  # type: ignore[arg-type]
+            **{"voms": "atlas", **kwargs},  # type: ignore[arg-type]
         )
         return client, requests
 

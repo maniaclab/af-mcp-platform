@@ -80,6 +80,7 @@ from af_mcp_broker.wiring.identity import (
     build_mcp_auth_code_store,
     build_principal_cache,
     build_token_registry,
+    require_oidc_issuer,
 )
 from af_mcp_broker.wiring.lifecycle import (
     open_shared_state,
@@ -191,6 +192,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         stack.callback(close_audit_logging)
         http_client = build_http_client(stack)
 
+        require_oidc_issuer(settings)
         dev_principal = build_dev_bypass_principal(settings)
         _warn_replica_hazards(settings)
         shared_state = open_shared_state(settings, stack)

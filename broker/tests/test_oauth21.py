@@ -202,6 +202,7 @@ def _configure_oauth21_env(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],

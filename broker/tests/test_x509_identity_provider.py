@@ -63,6 +63,7 @@ _X509_BACKENDS_YAML = (
 def _x509_entry(**overrides: Any) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "type": "x509",
+        "voms": "atlas",
         "alias": "x509",
         "display_name": "Grid certificate (x509)",
         "enables": "VOMS proxy minting",
@@ -85,6 +86,7 @@ class TestValidateTargets:
     def test_exact_coverage_passes(self) -> None:
         cfgs = [
             X509ProviderConfig(
+                voms="atlas",
                 alias="x509",
                 targets=["ami", "panda"],
                 service_url="http://voms-token-service.invalid",
@@ -98,6 +100,7 @@ class TestValidateTargets:
         provider (and no catalog alias) at all — refuse to boot naming it."""
         cfgs = [
             X509ProviderConfig(
+                voms="atlas",
                 alias="x509",
                 targets=["ami"],
                 service_url="http://voms-token-service.invalid",
@@ -114,6 +117,7 @@ class TestValidateTargets:
         audience, so the entry silently does nothing. Refuse to boot."""
         cfgs = [
             X509ProviderConfig(
+                voms="atlas",
                 alias="x509",
                 targets=["ami", "rucio"],
                 service_url="http://voms-token-service.invalid",
@@ -139,6 +143,7 @@ class TestValidateTargets:
         cfgs = [
             KeycloakBrokeredProviderConfig(alias="atlas-oidc", targets=["rucio"]),
             X509ProviderConfig(
+                voms="atlas",
                 alias="x509",
                 targets=["ami"],
                 service_url="http://voms-token-service.invalid",
