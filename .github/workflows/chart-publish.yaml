@@ -47,6 +47,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # helm registry login writes helm's own credential file; the registry
+      # attestation below (push-to-registry) reads Docker's credential store,
+      # so log in there too, as docker.yaml does for the images.
+      - name: Login to ghcr.io for the attestation
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Pushes ghcr.io/maniaclab/charts/af-mcp-platform:<version>.
       # helm prints the pushed manifest's digest ("Digest: sha256:..."); the
       # OCI attestation below needs it.
