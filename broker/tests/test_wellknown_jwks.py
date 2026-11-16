@@ -110,3 +110,4 @@ def test_jwks_degrades_to_503_when_unconfigured(
         resp: Any = client.get("/.well-known/jwks.json")
 
     assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"] == "Broker identity-token issuer is not configured"

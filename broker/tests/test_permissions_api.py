@@ -243,3 +243,4 @@ def test_entitlements_requires_authentication(app_client_factory) -> None:
         client.app.dependency_overrides.pop(keycloak_dependency, None)
         resp = client.get("/v1/entitlements")
     assert resp.status_code == 401
+    assert resp.json()["detail"] == "Not authenticated"

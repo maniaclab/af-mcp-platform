@@ -11,7 +11,9 @@ import urllib.request
 
 def test_metrics_not_on_api_port(app_client) -> None:
     client, _ = app_client
-    assert client.get("/metrics").status_code == 404
+    resp = client.get("/metrics")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
 
 
 def test_metrics_served_on_dedicated_port(app_client) -> None:

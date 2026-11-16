@@ -62,7 +62,11 @@ def test_get_requires_admin(credmon_client, make_principal) -> None:
     client, state, _, _ = credmon_client
     state["principal"] = make_principal(groups=["users"])
 
-    assert client.get("/v1/admin/credmon").status_code == 403
+    resp = client.get("/v1/admin/credmon")
+    assert resp.status_code == 403
+    assert (
+        resp.json()["detail"] == "This action requires membership in the admin group."
+    )
 
 
 def test_get_reports_disabled_when_not_configured(
@@ -135,3 +139,4 @@ def test_post_sync_is_404_when_not_configured(
         resp = client.post("/v1/admin/credmon/sync")
 
     assert resp.status_code == 404
+    assert "CREDMON_ENABLED" in resp.json()["detail"]
