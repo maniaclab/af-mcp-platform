@@ -168,7 +168,7 @@ async def _run(settings: Settings, *, apply: bool) -> int:
     )
     try:
         stats = await migrate(
-            vault_kv, settings.token_registry_kv_path_prefix, apply=apply
+            vault_kv, settings.vault_kv_paths.token_registry, apply=apply
         )
     except VaultError:
         log.exception("migrate.failed")

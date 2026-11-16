@@ -11,6 +11,8 @@ portal:
   brokerOrigin: "https://mcp.example.com"
 
 broker:
+  vault:
+    kvRoot: "mcp"
   sharedState:
     allowPerReplicaState: true
   identityProviders:

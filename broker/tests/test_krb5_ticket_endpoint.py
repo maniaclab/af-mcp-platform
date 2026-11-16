@@ -136,6 +136,7 @@ def krb5_app(
     # test_x509_service_mode.py's voms_service_env does for x509.
     monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
     monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+    monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
     monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
     with app_client_factory() as (client, state):

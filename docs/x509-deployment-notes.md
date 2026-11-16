@@ -120,27 +120,25 @@ repo shape mirrors condor-token-service). Flux entries mirror
 | entry `serviceUrl` | Base URL of the service (no path). Required. |
 | entry `audience` | `aud` minted into the mint call's AF Broker Identity Token; must match the service's `EXPECTED_AUDIENCE` (default `voms-token-service`). |
 | entry `voms` / `valid` | `voms`/`valid` forwarded on every mint (defaults `atlas` / `192:00`). |
-| `X509_KV_PATH_PREFIX` | KV-v2 path prefix for the per-subject records (default `mcp/x509`), shared by every x509 entry — one link record per user, not per service. |
+| `VAULT_KV_ROOT` | Root path under the KV mount (chart: `broker.vault.kvRoot`); the per-subject records live under `{VAULT_KV_ROOT}/x509`, shared by every x509 entry — one link record per user, not per service. **Required** whenever any Vault-backed store is configured. |
 | `VAULT_ADDR`, `VAULT_AUTH_MOUNT`, `VAULT_AUTH_ROLE`, `VAULT_KV_MOUNT`, `VAULT_SA_TOKEN_PATH` | The same shared Vault connection the other Vault-backed stores use (chart: `broker.oauth21.tokenStore.vault`). **Required** whenever an x509 entry exists (startup validation refuses a half-configured broker). |
 | `BROKER_SIGNING_KEY_FILE` | **Required** whenever an x509 entry exists — the aggregator's identity JWTs, the redeem endpoint, and the mint call are all authenticated by broker-signed identity tokens (fail-closed at boot, naming the affected services). |
 
 ### Vault paths + policy
 
 One KV-v2 record per subject at
-`{VAULT_KV_MOUNT}/data/{X509_KV_PATH_PREFIX}/{subject}/x509` holding the
+`{VAULT_KV_MOUNT}/data/{VAULT_KV_ROOT}/x509/{subject}/x509` holding the
 Globus passphrase, the POSIX identity captured at link time, and the current
 proxy PEM with its expiry. The broker's Vault policy needs, on
-`{X509_KV_PATH_PREFIX}/*`: `create`+`update` on `data/` (CAS writes),
+`{VAULT_KV_ROOT}/x509/*`: `create`+`update` on `data/` (CAS writes),
 `read` on `data/`, and `delete` on `metadata/` (unlink destroys all
-versions). This prefix is deliberately distinct from
-`VAULT_KV_PATH_PREFIX`/`TOKEN_REGISTRY_KV_PATH_PREFIX`/
-`PRINCIPAL_CACHE_KV_PATH_PREFIX` so the four stores never collide, and it
-holds the platform's most sensitive material — scope the policy to exactly
-this prefix, nothing broader. The chart renders it from
-`broker.vault.x509KvPathPrefix` (default `mcp/x509`); the krb5, ServiceX and
-credmon-state prefixes are `broker.vault.krb5KvPathPrefix`,
-`servicexKvPathPrefix` and `credmonKvPathPrefix`. Two releases sharing one
-KV mount must set distinct values for every Vault prefix.
+versions). The `x509` suffix is distinct from the other stores' suffixes
+(`tokens`, `token-registry`, `principal-cache`, `maintenance-mode`, `krb5`,
+`servicex`, `credmon`), all derived from the one root, so the stores never
+collide. It holds the platform's most sensitive material — scope the policy
+to exactly this prefix, nothing broader. The chart renders the root from
+`broker.vault.kvRoot`. Two releases sharing one KV mount must set distinct
+roots.
 
 ### The link / re-link UX
 

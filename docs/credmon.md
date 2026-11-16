@@ -64,7 +64,7 @@ The equivalent env vars are `CREDMON_ENABLED`, `CREDMON_HTCONDOR_API_URL`,
 `CREDMON_HTCONDOR_API_TOKEN_FILE`, `CREDMON_USER_DOMAIN`,
 `CREDMON_SERVICE_PREFIX` (default `af_`),
 `CREDMON_KINDS`, `CREDMON_TOP_TOKEN_TTL_SECONDS`,
-`CREDMON_SYNC_INTERVAL_SECONDS` and `CREDMON_STATE_KV_PATH_PREFIX`.
+`CREDMON_SYNC_INTERVAL_SECONDS`.
 
 The broker refuses to boot when credmon is enabled without a signing key,
 without Vault (users are enumerated from the Vault-backed identity stores,
@@ -106,8 +106,8 @@ condor_token_create -identity af-mcp-storer@<UID_DOMAIN> -authz WRITE -lifetime 
 ### Vault paths + policy
 
 The sync loop keeps its cross-replica lease and last-run status at
-`{VAULT_KV_MOUNT}/data/{CREDMON_STATE_KV_PATH_PREFIX}/{lease,status}`
-(default prefix `mcp/credmon`), written check-and-set. Users are enumerated
+`{VAULT_KV_MOUNT}/data/{VAULT_KV_ROOT}/credmon/{lease,status}`, written
+check-and-set. Users are enumerated
 by a KV LIST of each identity store's prefix as a *bare* path. On top of the
 stores' own grants, the broker's Vault policy needs:
 

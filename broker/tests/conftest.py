@@ -272,6 +272,7 @@ def configure_x509_service_env(
     monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
     monkeypatch.setattr(VaultKV, "_authenticate", _fake_vault_authenticate)
     monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+    monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
     monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
     x509_store = FakeX509Store()
     monkeypatch.setattr(

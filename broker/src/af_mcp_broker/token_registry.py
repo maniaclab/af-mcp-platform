@@ -836,7 +836,7 @@ def build_token_registry_backend(
                 vault_kv=require(
                     vault_kv, "token_registry_backend=vault requires a Vault client"
                 ),
-                kv_path_prefix=settings.token_registry_kv_path_prefix,
+                kv_path_prefix=settings.vault_kv_paths.token_registry,
             )
         case _:
             assert_never(backend)

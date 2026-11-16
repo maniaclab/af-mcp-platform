@@ -51,7 +51,7 @@ def _build_vault_backend(
     )
     return VaultTokenRegistryBackend(
         vault_kv=vault_kv,
-        kv_path_prefix=settings.token_registry_kv_path_prefix,
+        kv_path_prefix=settings.vault_kv_paths.token_registry,
     )
 
 
