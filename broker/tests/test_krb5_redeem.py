@@ -217,6 +217,7 @@ class TestRedeemAuth:
         with app_client_factory() as (client, _):
             resp = client.post(_REDEEM, json={})
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Missing Bearer token in Authorization header"
 
     def test_garbage_token_is_401(self, krb5_redeem_env, app_client_factory) -> None:
         krb5_redeem_env()
@@ -225,6 +226,7 @@ class TestRedeemAuth:
                 _REDEEM, json={}, headers={"Authorization": "Bearer nonsense"}
             )
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid or expired broker identity token"
 
     def test_non_krb5_audience_is_403(
         self, krb5_redeem_env, app_client_factory
@@ -425,12 +427,15 @@ class TestRedeem:
         krb5_redeem_env()
         with app_client_factory() as (client, _):
             _fake_vault_store(client)
-            _seed_cache_ticket(client, subject="sub-abc", remaining=90.0)
+            cred = _seed_cache_ticket(client, subject="sub-abc", remaining=90.0)
             token = _mint(client)
             resp = client.post(
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["ccache_b64"] == cred.payload["ccache_b64"]
+        assert 0 < body["remaining_seconds"] <= 90
 
     def test_cache_hit_null_renew_until_for_non_renewable_ticket(
         self, krb5_redeem_env, app_client_factory
@@ -489,6 +494,7 @@ class TestRedeem:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 404
+        assert "No Kerberos ticket is cached" in resp.json()["detail"]
 
     def test_ticket_is_per_subject(self, krb5_redeem_env, app_client_factory) -> None:
         krb5_redeem_env()
@@ -500,6 +506,7 @@ class TestRedeem:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 404
+        assert "No Kerberos ticket is cached" in resp.json()["detail"]
 
     def test_redeem_never_calls_keycloak(
         self, krb5_redeem_env, app_client_factory
@@ -827,6 +834,10 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+        assert (
+            resp.json()["detail"]
+            == "Audience 'af-credmon/krb5' is not a configured krb5 target"
+        )
 
     def test_credmon_audience_for_another_kind_is_403(
         self,
@@ -847,6 +858,10 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+        assert (
+            resp.json()["detail"]
+            == "Audience 'af-credmon/x509' is not a configured krb5 target"
+        )
 
 
 class TestCredmonWiring:

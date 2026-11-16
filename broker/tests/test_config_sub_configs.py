@@ -6,11 +6,13 @@ import pytest
 
 from af_mcp_broker.config import (
     CredmonApiConfig,
+    InMemoryBackendConfig,
     InMemoryMaintenanceStoreConfig,
     InMemoryUsageStoreConfig,
     PostgresMaintenanceStoreConfig,
     PostgresUsageStoreConfig,
     Settings,
+    VaultBackendConfig,
     VaultConfig,
     VaultMaintenanceStoreConfig,
 )
@@ -45,6 +47,17 @@ class TestVaultConfig:
         )
 
 
+class TestVaultConnection:
+    def test_carries_the_flat_connection_settings(self) -> None:
+        settings = Settings(_env_file=None, token_store_backend="vault", **_VAULT)
+
+        assert settings.vault_connection == settings.vault
+
+    def test_is_refused_when_the_connection_settings_are_unset(self) -> None:
+        with pytest.raises(ValueError, match="addr"):
+            _ = Settings(_env_file=None).vault_connection
+
+
 class TestCredmonApiConfig:
     def test_absent_when_credmon_is_disabled(self) -> None:
         assert Settings(_env_file=None).credmon_api is None
@@ -65,6 +78,17 @@ class TestCredmonApiConfig:
         assert str(api.url) == "https://htcondor-api.example/"
         assert api.token_file == "/token"
         assert api.user_domain == "af.example.org"
+        assert api.vault == settings.vault
+
+    def test_enabled_without_vault_fails_boot(self) -> None:
+        with pytest.raises(ValueError, match=r"CREDMON_ENABLED.*Vault"):
+            Settings(
+                _env_file=None,
+                credmon_enabled=True,
+                credmon_htcondor_api_url="https://htcondor-api.example",
+                credmon_htcondor_api_token_file="/token",
+                credmon_user_domain="af.example.org",
+            )
 
 
 class TestUsageStoreConfig:
@@ -83,6 +107,36 @@ class TestUsageStoreConfig:
         store = settings.usage_store
         assert isinstance(store, PostgresUsageStoreConfig)
         assert store.dsn.get_secret_value() == "postgresql://u:p@h/db"
+
+
+@pytest.mark.parametrize(
+    ("selector", "property_name"),
+    [
+        ("token_store_backend", "token_store"),
+        ("token_registry_backend", "token_registry"),
+        ("principal_cache_backend", "principal_cache"),
+    ],
+)
+class TestVaultSelectableBackendConfig:
+    def test_in_memory_by_default(self, selector: str, property_name: str) -> None:
+        assert isinstance(
+            getattr(Settings(_env_file=None), property_name), InMemoryBackendConfig
+        )
+
+    def test_vault_carries_the_vault_connection(
+        self, selector: str, property_name: str
+    ) -> None:
+        settings = Settings(_env_file=None, **{selector: "vault"}, **_VAULT)
+
+        backend = getattr(settings, property_name)
+        assert isinstance(backend, VaultBackendConfig)
+        assert backend.vault == settings.vault
+
+    def test_vault_without_connection_settings_fails_boot(
+        self, selector: str, property_name: str
+    ) -> None:
+        with pytest.raises(ValueError, match="VAULT_ADDR"):
+            Settings(_env_file=None, **{selector: "vault"})
 
 
 class TestMaintenanceStoreConfig:

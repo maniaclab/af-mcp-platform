@@ -159,6 +159,7 @@ class TestRedeemAuth:
         with app_client_factory() as (client, _):
             resp = client.post(_REDEEM, json={})
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Missing Bearer token in Authorization header"
 
     def test_garbage_token_is_401(
         self, servicex_redeem_env, app_client_factory
@@ -169,6 +170,7 @@ class TestRedeemAuth:
                 _REDEEM, json={}, headers={"Authorization": "Bearer nonsense"}
             )
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid or expired broker identity token"
 
     def test_non_servicex_audience_is_403(
         self, servicex_redeem_env, app_client_factory
@@ -336,6 +338,7 @@ class TestRedeem:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 502
+        assert "temporarily unavailable" in resp.json()["detail"]
 
 
 def _enable_credmon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -389,6 +392,9 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+        assert resp.json()["detail"] == (
+            "Audience 'af-credmon/servicex' is not a configured servicex target"
+        )
 
 
 class TestRedeemParentRequestId:

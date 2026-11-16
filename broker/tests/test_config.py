@@ -826,6 +826,8 @@ def test_credmon_enabled_with_htcondor_api_settings_is_ok():
         credmon_htcondor_api_url="https://htcondor-api.example",
         credmon_htcondor_api_token_file="/var/run/secrets/credmon/token",
         credmon_user_domain="af.example.org",
+        token_store_backend="vault",
+        **_VAULT_ENV,
     )  # must not raise
 
 

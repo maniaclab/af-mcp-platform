@@ -44,7 +44,7 @@ from af_mcp_broker.usage import (
     PostgresUsageStore,
     build_usage_store,
 )
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.vault_kv import VaultConnections
 
 _DSN = "postgresql://u:p@localhost/db"
 
@@ -56,15 +56,8 @@ def _literal_values(field: str) -> tuple[str, ...]:
 
 
 @pytest.fixture
-def vault_kv() -> VaultKV:
-    return VaultKV(
-        addr="https://vault.invalid",
-        auth_mount="kubernetes",
-        auth_role="r",
-        kv_mount="secret",
-        sa_token_path="/nonexistent",
-        http_client=httpx2.AsyncClient(),
-    )
+def vaults() -> VaultConnections:
+    return VaultConnections(httpx2.AsyncClient())
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -89,16 +82,20 @@ def test_require_raises_with_the_message_for_none() -> None:
 
 
 @pytest.mark.parametrize("backend", _literal_values("token_store_backend"))
-def test_token_store_covers_every_backend(backend: str, vault_kv: VaultKV) -> None:
-    store = build_token_store(_settings(token_store_backend=backend), vault_kv)
+def test_token_store_covers_every_backend(
+    backend: str, vaults: VaultConnections
+) -> None:
+    store = build_token_store(_settings(token_store_backend=backend), vaults)
     expected = {"in_memory": InMemoryTokenStore, "vault": VaultTokenStore}[backend]
     assert isinstance(store, expected)
 
 
 @pytest.mark.parametrize("backend", _literal_values("token_registry_backend"))
-def test_token_registry_covers_every_backend(backend: str, vault_kv: VaultKV) -> None:
+def test_token_registry_covers_every_backend(
+    backend: str, vaults: VaultConnections
+) -> None:
     built = build_token_registry_backend(
-        _settings(token_registry_backend=backend), vault_kv
+        _settings(token_registry_backend=backend), vaults
     )
     expected = {
         "in_memory": InMemoryTokenRegistryBackend,
@@ -109,10 +106,10 @@ def test_token_registry_covers_every_backend(backend: str, vault_kv: VaultKV) ->
 
 @pytest.mark.parametrize("backend", _literal_values("principal_cache_backend"))
 def test_principal_cache_backend_covers_every_backend(
-    backend: str, vault_kv: VaultKV
+    backend: str, vaults: VaultConnections
 ) -> None:
     built = build_principal_cache_backend(
-        _settings(principal_cache_backend=backend), vault_kv
+        _settings(principal_cache_backend=backend), vaults
     )
     expected = {
         "in_memory": InMemoryPrincipalCacheBackend,
@@ -123,11 +120,9 @@ def test_principal_cache_backend_covers_every_backend(
 
 @pytest.mark.parametrize("backend", _literal_values("maintenance_mode_backend"))
 def test_maintenance_store_covers_every_backend(
-    backend: str, vault_kv: VaultKV
+    backend: str, vaults: VaultConnections
 ) -> None:
-    built = build_maintenance_store(
-        _settings(maintenance_mode_backend=backend), vault_kv
-    )
+    built = build_maintenance_store(_settings(maintenance_mode_backend=backend), vaults)
     expected = {
         "in_memory": InMemoryMaintenanceModeStore,
         # Network-backed stores sit behind the TTL cache by default.
@@ -142,13 +137,13 @@ def test_maintenance_store_covers_every_backend(
     [("vault", VaultMaintenanceModeStore), ("postgres", PostgresMaintenanceModeStore)],
 )
 def test_maintenance_store_is_unwrapped_when_the_cache_ttl_is_zero(
-    backend: str, inner: type, vault_kv: VaultKV
+    backend: str, inner: type, vaults: VaultConnections
 ) -> None:
     built = build_maintenance_store(
         _settings(
             maintenance_mode_backend=backend, maintenance_mode_cache_ttl_seconds=0
         ),
-        vault_kv,
+        vaults,
     )
     assert isinstance(built, inner)
 

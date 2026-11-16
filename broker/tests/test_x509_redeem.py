@@ -140,6 +140,7 @@ class TestRedeemAuth:
         with app_client_factory() as (client, _):
             resp = client.post(_REDEEM, json={})
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Missing Bearer token in Authorization header"
 
     def test_garbage_token_is_401(self, x509_redeem_env, app_client_factory) -> None:
         x509_redeem_env()
@@ -148,6 +149,7 @@ class TestRedeemAuth:
                 _REDEEM, json={}, headers={"Authorization": "Bearer nonsense"}
             )
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid or expired broker identity token"
 
     def test_non_x509_audience_is_403(
         self, x509_redeem_env, app_client_factory
@@ -159,6 +161,9 @@ class TestRedeemAuth:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+        assert resp.json()["detail"] == (
+            "Audience 'condor-token-service' is not a configured x509 target"
+        )
 
     def test_redeem_never_calls_keycloak(
         self, x509_redeem_env, app_client_factory
@@ -263,6 +268,9 @@ class TestCredmonTopToken:
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
             )
         assert resp.status_code == 403
+        assert resp.json()["detail"] == (
+            "Audience 'af-credmon/x509' is not a configured x509 target"
+        )
 
 
 class TestRedeemParentRequestId:

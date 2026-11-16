@@ -112,7 +112,9 @@ def test_subject_is_required_on_the_collection(admin_tokens, method: str) -> Non
     client, as_principal = admin_tokens
     as_principal(_ADMIN_SUB, admin=True)
 
-    assert client.request(method, "/v1/admin/tokens").status_code == 422
+    resp = client.request(method, "/v1/admin/tokens")
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["query", "subject"]
 
 
 def test_admin_revokes_one_token_of_another_principal(
@@ -142,7 +144,9 @@ def test_admin_revoke_of_unknown_token_is_404(admin_tokens) -> None:
     client, as_principal = admin_tokens
     as_principal(_ADMIN_SUB, admin=True)
 
-    assert client.delete("/v1/admin/tokens/does-not-exist").status_code == 404
+    resp = client.delete("/v1/admin/tokens/does-not-exist")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Unknown token"
 
 
 def test_admin_revokes_all_active_tokens_of_a_principal(
@@ -193,4 +197,6 @@ def test_admin_can_revoke_their_own_tokens_through_the_admin_routes(
     mine = _mint_as(client, as_principal, _ADMIN_SUB, "mine")
     as_principal(_ADMIN_SUB, admin=True)
 
-    assert client.delete(f"/v1/admin/tokens/{mine}").status_code == 200
+    resp = client.delete(f"/v1/admin/tokens/{mine}")
+    assert resp.status_code == 200
+    assert resp.json() == {"lookup_id": mine, "revoked": True}

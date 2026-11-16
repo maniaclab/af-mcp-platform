@@ -132,6 +132,7 @@ class TestPreflightRoute:
         resp = client.get("/v1/x509/preflight", headers=_AUTH)
 
         assert resp.status_code == 502, resp.text
+        assert "temporarily unavailable" in resp.json()["detail"]
 
     def test_404_for_an_unknown_target(
         self, app_client: tuple[TestClient, dict]
@@ -144,6 +145,9 @@ class TestPreflightRoute:
         )
 
         assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == (
+            "No x509 credential provider is configured for 'nope'"
+        )
 
     def test_404_when_no_x509_target_is_configured(
         self,

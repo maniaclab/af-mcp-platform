@@ -880,6 +880,7 @@ def test_unlink_unknown_provider_returns_422(
     client, _ = app_client
     resp = client.delete("/v1/identities/link/not-a-real-provider", headers=_AUTH)
     assert resp.status_code == 422
+    assert resp.json()["detail"] == "Unknown provider 'not-a-real-provider'"
 
 
 def test_unlink_known_keycloak_provider_returns_501(
@@ -888,6 +889,7 @@ def test_unlink_known_keycloak_provider_returns_501(
     client, _ = app_client
     resp = client.delete(f"/v1/identities/link/{DEFAULT_KEYCLOAK_ALIAS}", headers=_AUTH)
     assert resp.status_code == 501
+    assert "not yet implemented" in resp.json()["detail"]
 
 
 def test_unlink_known_oauth21_alias_returns_204_and_deletes_stored_token(
@@ -951,8 +953,8 @@ def test_unlink_oauth21_alias_returns_204_even_when_nothing_was_stored(
 
     with app_client_factory() as (client, _state):
         resp = client.delete(f"/v1/identities/link/{ALIAS}", headers=_AUTH)
-
     assert resp.status_code == 204, resp.text
+    assert resp.content == b""
 
 
 def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(

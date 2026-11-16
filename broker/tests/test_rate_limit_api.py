@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 _AUTH = {"Authorization": "Bearer test"}
+_UNLOCK_REQUIRED = {
+    "detail": {"error": "proxy_unlock_required", "unlock_endpoint": "/v1/x509/proxy"}
+}
 
 
 def _use_voms_outcome(client: TestClient, outcome: Exception | None = None) -> None:
@@ -73,6 +76,7 @@ def test_needs_unlock_probes_never_trip_rate_limit(
         for _ in range(10):
             resp = _probe(client)
             assert resp.status_code == 409, resp.text
+            assert resp.json() == _UNLOCK_REQUIRED
 
 
 def test_correct_passphrase_succeeds_after_probes(
@@ -90,10 +94,13 @@ def test_correct_passphrase_succeeds_after_probes(
         _use_voms_outcome(client)
 
         for _ in range(5):
-            assert _probe(client).status_code == 409
+            probe = _probe(client)
+            assert probe.status_code == 409
+            assert probe.json() == _UNLOCK_REQUIRED
 
         resp = _unlock(client)
         assert resp.status_code == 201, resp.text
+        assert resp.json()["target"] == "ami"
 
 
 def test_genuinely_failed_unlocks_still_trip_the_limit(
@@ -147,7 +154,9 @@ def test_rate_limit_resets_after_successful_unlock(
         assert _unlock(client).status_code == 400
 
         _use_voms_outcome(client)
-        assert _unlock(client).status_code == 201
+        unlocked = _unlock(client)
+        assert unlocked.status_code == 201
+        assert unlocked.json()["target"] == "ami"
 
         # Burn the freshly-cached proxy so the next unlock actually reaches
         # the (now failing again) backend instead of serving from cache.
@@ -160,6 +169,7 @@ def test_rate_limit_resets_after_successful_unlock(
         assert _unlock(client).status_code == 400
         resp = _unlock(client)
         assert resp.status_code == 429, resp.text
+        assert "Too many failed unlock attempts" in resp.json()["detail"]
 
 
 def test_rate_limit_returns_429_with_retry_after(
@@ -225,3 +235,4 @@ def test_rate_limit_no_regression(
         for _ in range(5):
             resp = client.post("/v1/credential", json={"target": "ami"}, headers=_AUTH)
             assert resp.status_code == 409, resp.text
+            assert resp.json() == _UNLOCK_REQUIRED

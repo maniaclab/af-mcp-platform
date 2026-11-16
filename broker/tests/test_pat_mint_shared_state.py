@@ -117,6 +117,9 @@ def test_app_enforces_the_cap_other_replicas_already_spent(
         )
 
     assert resp.status_code == 429, resp.text
+    body = resp.json()
+    assert body["retry_after_seconds"] == 3600
+    assert body["detail"].startswith("Too many tokens minted")
 
 
 def test_app_counts_mints_only_under_its_configured_key_prefix(
@@ -147,3 +150,4 @@ def test_app_counts_mints_only_under_its_configured_key_prefix(
         )
 
     assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "t"

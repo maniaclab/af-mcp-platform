@@ -52,6 +52,7 @@ def test_lifespan_constructs_the_default_in_memory_store(app_client_factory):
         )
         resp = client.get("/v1/identities")
         assert resp.status_code == 503
+        assert resp.json()["detail"] == "The broker is in maintenance mode. Reason: r"
 
 
 def test_non_admin_blocked_when_maintenance_enabled(app_client_factory, monkeypatch):
@@ -69,6 +70,7 @@ def test_non_admin_blocked_when_maintenance_enabled(app_client_factory, monkeypa
         )
         resp = client.get("/v1/identities")
         assert resp.status_code == 503
+        assert resp.json()["detail"] == "The broker is in maintenance mode. Reason: r"
 
 
 def test_admin_not_blocked_when_maintenance_enabled(
@@ -89,6 +91,7 @@ def test_admin_not_blocked_when_maintenance_enabled(
         )
         resp = client.get("/v1/identities")
         assert resp.status_code == 200
+        assert resp.json()["subject"] == state["principal"].subject
 
 
 def test_health_probe_never_blocked(app_client_factory):
@@ -105,6 +108,7 @@ def test_health_probe_never_blocked(app_client_factory):
         )
         resp = client.get("/v1/healthz")
         assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
 
 
 class _BrokenMaintenanceModeStore(MaintenanceModeStore):
@@ -138,6 +142,7 @@ def test_non_admin_not_blocked_when_store_unavailable(app_client_factory):
         )
         resp = client.get("/v1/identities")
         assert resp.status_code == 200
+        assert resp.json()["groups"] == ["atlas"]
 
 
 def test_store_unavailable_is_logged_at_error_with_traceback_and_counted(

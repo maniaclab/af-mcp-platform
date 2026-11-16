@@ -134,6 +134,7 @@ def test_bypass_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
         resp = client.get("/v1/identities")
 
     assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"] == "Not authenticated"
 
 
 def test_no_bypass_and_no_directory_refuses_to_start(

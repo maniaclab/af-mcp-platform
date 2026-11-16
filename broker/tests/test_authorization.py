@@ -360,6 +360,7 @@ def test_startup_quiet_when_permissions_are_all_reachable(
         resp = client.get("/v1/healthz")
 
     assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "ok"}
 
 
 def test_startup_refuses_to_start_for_typoed_permission_name(
@@ -549,6 +550,7 @@ def test_startup_accepts_declared_custom_permission(
         resp = client.get("/v1/healthz")
 
     assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "ok"}
 
 
 # --- groups_granting_any (issue #395) ---------------------------------------

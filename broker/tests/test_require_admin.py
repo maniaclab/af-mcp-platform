@@ -38,12 +38,16 @@ def test_admin_member_is_allowed(admin_test_app, make_principal):
     state["principal"] = make_principal(groups=["atlas", "af-admins"])
     resp = client.get("/probe")
     assert resp.status_code == 200
+    assert resp.json() == {"subject": state["principal"].subject}
 
 
 def test_non_admin_is_403(admin_test_app):
     client, _state = admin_test_app
     resp = client.get("/probe")
     assert resp.status_code == 403
+    assert (
+        resp.json()["detail"] == "This action requires membership in the admin group."
+    )
 
 
 def test_admin_group_comes_from_the_state_settings_not_the_environment(
@@ -60,3 +64,4 @@ def test_admin_group_comes_from_the_state_settings_not_the_environment(
 
     get_settings.cache_clear()
     assert resp.status_code == 200
+    assert resp.json() == {"subject": state["principal"].subject}
