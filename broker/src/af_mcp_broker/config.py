@@ -1081,6 +1081,16 @@ class Settings(BaseSettings):
         """The Vault connection settings, or None when no configured subsystem uses Vault (``uses_vault``)."""
         if not self.uses_vault:
             return None
+        return self.vault_connection
+
+    @property
+    def vault_connection(self) -> VaultConfig:
+        """The Vault connection settings, for code that runs only when a configured subsystem uses Vault.
+
+        Raises a validation error naming the unset field otherwise, which
+        ``_validate_vault_config`` already refuses at boot whenever
+        ``uses_vault`` holds.
+        """
         return VaultConfig(
             addr=self.vault_addr,
             auth_mount=self.vault_auth_mount,

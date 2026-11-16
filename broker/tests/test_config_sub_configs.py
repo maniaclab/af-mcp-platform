@@ -47,6 +47,17 @@ class TestVaultConfig:
         )
 
 
+class TestVaultConnection:
+    def test_carries_the_flat_connection_settings(self) -> None:
+        settings = Settings(_env_file=None, token_store_backend="vault", **_VAULT)
+
+        assert settings.vault_connection == settings.vault
+
+    def test_is_refused_when_the_connection_settings_are_unset(self) -> None:
+        with pytest.raises(ValueError, match="addr"):
+            _ = Settings(_env_file=None).vault_connection
+
+
 class TestCredmonApiConfig:
     def test_absent_when_credmon_is_disabled(self) -> None:
         assert Settings(_env_file=None).credmon_api is None
