@@ -217,8 +217,10 @@ const status = computed(() => {
 <style scoped>
 /* Basecoat caps the list at 18rem, which leaves the sixth row of two-line
    options cut off with nothing to say it scrolls. A little more height shows
-   a half-row of the next option, which does. */
-.combobox .up__list[role='listbox'] {
+   a half-row of the next option, which does. Scoped to this component's own
+   class (Basecoat's rules sit in a cascade layer, so this one wins) because
+   the design contract forbids redefining a Basecoat class. */
+.up__list[role='listbox'] {
   max-height: 21.5rem;
 }
 .up__option {
