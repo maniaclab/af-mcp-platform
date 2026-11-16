@@ -16,15 +16,15 @@ function domWithBrandTags(): Document {
 describe('applyBranding', () => {
   it('patches textContent for a plain [data-af-brand] element', () => {
     const doc = domWithBrandTags();
-    applyBranding({ shortName: 'UChicago AF Ops', fullName: '', facilityName: '' }, doc);
-    expect(doc.querySelector('[data-af-brand="shortName"]')?.textContent).toBe('UChicago AF Ops');
+    applyBranding({ shortName: 'Example AF Ops', fullName: '', facilityName: '' }, doc);
+    expect(doc.querySelector('[data-af-brand="shortName"]')?.textContent).toBe('Example AF Ops');
   });
 
   it('patches aria-label instead of textContent when data-af-brand-target="aria-label"', () => {
     const doc = domWithBrandTags();
-    applyBranding({ shortName: '', fullName: 'UChicago AF Ops Platform', facilityName: '' }, doc);
+    applyBranding({ shortName: '', fullName: 'Example AF Ops Platform', facilityName: '' }, doc);
     const el = doc.querySelector('[data-af-brand="fullName"]');
-    expect(el?.getAttribute('aria-label')).toBe('UChicago AF Ops Platform');
+    expect(el?.getAttribute('aria-label')).toBe('Example AF Ops Platform');
     // textContent is untouched -- this element is targeted by aria-label only.
     expect(el?.textContent).toBe('logo text');
   });

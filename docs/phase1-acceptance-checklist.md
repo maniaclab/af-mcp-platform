@@ -44,7 +44,7 @@ JWTs — no mocked HTTP calls) and don't need a live check beyond the
 These require a real deployment, a real AF Keycloak token, and (for the
 credential-injection rows) a real linked identity — none of which a unit
 test can stand in for. Use `scripts/verify-mcp-flow.py` against
-`https://mcp.af.uchicago.edu` for each.
+`https://mcp.example.org` (via `--broker-url`) for each.
 
 - [ ] `verify-rucio-flow.py` steps 1-5 (the `/v1` surface this PR doesn't
       touch: identity, `is_linked`, catalog, authorize, credential) are
@@ -67,12 +67,12 @@ test can stand in for. Use `scripts/verify-mcp-flow.py` against
       contract this PR's tests assert in-process, confirmed over the wire.
 - [ ] An audit log line (JSON, structlog) is emitted in the broker's
       stdout for the `rucio_whoami` call above, with `outcome: "success"`.
-- [ ] Point Claude Desktop or Claude Code at `https://mcp.af.uchicago.edu/mcp/`
+- [ ] Point Claude Desktop or Claude Code at `https://mcp.example.org/mcp/`
       per [Connecting a Client](connecting-a-client.md) and confirm a real
       client (not just the fastmcp `Client` the verification script and
       test suite use) can complete the same flow.
 - [ ] Trailing-slash behavior: confirm whether a client configured with
-      `https://mcp.af.uchicago.edu/mcp` (no trailing slash) works via
+      `https://mcp.example.org/mcp` (no trailing slash) works via
       Starlette's mount-redirect, or whether it hangs/fails for streaming
       HTTP clients that don't follow redirects on the initial POST. If it
       fails, `docs/connecting-a-client.md`'s trailing-slash guidance needs

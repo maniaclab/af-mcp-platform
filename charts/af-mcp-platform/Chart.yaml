@@ -1,10 +1,10 @@
 apiVersion: v2
 name: af-mcp-platform
-description: Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility
+description: Credential-brokered MCP gateway for analysis facilities
 type: application
 version: 0.10.0
 appVersion: "0.10.0"
-keywords: [mcp, atlas, hep, analysis-facility]
+keywords: [mcp, hep, analysis-facility]
 home: https://github.com/maniaclab/af-mcp-platform
 sources: [https://github.com/maniaclab/af-mcp-platform]
 maintainers:

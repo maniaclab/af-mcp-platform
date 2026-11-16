@@ -1,6 +1,6 @@
 # x509 backend deployment notes (issue #112)
 
-What an operator (the flux_apps side) needs in place for an x509 backend —
+What an operator (the deployment's GitOps side) needs in place for an x509 backend —
 ami-mcp is the first — to work end-to-end over `/mcp`. Code references:
 `mcp/aggregator.py`'s x509 branch, `api/credentials.py`'s redeem endpoint,
 `credentials/voms_service.py` + `credentials/x509_vault.py` (the
@@ -14,7 +14,7 @@ library (its own repository and PyPI package).
 user (portal LINK, one-time passphrase entry)
   → broker mints VOMS proxy via voms-token-service
   → broker stores passphrase + proxy in Vault/OpenBao (VaultX509Store)
-LLM client → mcp.af.uchicago.edu /mcp
+LLM client → mcp.example.org /mcp
   → aggregator mints AF Broker Identity Token (aud=ami) per call
   → ami-mcp verifies it against the broker JWKS (af-credentials)
   → ami-mcp redeems the proxy: POST /v1/credentials/x509/redeem
@@ -80,7 +80,7 @@ Run ami-mcp ≥0.3.0 in broker mode:
 
 ```
 ami-mcp serve --transport http --auth broker \
-    --broker-url   https://mcp.af.uchicago.edu \
+    --broker-url   https://mcp.example.org \
     --audience     ami \
     --host 0.0.0.0 --port 8000
 ```
@@ -104,7 +104,7 @@ stamps differs from the URL ami-mcp reaches it at in-cluster.)
 The service lives in its own repository
 ([maniaclab/voms-token-service](https://github.com/maniaclab/voms-token-service);
 repo shape mirrors condor-token-service). Flux entries mirror
-`flux_apps/af/mcp-platform/`'s condor-token-service set:
+the deployment's GitOps repository's condor-token-service set:
 
 - Deployment + Service from `charts/voms-token-service`; the **homes PVC
   mounts on this pod only** (read-only), never on the broker.
@@ -185,11 +185,11 @@ roots.
 
 ## Verification
 
-1. `curl -s https://mcp.af.uchicago.edu/.well-known/jwks.json | jq .keys`
+1. `curl -s https://mcp.example.org/.well-known/jwks.json | jq .keys`
    — non-empty.
 2. Portal → mint a proxy (unlock flow), then from a pod with a broker-issued
    test token: `curl -s -X POST -H "Authorization: Bearer $TOK" \
    https://<broker>/v1/credentials/x509/redeem | jq .dn,.remaining_seconds`.
-3. `claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp`
+3. `claude mcp add --transport http atlas-af https://mcp.example.org/mcp`
    and run `ami_execute` with a trivial `SearchQuery` as a real user; check
    the broker audit log for the paired `x509_proxy_release` record.

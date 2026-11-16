@@ -51,7 +51,7 @@ broker:
   credmon:
     enabled: true
     htcondorApiUrl: http://condor-mcp.mcp.svc.cluster.local:8080
-    userDomain: af.uchicago.edu    # the pool's UID_DOMAIN
+    userDomain: example.org    # the pool's UID_DOMAIN
     existingHtcondorApiTokenSecret: credmon-htcondor-api-token   # key: token
     kinds: [krb5, x509]          # empty = all three; unconfigured kinds skipped
     # topTokenTtlSeconds: 86400  # must exceed syncIntervalSeconds
@@ -135,8 +135,8 @@ SEC_CREDENTIAL_DIRECTORY_OAUTH = /var/lib/condor/oauth_credentials
 CRED_SUPER_USERS = af-mcp-storer   # bare user part of the storer token's identity
 ```
 
-plus the AP credmon daemon (see below). At UChicago the access point is
-head04, which also runs the pool's collector -- apply config changes with
+plus the AP credmon daemon (see below). For example, the access point may be
+`ap.example.org`, which also runs the pool's collector -- apply config changes with
 `condor_reconfig` (it starts newly listed daemons) rather than restarting the
 master.
 
@@ -144,7 +144,7 @@ master.
 AP's schedd through `SCHEDD_HOST`) also need:
 
 ```
-CREDD_HOST = <AP hostname>      # e.g. head04.af.uchicago.edu
+CREDD_HOST = <AP hostname>      # e.g. ap.example.org
 ```
 
 `condor_submit` checks `use_oauth_services` credentials against credd before

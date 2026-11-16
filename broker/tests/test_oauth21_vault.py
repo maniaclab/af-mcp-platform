@@ -388,7 +388,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
 SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 STATE_ISSUER = "https://keycloak.invalid/realms/connect"
-CIMD_CLIENT_ID = "https://mcp.af.uchicago.edu/.well-known/cimd"
+CIMD_CLIENT_ID = "https://mcp.example.org/.well-known/cimd"
 
 
 def _bootstrap_oauth21_vault_env(
