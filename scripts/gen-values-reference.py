@@ -8,7 +8,7 @@ The table is derived from the chart's own files so it cannot drift from them:
 * type and required-ness come from ``values.schema.json``.
 
 A key the schema lists but ``values.yaml`` omits also gets a row, with no
-default. ``broker/tests/test_chart_values_reference.py`` fails when the
+default. ``broker/tests/unit/test_chart_values_reference.py`` fails when the
 committed table differs from what this script renders.
 
 Usage:

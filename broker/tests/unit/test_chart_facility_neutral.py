@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-_CHART = Path(__file__).resolve().parents[2] / "charts" / "af-mcp-platform"
+_CHART = Path(__file__).resolve().parents[3] / "charts" / "af-mcp-platform"
 
 # Lower-case; matched against lower-cased file content.
 _FACILITY_MARKERS = ("uchicago", "mwt2", "atlas")

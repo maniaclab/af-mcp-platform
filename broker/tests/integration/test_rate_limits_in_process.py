@@ -1,4 +1,4 @@
-"""End-to-end tests for policy.yaml's ``rate_limits`` (issue #165): the real broker app boots from a real policy.yaml, a real MCP client with a real bearer token hits the limit and gets the retry information. No mocks of the broker, its middleware or the backend."""
+"""In-process tests for policy.yaml's ``rate_limits`` (issue #165): the real broker app boots from a real policy.yaml, a real MCP client with a real bearer token hits the limit and gets the retry information. No mocks of the broker or its middleware; the backend is an in-process FastMCP server and the signing keys are test keys, so this is an integration test, not an end-to-end one."""
 
 from __future__ import annotations
 

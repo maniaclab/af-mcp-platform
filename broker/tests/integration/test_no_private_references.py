@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _PRIVATE_REPO_NAME = re.compile("flux" + "[_-]" + "apps", re.IGNORECASE)
 _FACILITY_NAME = re.compile("u" + "chicago", re.IGNORECASE)
 
@@ -47,8 +47,8 @@ _FACILITY_NAME_ALLOWED: dict[str, tuple[str, ...]] = {
         "The UChicago ATLAS Analysis Facility uses MCP Platform today",
     ),
     # Guards that name the facility so it cannot leak into the chart.
-    "broker/tests/test_chart_facility_neutral.py": ('"uchicago"',),
-    "broker/tests/test_chart_values_schema.py": ('"uchicago"',),
+    "broker/tests/unit/test_chart_facility_neutral.py": ('"uchicago"',),
+    "broker/tests/integration/test_chart_values_schema.py": ('"uchicago"',),
 }
 
 

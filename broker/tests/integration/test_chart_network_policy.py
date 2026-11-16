@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 import pytest
 import yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPO_ROOT / "charts" / "af-mcp-platform"
 _BASE_VALUES = _CHART / "ci" / "test-values.yaml"
 _NAMESPACE_LABEL = "kubernetes.io/metadata.name"

@@ -20,7 +20,7 @@ from af_mcp_broker.service_registry import (
 
 # The shipped services.yaml is the authoritative source for the apply_namespace
 # behavior this file tests (rucio is self-prefixed; everything else is not).
-_SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "af_mcp_broker"
 
 
 def test_backend_spec_apply_namespace_defaults_true() -> None:

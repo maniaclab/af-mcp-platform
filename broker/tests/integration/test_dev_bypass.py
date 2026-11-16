@@ -18,7 +18,7 @@ from af_mcp_broker.app import app
 from af_mcp_broker.config import get_settings
 
 # The shipped policy/backends need to be findable regardless of the caller's CWD.
-_SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
 
 # Copy-paste value from docs/local-development.md so the tests exercise the

@@ -1,7 +1,7 @@
 /**
  * Tests for tokenExplainer.ts: the one place the portal states how token
  * counts are estimated. The numbers must match the broker's constants
- * (audit/image_tokens.py); broker/tests/test_token_explainer_docs.py asserts
+ * (audit/image_tokens.py); broker/tests/unit/test_token_explainer_docs.py asserts
  * that against the source, this asserts the text carries them.
  */
 import { describe, expect, it } from 'vitest';
