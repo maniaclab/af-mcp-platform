@@ -2,7 +2,7 @@
 
 The AF MCP Platform is a credential-brokered [Model Context Protocol](https://modelcontextprotocol.io/) gateway that any ATLAS analysis facility can deploy: it authenticates callers against the facility's Keycloak, brokers per-user credentials to downstream systems (Rucio, PanDA, AMI, ATLAS GitLab, Jupyter, HTCondor, and more), and aggregates all registered MCP backends behind one URL. LLM clients never hold raw x509/IAM credentials — the broker is the strategic platform boundary, and all tool invocations pass through an authorization and audit layer before reaching any backend.
 
-The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uchicago.edu/), which runs this platform at `mcp.af.uchicago.edu` for its ~800 physics users. The examples below (hostnames, realm names, group mappings) are that deployment's own configuration, not platform requirements — see [docs/adding-a-service.md](docs/adding-a-service.md) and [docs/auth.md](docs/auth.md) for what's configurable per deployment.
+The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uchicago.edu/), which runs this platform for its ~800 physics users. The examples below use placeholder values (`example.org` hostnames, an `example` realm); hostnames, realm names and group mappings are per-deployment configuration, not platform requirements — see [docs/adding-a-service.md](docs/adding-a-service.md) and [docs/auth.md](docs/auth.md) for what's configurable per deployment.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uc
 Claude / Gemini / any MCP client         Browser (portal SPA)
         │  own Bearer (OIDC)                     │  own OIDC login (client-side)
         ▼                                         ▼
-mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
+mcp.example.org                         mcp-portal.example.org
 (broker validates the                   (portal does its own OIDC;
  Bearer itself)                          /v1 + /mcp carry no gate)
         │                                         │
@@ -32,7 +32,7 @@ mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
 
 ## Quick Start for ATLAS AF Users
 
-Point your MCP client at `https://mcp.af.uchicago.edu/mcp`. The endpoint speaks standard MCP-over-HTTP (SSE or streamable-HTTP), so any client that supports the HTTP transport (Claude Desktop, Gemini, the MCP CLI, etc.) can connect.
+Point your MCP client at your facility's broker, shown here as `https://mcp.example.org/mcp`. The endpoint speaks standard MCP-over-HTTP (SSE or streamable-HTTP), so any client that supports the HTTP transport (Claude Desktop, Gemini, the MCP CLI, etc.) can connect.
 
 Example `~/.config/claude/claude_desktop_config.json`:
 
@@ -40,19 +40,19 @@ Example `~/.config/claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "atlas-af": {
-      "url": "https://mcp.af.uchicago.edu/mcp"
+      "url": "https://mcp.example.org/mcp"
     }
   }
 }
 ```
 
-Most clients need nothing else configured: the first request 401s, the client discovers the broker's own OAuth endpoints, and a browser window opens to log in — Claude Desktop and Claude Code both work this way today. If your client can't do that browser-based flow (no browser to open, or it predates the MCP OAuth spec), mint a static Bearer token at `mcp-portal.af.uchicago.edu/tokens` and add it as an `Authorization` header instead — see [docs/auth.md](docs/auth.md#programmatic-client-bootstrap).
+Most clients need nothing else configured: the first request 401s, the client discovers the broker's own OAuth endpoints, and a browser window opens to log in — Claude Desktop and Claude Code both work this way today. If your client can't do that browser-based flow (no browser to open, or it predates the MCP OAuth spec), mint a static Bearer token at `mcp-portal.example.org/tokens` and add it as an `Authorization` header instead — see [docs/auth.md](docs/auth.md#programmatic-client-bootstrap).
 
 ### How authentication works
 
-Every caller — the portal SPA in your browser, or an MCP client like Claude Desktop — obtains its own bearer token via OIDC Authorization Code + PKCE against the facility's Keycloak realm (the `connect` realm on the UChicago AF reference deployment), carrying the configured audience claim (`aud=mcp-gateway` by default). Nobody fetches, pastes, or configures a raw token by hand for the portal; MCP clients run the OIDC flow themselves.
+Every caller — the portal SPA in your browser, or an MCP client like Claude Desktop — obtains its own bearer token via OIDC Authorization Code + PKCE against the facility's Keycloak realm (the `example` realm in the examples here), carrying the configured audience claim (`aud=mcp-gateway` by default). Nobody fetches, pastes, or configures a raw token by hand for the portal; MCP clients run the OIDC flow themselves.
 
-- The broker's `HTTPBearer` dependency validates every request directly against that realm's JWKS — it's the sole validator, on both the MCP host and the portal host (`mcp.af.uchicago.edu` / `mcp-portal.af.uchicago.edu` on the reference deployment). There's no ForwardAuth proxy in the `/v1` or `/mcp` path, or the portal's HTML, on either host — the portal SPA enforces its own client-side OIDC login.
+- The broker's `HTTPBearer` dependency validates every request directly against that realm's JWKS — it's the sole validator, on both the MCP host and the portal host (`mcp.example.org` / `mcp-portal.example.org` in the examples). There's no ForwardAuth proxy in the `/v1` or `/mcp` path, or the portal's HTML, on either host — the portal SPA enforces its own client-side OIDC login.
 - Once validated, the broker resolves your POSIX identity and brokers per-user credentials (ATLAS IAM token, x509/VOMS proxy) to whichever backend the tool call targets. **Your MCP client never sees those brokered credentials.**
 - Most clients bootstrap their own bearer token via OAuth discovery against the broker's own `/v1/oauth/authorize`/`/v1/oauth/token` endpoints — see [docs/auth.md](docs/auth.md#mcp-oauth-discovery-pat-bootstrap-issue-140). A client that can't do that flow mints a static PAT from the portal's `/tokens` page instead — see [docs/auth.md](docs/auth.md#programmatic-client-bootstrap).
 

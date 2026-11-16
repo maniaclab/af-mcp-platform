@@ -62,7 +62,7 @@ AF Credential Broker  (Identity subsystem)
 Credential subsystem
     │
     ├── Path A: ATLAS IAM token (for Rucio, PanDA, AMI)
-    │       GET /realms/connect/broker/atlas-oidc/token
+    │       GET /realms/example/broker/atlas-oidc/token
     │       (Keycloak's stored brokered token for the principal's linked
     │        atlas-auth.cern.ch identity — this is the ONLY way to obtain
     │        a token that atlas-auth.cern.ch will accept)
@@ -200,10 +200,10 @@ not invalidate anything.
 
 ## Portal auth (OIDC public client)
 
-The portal (`mcp-portal.af.uchicago.edu`) is a static Astro/Vue SPA — there's
+The portal (`mcp-portal.example.org`) is a static Astro/Vue SPA — there's
 no server-side session to hold a token, so it becomes its own OAuth 2.0
 **public client** (`mcp-portal`) and runs Authorization Code + PKCE against
-the `connect` realm itself, the same way any other caller of the broker does
+the `example` realm itself, the same way any other caller of the broker does
 (see [Full Auth Chain](#full-auth-chain) above). This is Phase B; Phase A
 (mcpHost's own direct Bearer validation for Claude Desktop) is in place.
 
@@ -211,18 +211,18 @@ the `connect` realm itself, the same way any other caller of the broker does
 Browser (portal SPA)
     │
     │  (1) No valid session → redirect to Keycloak
-    │      GET /realms/connect/protocol/openid-connect/auth
+    │      GET /realms/example/protocol/openid-connect/auth
     │      ?client_id=mcp-portal&response_type=code
     │      &code_challenge=<S256>&scope=openid profile email mcp-gateway
     ▼
-AF Keycloak (connect realm)
+AF Keycloak (example realm)
     │  (2) Already has a Keycloak SSO session cookie from a previous login
     │      to any client in this realm? → silent redirect back with `code`,
     │      no interactive login. Otherwise: user signs in once.
     ▼
 GET /callback?code=...&state=...     (portal/src/pages/callback.astro)
     │  (3) Exchange code + PKCE verifier for tokens
-    │      POST /realms/connect/protocol/openid-connect/token
+    │      POST /realms/example/protocol/openid-connect/token
     ▼
 sessionStorage                        (portal/src/lib/auth.ts)
     │  access_token: aud=["mcp-gateway", ...], refresh_token, id_token
@@ -294,7 +294,7 @@ Key points:
 When the broker calls Keycloak's token exchange endpoint on behalf of a principal,
 the resulting token has:
 
-- Issuer: `https://auth.af.uchicago.edu/realms/connect`
+- Issuer: `https://auth.example.org/realms/example`
 - Audience: whatever `audience` was requested (an AF-internal service)
 
 `atlas-auth.cern.ch` (the CERN IAM instance that issues tokens for Rucio, PanDA,
@@ -305,11 +305,11 @@ by federation partners it has explicitly configured.
 that Keycloak holds after the principal has linked their CERN account:
 
 ```
-GET https://auth.af.uchicago.edu/realms/connect/broker/atlas-oidc/token
+GET https://auth.example.org/realms/example/broker/atlas-oidc/token
 Authorization: Bearer <af-token>
 ```
 
-(`atlas-oidc` is the IdP alias in the connect realm; configurable via the
+(`atlas-oidc` is the IdP alias in the example realm; configurable via the
 `alias` field of this provider's `keycloak-brokered` entry in
 `Settings.identity_providers` / `broker.identityProviders`.)
 
@@ -751,7 +751,7 @@ Condor infrastructure and never enters the broker. `CondorTokenProvider`
 token's first end-to-end use: it mints an AF Broker Identity Token with
 `aud=condor-token-service` and the principal's `uid`/`gid`/`unixname`
 claims, exchanges it at condor-token-service's `POST /v1/token` (which
-runs `condor_token_create -identity <unixname>@af.uchicago.edu` next to
+runs `condor_token_create -identity <unixname>@example.org` next to
 the pool key), and caches the returned IDTOKEN in the `CredentialCache`
 keyed `(subject, target)` with TTL = the service's `expires_at`. Delivery
 to condor-mcp is the existing aggregator `bearer` branch — no aggregator
@@ -1242,14 +1242,14 @@ The chain above ("Full Auth Chain") describes the interactive path: the
 portal's own OIDC login (`portal/src/lib/auth.ts`) handles browser-based
 login transparently, and a signed-in user never fetches, pastes, or
 configures a raw bearer token by hand. That story is unchanged and remains
-the default for anyone opening `mcp.af.uchicago.edu` in a browser-capable
+the default for anyone opening `mcp.example.org` in a browser-capable
 client.
 
 It does not cover MCP clients that speak MCP-over-HTTP but can't yet perform
 OAuth discovery — Claude Desktop today. Those clients have no browser session
 to inherit and no way to run the OIDC dance themselves, so they need a static
 credential to put directly in their config's `Authorization` header. The
-portal's `mcp-portal.af.uchicago.edu/tokens` page exists for exactly this,
+portal's `mcp-portal.example.org/tokens` page exists for exactly this,
 and (issue maniaclab/af-mcp-platform#144 step 2a) it now mints a **broker-issued identity PAT**
 (Personal Access Token) rather than exchanging the caller's Keycloak JWT for
 another JWT:
@@ -1341,7 +1341,7 @@ revoked rows is the owner's housekeeping (step 4 above).
 The portal's mint page above still requires a signed-in human to visit it and
 copy-paste a token. Issue maniaclab/af-mcp-platform#140 adds a second way to obtain a PAT that a
 spec-compliant MCP client drives entirely itself, with no manual step: point
-the client at `mcp.af.uchicago.edu/mcp` with no credential at all, and it
+the client at `mcp.example.org/mcp` with no credential at all, and it
 discovers and completes the login on its own.
 
 The broker becomes an **OAuth-facing authorization endpoint for MCP clients
@@ -1362,13 +1362,13 @@ is why introspection, RFC 7662, exists at all).
    (both served identically — `api/wellknown.py`), are RFC 9728
    protected-resource metadata naming **the broker itself** — not the
    Keycloak realm — as the authorization server: `{"resource":
-   "https://mcp.af.uchicago.edu/mcp", "authorization_servers":
-   ["https://mcp-portal.af.uchicago.edu"]}`. `resource` self-identifies
+   "https://mcp.example.org/mcp", "authorization_servers":
+   ["https://mcp-portal.example.org"]}`. `resource` self-identifies
    whichever host served that request (`/mcp` and this metadata are
    reachable on both `ingress.mcpHost` and `ingress.portalHost` — see
    `docs/architecture.md`'s "Full Data Flow for a Tool Call"), while
    `authorization_servers` is always `broker.publicOrigin` (the portal
-   origin at UChicago AF) regardless of which host is asked — the two must
+   origin) regardless of which host is asked — the two must
    never be conflated into a single fixed value, or a client that validates
    `resource` against the URL it actually queried sees the wrong host back.
    The broker in turn serves its own RFC 8414 metadata at
@@ -1813,7 +1813,7 @@ Secret in place.
    baseline so the gate cannot be skipped. The scope itself carries no
    per-user role restriction (see "`mcp-gateway`/`mcp-ops-gateway`: audience
    is population, not permission" below) — the audience mints for any
-   `connect`-realm user who authenticates through this client, unconditionally.
+   `example`-realm user who authenticates through this client, unconditionally.
    **Fail-closed symptom:** with this attachment missing, no access
    token from this client ever carries the audience, so *every* bootstrap
    login — entitled users included — ends in an `access_denied` redirect
@@ -1950,23 +1950,23 @@ Once one of those actually grants the role, the Scope tab becomes optional
 belt-and-suspenders — it can additionally restrict which users obtain a
 given scope — but it is never itself where the grant happens.
 
-**AF's setup:** the `connect` realm has a `default-roles-connect` composite,
-but we grant `read-token` via group membership (`af-mcp-users`) instead of
-adding it there, since `connect` serves more than just the AF and
+**Example setup:** the `example` realm has a `default-roles-example` composite,
+but we grant `read-token` via group membership (`mcp-users`) instead of
+adding it there, since the realm may serve more than just the facility and
 `read-token` is a single, coarse, all-brokered-IdPs-or-nothing permission —
-opening it realm-wide would let any `connect` user retrieve a stored token
+opening it realm-wide would let any `example` user retrieve a stored token
 from *any* brokered IdP the realm ever configures, not just `atlas-oidc`.
 
 ### `mcp-gateway`/`mcp-ops-gateway`: audience is population, not permission
 
 Earlier revisions of this setup also listed `read-token` on `mcp-gateway`'s
 (and `mcp-ops-gateway`'s) own Scope tab, so the audience only minted for
-members of the same `af-mcp-users` group `read-token` came from. That
+members of the same `mcp-users` group `read-token` came from. That
 coupling is now removed (issue tracked alongside the ops-platform usability
 pass): **`mcp-gateway` and `mcp-ops-gateway` are Optional client scopes with
 an empty Scope tab**, explicitly requested by their portal client
 (`portal.oidc.scope` in the Helm values already includes it) — the audience
-mints unconditionally for any `connect`-realm user who authenticates
+mints unconditionally for any `example`-realm user who authenticates
 through that client, full stop.
 
 **Why the coupling existed, and why it was the wrong lever:** `read-token`
@@ -1978,11 +1978,11 @@ purely to gate ATLAS-IAM/Rucio stored-token retrieval — unrelated
 subsystems sharing a control neither actually wanted shared. Two concrete
 symptoms this produced: a user could complete the ATLAS-IAM linking flow
 and still never see `mcp-gateway` in their token if they weren't also in
-`af-mcp-users` (fixed independently — see "Distinguishing 'missing the
+`mcp-users` (fixed independently — see "Distinguishing 'missing the
 role' from 'never linked'" above); and `entitlements.group_permissions`'
 `__authenticated__` tier (meant to give every signed-in user some baseline
 permission, e.g. `read_monitoring`) was unreachable in practice for anyone
-outside `af-mcp-users`, since they had no audience to reach the broker with
+outside `mcp-users`, since they had no audience to reach the broker with
 at all.
 
 **What decides access now:** `entitlements.group_permissions` alone — the
@@ -2136,8 +2136,8 @@ only to satisfy this broker, **you may remove them (and the scope itself).**
 
 **Check first whether anything else in your realm reads the `posix` claim.**
 A Keycloak realm often serves more applications than this broker, and the
-`posix` scope in particular tends to predate it -- the UChicago AF realm
-keeps these mappers precisely because other Connect applications consume
+`posix` scope in particular tends to predate it -- a realm may
+keep these mappers precisely because other applications consume
 the claim. Removing them is safe *for the broker* and says nothing about
 your other consumers. Leaving them costs nothing here: the broker simply
 never looks at the claim.
@@ -2254,9 +2254,9 @@ including Claude Desktop's, instead of letting it reach the broker's own
 JWT validator:
 
 ```
-$ curl -sS -o /dev/null -w "HTTP %{http_code}\nLocation: %{redirect_url}\n" https://mcp.af.uchicago.edu/mcp/
+$ curl -sS -o /dev/null -w "HTTP %{http_code}\nLocation: %{redirect_url}\n" https://mcp.example.org/mcp/
 HTTP 302
-Location: https://oauth2-proxy.af.uchicago.edu/oauth2/sign_in?rd=%2Fmcp%2F
+Location: https://oauth2-proxy.example.org/oauth2/sign_in?rd=%2Fmcp%2F
 ```
 
 Phase A (`ingress-mcp.yaml` / `ingress-portal.yaml` split) removed the
