@@ -635,7 +635,7 @@ a TTL at or below that floor makes every call a fresh mint).
 
 | Claim      | Required | Value |
 |------------|----------|-------|
-| `iss`      | yes      | The broker issuer URL — `BROKER_TOKEN_ISSUER`, defaulting to `BROKER_PUBLIC_ORIGIN` |
+| `iss`      | yes      | The broker issuer URL — `BROKER_TOKEN_ISSUER`. The chart sets it to `broker.identityToken.issuer`, or `https://<ingress.mcpHost>` when that is empty and the ingress is enabled (the broker itself falls back to `BROKER_PUBLIC_ORIGIN`, which the chart never relies on). Consumers verify `iss` against the origin serving `/.well-known/jwks.json`, the MCP host. |
 | `sub`      | yes      | The principal's subject (Keycloak `sub`) |
 | `aud`      | yes      | The service's `effective_audience` — its `ServiceSpec.audience` if set, else its `name` (issue #257) — consumers **MUST reject** tokens whose `aud` is not exactly themselves |
 | `exp` / `iat` | yes   | Mint time and mint time + TTL |

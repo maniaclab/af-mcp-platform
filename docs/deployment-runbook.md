@@ -167,25 +167,28 @@ Start from [`examples/example-values.yaml`](https://github.com/maniaclab/af-mcp-
 
 ### Values the chart or broker requires in combination
 
-The schema cannot see these combinations. The chart's templates catch some at render time; the broker catches the rest at start, and a pod that fails there goes into `CrashLoopBackOff` (the previous ReplicaSet keeps serving during a rollout).
+The "Caught by" column says where each combination is refused. A render failure names every missing key in one `helm` error (`values.schema.json`, plus a template check where a condition spans two selectors). The broker validates the same combinations at start as a backstop, and a pod that fails there goes into `CrashLoopBackOff` (the previous ReplicaSet keeps serving during a rollout).
 
 | Condition | Required | Caught by |
 | --- | --- | --- |
 | always | `broker.keycloakAdmin.clientId` and its Secret | broker start |
 | `broker.replicaCount` above 1 | `broker.sharedState.url` or `existingSecret.name`, or `allowPerReplicaState: true` | chart render and broker start |
-| any Vault-backed store, or an x509, krb5-token or servicex-token provider | `broker.vault.kvRoot` | chart render |
-| any Vault-backed store | `broker.oauth21.tokenStore.vault.addr` and `authRole` | broker start only |
-| `broker.usage.backend: postgres` | `broker.usage.postgres.existingSecret.name` and `networkPolicy.podSelector` | broker start; chart render for the selector |
-| an `oauth21-direct` provider or `broker.tokenMint.clientId` | `broker.publicOrigin` (no trailing slash) and `broker.oauth21.existingStateKeySecret` | broker start |
-| an x509 provider | `serviceUrl`, `voms`, the signing key, the Vault settings | chart render and broker start |
-| a `broker-issued` provider | the signing key | broker start |
-| `broker.credmon.enabled` | `htcondorApiUrl`, `userDomain`, the token Secret, the signing key, a Vault-backed identity store | chart render and broker start |
+| any Vault-backed store, or an x509, krb5-token or servicex-token provider | `broker.vault.kvRoot`, `broker.oauth21.tokenStore.vault.addr` and `authRole` | chart render |
+| `broker.usage.backend: postgres` | `broker.usage.postgres.existingSecret.name` and `networkPolicy.podSelector` | chart render |
+| `broker.maintenanceMode.backend: postgres` | `broker.maintenanceMode.postgres.existingSecret.name`, or `broker.usage.backend: postgres` with its secret (the DSN is reused) | chart render (template, since it spans two selectors) |
+| an `oauth21-direct` provider | `broker.publicOrigin` (no trailing slash) and `broker.oauth21.existingStateKeySecret` | chart render; the trailing slash at broker start |
+| `broker.tokenMint.clientId` | `broker.tokenMint.existingClientSecretSecret`, `broker.publicOrigin` and `broker.oauth21.existingStateKeySecret` | chart render |
+| an x509 provider | `serviceUrl`, `voms`, the signing key, the Vault settings | chart render |
+| a `broker-issued`, `condor-token`, `krb5-token`, `servicex-token` or x509 provider | `broker.identityToken.existingSigningKeySecret` | chart render |
+| `broker.credmon.enabled` | `htcondorApiUrl`, `userDomain`, the token Secret | chart render |
+| `broker.credmon.enabled` | a Vault-backed identity store | broker start |
 | any OTLP signal enabled | `broker.otlp.endpoint` | chart render |
+| a signing key and `ingress.enabled: false` | `broker.identityToken.issuer` | chart render |
 | a service with a `required_permission` | some group in `entitlements.group_permissions` grants it | broker start |
 
 Two values deserve a decision, not a copy:
 
-- **`broker.identityToken.issuer`.** When empty the broker falls back to `broker.publicOrigin`. Backends verify the `iss` against the origin that serves the JWKS, which is the `mcpHost` origin, so set it explicitly (`https://<mcpHost>`) when `publicOrigin` is the portal origin.
+- **`broker.identityToken.issuer`.** Backends verify the `iss` against the origin that serves the JWKS, which is the `mcpHost` origin. When empty, the chart sets the issuer to `https://<ingress.mcpHost>` if the ingress is enabled, and never falls back to `broker.publicOrigin` (it can be the portal origin). With the ingress disabled and a signing key set the value is required. Set it explicitly when the JWKS is served from another origin.
 - **`broker.adminGroup`.** Empty means nobody is an admin. Set it before relying on maintenance mode, which an admin-less broker cannot turn off through the API.
 
 ### Network policy values
