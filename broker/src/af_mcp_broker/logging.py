@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from contextvars import ContextVar
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, TextIO
 
 import structlog
@@ -305,9 +306,19 @@ def log_request_finished(
     ``method`` and ``path`` repeat what ``received`` logged so a ``finished``
     line is attributable on its own; *path* is the route template where the
     router matched one, and never carries a query string.
+
+    An unhandled exception (*exc_type* set) is the broker's own failure, so the
+    line logs at error, the same as a 5xx ``http_exception``. When it left no
+    response behind (*status_code* is None), the server answers 500 for it, so
+    that is the status recorded.
     """
     duration_ms = (time.monotonic() - start_time) * 1000
-    bound_logger.info(
+    log = bound_logger.info
+    if exc_type is not None:
+        log = bound_logger.error
+        if status_code is None:
+            status_code = HTTPStatus.INTERNAL_SERVER_ERROR.value
+    log(
         "http.request.finished",
         **(_request_identity.get() or {}),
         method=method,

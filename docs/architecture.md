@@ -149,7 +149,7 @@ broker:
     url: "rediss://redis.cache.svc:6379/0"
     # NetworkPolicy egress to the store (when networkPolicy.enabled):
     networkPolicy:
-      namespaceSelector: {kubernetes.io/metadata.name: cache}
+      namespace: cache
       podSelector: {app.kubernetes.io/name: redis}
       # cidr: 203.0.113.0/24   # instead of selectors, for a managed instance
       port: 6379
@@ -263,8 +263,8 @@ protocol's own client capabilities).
 ## Trust tiers
 
 Elwood v5 / Shannon defines three trust tiers. Each deployed app's tier is
-declared alongside its deployment manifests in the GitOps repo
-(maniaclab/flux_apps#32); this section declares the platform's own posture.
+declared alongside its deployment manifests in the GitOps repo;
+this section declares the platform's own posture.
 
 - **user-tier** — lowest privilege: acts only with per-user credentials.
 - **service-tier** — interacts with shared infrastructure; requires a
@@ -1059,8 +1059,8 @@ observed their listing.
 
 ### Reserved paths on the portal host
 
-The portal host (the chart's `portalHost`, e.g. `mcp-portal.af.uchicago.edu`
-for the UChicago AF deployment) is a static Astro build; its API
+The portal host (the chart's `portalHost`, e.g. `mcp-portal.example.org`
+in the examples here) is a static Astro build; its API
 client fetches `/v1/*` same-origin. A dedicated `ingress-portal-api.yaml`
 Ingress object (same host, no oauth2-proxy annotations) routes `/v1` and
 `/mcp` to the broker Service, ahead of `ingress-portal.yaml`'s `/`
@@ -1094,8 +1094,8 @@ the simplest correct thing. The extraction path if it becomes necessary:
 ## Full Data Flow for a Tool Call
 
 1. LLM sends `tools/call` MCP message over HTTPS to the broker's MCP host
-   (the chart's `mcpHost`, e.g. `mcp.af.uchicago.edu` for the UChicago AF
-   deployment), with its own Bearer — a raw `aud=mcp-gateway` Keycloak JWT,
+   (the chart's `mcpHost`, e.g. `mcp.example.org` in the
+   examples here), with its own Bearer — a raw `aud=mcp-gateway` Keycloak JWT,
    or (most MCP clients) a broker-issued PAT (see [docs/auth.md](auth.md)
    for how each client identity obtains one).
 2. `IdentityMiddleware` validates the Bearer directly (no ForwardAuth proxy

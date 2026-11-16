@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 import yaml
@@ -24,12 +24,13 @@ _BASE_VALUES = _CHART / "ci" / "test-values.yaml"
 _NAMESPACE_LABEL = "kubernetes.io/metadata.name"
 _RELEASE_NAMESPACE = "mcp-test"
 _SELECTOR = {"app.kubernetes.io/name": "svc"}
+_NO_JWKS = {"ingress": {"broker": {"jwks": {"generate": False}}}}
 
 
 def _helm_template(
-    tmp_path: Path, overlay: dict[str, Any]
+    tmp_path: Path, overlay: dict[str, Any], base: Path = _BASE_VALUES
 ) -> subprocess.CompletedProcess[str]:
-    """Render the chart over the CI base values plus *overlay*; never raises on failure."""
+    """Render the chart over *base* plus *overlay*; never raises on failure."""
     overlay_file = tmp_path / "overlay.yaml"
     overlay_file.write_text(yaml.safe_dump(overlay))
     return subprocess.run(
@@ -45,7 +46,7 @@ def _helm_template(
             "--set",
             "image.portal.tag=sha-test",
             "-f",
-            str(_BASE_VALUES),
+            str(base),
             "-f",
             str(overlay_file),
         ],
@@ -116,13 +117,14 @@ def _endpoints(*hosts: str, **options: Any) -> dict[str, Any]:
     }
 
 
-def _service(url: str, name: str = "extra") -> dict[str, Any]:
+def _service(url: str, name: str = "extra", **extra: Any) -> dict[str, Any]:
     return {
         "name": name,
         "prefix": name,
         "url": url,
         "transport": "http",
         "required_permission": "__none__",
+        **extra,
     }
 
 
@@ -615,7 +617,10 @@ class TestGenerateSwitch:
     ) -> None:
         overlay = {
             "aggregator": {"services": [_service("http://svc.backend.svc:8080/mcp")]},
-            "networkPolicy": {"egress": {"generate": False}},
+            "networkPolicy": {
+                "egress": {"generate": False},
+                "ingress": {"broker": {"jwks": {"generate": False}}},
+            },
         }
 
         assert _helm_template(tmp_path, overlay).returncode == 0
@@ -625,7 +630,9 @@ class TestIngressSources:
     def test_default_sources_are_generic_and_name_no_facility_namespace(
         self, tmp_path: Path
     ) -> None:
-        spec = _policies(tmp_path, {})["af-mcp-platform-broker"]["spec"]
+        spec = _policies(tmp_path, {"networkPolicy": _NO_JWKS})[
+            "af-mcp-platform-broker"
+        ]["spec"]
 
         namespaces = {
             p["namespaceSelector"]["matchLabels"][_NAMESPACE_LABEL]
@@ -643,7 +650,11 @@ class TestIngressSources:
                 "ports": [9090],
             }
         ]
-        overlay = {"networkPolicy": {"ingress": {"broker": {"sources": sources}}}}
+        overlay = {
+            "networkPolicy": {
+                "ingress": {"broker": {"sources": sources, "jwks": {"generate": False}}}
+            }
+        }
 
         ingress = _policies(tmp_path, overlay)["af-mcp-platform-broker"]["spec"][
             "ingress"
@@ -699,3 +710,484 @@ class TestIngressSources:
 
         assert result.returncode != 0
         assert "sources" in result.stderr
+
+
+def _broker_ingress(
+    tmp_path: Path, overlay: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    return _policies(tmp_path, overlay or {})["af-mcp-platform-broker"]["spec"][
+        "ingress"
+    ]
+
+
+# Leaves the JWKS rule as the only ingress rule on the API port that selects
+# namespaces (the chart's helm-test rule selects a pod in the release namespace).
+_METRICS_ONLY = {
+    "sources": [
+        {
+            "namespaceSelector": {"matchLabels": {_NAMESPACE_LABEL: "monitoring"}},
+            "ports": [9090],
+        }
+    ]
+}
+
+
+def _jwks_rules(ingress: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ingress rules whose sources are namespace-and-pod peers on the API port."""
+    return [
+        r
+        for r in ingress
+        if r["ports"] == [{"protocol": "TCP", "port": 8080}]
+        and all("namespaceSelector" in p for p in r["from"])
+    ]
+
+
+def _peers(rule: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """A rule's ``from`` peers: namespace -> pod matchLabels."""
+    return {
+        p["namespaceSelector"]["matchLabels"][_NAMESPACE_LABEL]: p["podSelector"][
+            "matchLabels"
+        ]
+        for p in rule["from"]
+    }
+
+
+def _identity_provider(type_: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "type": type_,
+        "alias": f"{type_}-example",
+        "displayName": type_,
+        "enables": type_,
+        "targets": [],
+        **extra,
+    }
+
+
+class TestJwksIngress:
+    """A client that verifies a broker-signed token fetches the broker's JWKS.
+
+    Those are the identity-provider token services and the backends that
+    authenticate with an AF Broker Identity Token (``auth_type`` x509, krb5 or
+    servicex, or a target of a broker-issued entry). The rule opens the whole
+    API port, so a client that holds only an upstream or condor token is not
+    a source.
+    """
+
+    _TOKEN_PROVIDER: ClassVar[dict[str, Any]] = {
+        "type": "condor-token",
+        "alias": "condor",
+        "displayName": "HTCondor",
+        "enables": "HTCondor",
+        "targets": [],
+        "serviceUrl": "http://token.tokens.svc.cluster.local:8081",
+    }
+
+    def _overlay(
+        self,
+        *,
+        services: list[dict[str, Any]] | None = None,
+        providers: list[dict[str, Any]] | None = None,
+        endpoints: dict[str, Any] | None = None,
+        **policy: Any,
+    ) -> dict[str, Any]:
+        ingress = {"broker": {**_METRICS_ONLY, **policy.pop("broker", {})}}
+        return {
+            "aggregator": {
+                "services": (
+                    [_service("http://svc.backend.svc:9000/mcp", auth_type="x509")]
+                    if services is None
+                    else services
+                )
+            },
+            "broker": {
+                "identityProviders": (
+                    [self._TOKEN_PROVIDER] if providers is None else providers
+                )
+            },
+            "networkPolicy": {
+                "ingress": ingress,
+                "egress": {
+                    "endpoints": {
+                        "svc.backend.svc": {
+                            "podSelector": {"app.kubernetes.io/name": "extra"},
+                            "targetPort": 9000,
+                        },
+                        "token.tokens.svc.cluster.local": {
+                            "podSelector": {"app.kubernetes.io/name": "token"}
+                        },
+                        **(endpoints or {}),
+                    }
+                },
+                **policy,
+            },
+        }
+
+    def test_backends_and_token_services_may_reach_the_api_port(
+        self, tmp_path: Path
+    ) -> None:
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, self._overlay()))
+
+        assert _peers(rule) == {
+            "backend": {"app.kubernetes.io/name": "extra"},
+            "tokens": {"app.kubernetes.io/name": "token"},
+        }
+
+    @pytest.mark.parametrize("auth_type", ["x509", "krb5", "servicex"])
+    def test_backend_authenticated_with_an_identity_token_is_a_source(
+        self, tmp_path: Path, auth_type: str
+    ) -> None:
+        overlay = self._overlay(
+            services=[_service("http://svc.backend.svc:9000/mcp", auth_type=auth_type)],
+            providers=[],
+        )
+
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+        assert set(_peers(rule)) == {"backend"}
+
+    @pytest.mark.parametrize("auth_type", ["bearer", "none"])
+    def test_backend_without_an_identity_token_is_not_a_source(
+        self, tmp_path: Path, auth_type: str
+    ) -> None:
+        overlay = self._overlay(
+            services=[_service("http://svc.backend.svc:9000/mcp", auth_type=auth_type)],
+            providers=[],
+        )
+
+        assert not _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+    def test_bearer_backend_targeted_by_a_broker_issued_entry_is_a_source(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = self._overlay(
+            services=[_service("http://svc.backend.svc:9000/mcp", name="native")],
+            providers=[_identity_provider("broker-issued", targets=["native"])],
+        )
+
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+        assert set(_peers(rule)) == {"backend"}
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            _identity_provider(
+                "oauth21-direct",
+                targets=["hub"],
+                authorizationEndpoint="https://hub.example.org/authorize",
+                tokenEndpoint="https://hub.example.org/token",
+                issuer="https://hub.example.org",
+            ),
+            _identity_provider(
+                "condor-token",
+                targets=["hub"],
+                serviceUrl="http://other.tokens.svc:8080",
+            ),
+            _identity_provider(
+                "krb5-token", targets=["hub"], serviceUrl="http://other.tokens.svc:8080"
+            ),
+            _identity_provider("keycloak-brokered", targets=["hub"]),
+        ],
+        ids=["oauth21-direct", "condor-token", "krb5-token", "keycloak-brokered"],
+    )
+    def test_bearer_backend_holding_an_upstream_token_is_not_a_source(
+        self, tmp_path: Path, entry: dict[str, Any]
+    ) -> None:
+        # A backend validating the user's own upstream token (or a condor
+        # token) never reads the broker's JWKS.
+        overlay = self._overlay(
+            services=[_service("http://svc.backend.svc:9000/mcp", name="hub")],
+            providers=[entry],
+            endpoints={"other.tokens.svc": {"podSelector": _SELECTOR}},
+        )
+
+        rules = _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+        assert all("backend" not in _peers(rule) for rule in rules)
+
+    @pytest.mark.parametrize(
+        "type_", ["condor-token", "krb5-token", "servicex-token", "x509"]
+    )
+    def test_every_token_service_type_is_a_source(
+        self, tmp_path: Path, type_: str
+    ) -> None:
+        overlay = self._overlay(
+            services=[_service("https://api.example.org/mcp")],
+            providers=[
+                _identity_provider(
+                    type_, serviceUrl="http://tok.tokens.svc:8080", voms="atlas"
+                )
+            ],
+            endpoints={"tok.tokens.svc": {"podSelector": {"app": "tok"}}},
+        )
+
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+        assert _peers(rule) == {"tokens": {"app": "tok"}}
+
+    def test_an_oauth21_provider_endpoint_is_not_a_source(self, tmp_path: Path) -> None:
+        # A JupyterHub-style hub or proxy behind an oauth21-direct entry.
+        entry = _identity_provider(
+            "oauth21-direct",
+            authorizationEndpoint="http://hub.hubns.svc:8000/authorize",
+            tokenEndpoint="http://hub.hubns.svc:8000/token",
+            issuer="http://hub.hubns.svc:8000",
+        )
+        overlay = self._overlay(
+            services=[_service("https://api.example.org/mcp")],
+            providers=[entry],
+            endpoints={"hub.hubns.svc": {"podSelector": _SELECTOR}},
+        )
+
+        assert not _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+    def test_the_backend_target_port_is_not_the_ingress_port(
+        self, tmp_path: Path
+    ) -> None:
+        # targetPort (9000) is where the broker connects to the backend; the
+        # backend connects to the broker's own API port.
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, self._overlay()))
+
+        assert rule["ports"] == [{"protocol": "TCP", "port": 8080}]
+
+    def test_only_client_urls_become_sources(self, tmp_path: Path) -> None:
+        overlay = self._overlay(
+            endpoints={"kc.keycloak.svc.cluster.local": {"podSelector": _SELECTOR}}
+        )
+        overlay["broker"]["oidc"] = {
+            "internalUrl": "http://kc.keycloak.svc.cluster.local:8080/realms/r"
+        }
+
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+        assert "keycloak" not in _peers(rule)
+
+    def test_no_in_cluster_client_renders_no_rule_rather_than_an_open_one(
+        self, tmp_path: Path
+    ) -> None:
+        # An empty ``from`` would allow every source.
+        overlay = self._overlay(
+            services=[_service("https://api.example.org/mcp", auth_type="x509")],
+            providers=[],
+        )
+
+        ingress = _broker_ingress(tmp_path, overlay)
+
+        assert all(rule["from"] for rule in ingress)
+        assert not _jwks_rules(ingress)
+
+    def test_a_public_host_served_in_cluster_is_selected_through_its_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = self._overlay(
+            services=[_service("https://hub.example.org/mcp", auth_type="x509")],
+            providers=[],
+            endpoints={
+                "hub.example.org": {
+                    "namespace": "gateway",
+                    "podSelector": {"app.kubernetes.io/name": "gw"},
+                    "targetPort": 10443,
+                }
+            },
+        )
+
+        [rule] = _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+        assert _peers(rule) == {"gateway": {"app.kubernetes.io/name": "gw"}}
+
+    def test_in_cluster_client_without_endpoints_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = {
+            "aggregator": {
+                "services": [
+                    _service("http://svc.backend.svc:8080/mcp", auth_type="x509")
+                ]
+            },
+            "networkPolicy": {"egress": {"generate": False}},
+        }
+
+        result = _helm_template(tmp_path, overlay)
+
+        assert result.returncode != 0
+        assert "svc.backend.svc" in result.stderr
+
+    def test_generate_false_drops_the_rule_and_keeps_the_sources(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = self._overlay(broker={"jwks": {"generate": False}})
+
+        ingress = _broker_ingress(tmp_path, overlay)
+
+        assert not _jwks_rules(ingress)
+        assert len(ingress) == 2  # the metrics source and the helm-test pod
+
+    def test_the_rule_does_not_depend_on_egress_generation(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = self._overlay()
+        overlay["networkPolicy"]["egress"]["generate"] = False
+
+        assert _jwks_rules(_broker_ingress(tmp_path, overlay))
+
+    @pytest.mark.parametrize("families", [["IPv4"], ["IPv6"], ["IPv4", "IPv6"]])
+    def test_peers_are_selectors_so_every_family_renders_the_same_rule(
+        self, tmp_path: Path, families: list[str]
+    ) -> None:
+        reference = _jwks_rules(_broker_ingress(tmp_path, self._overlay()))
+
+        rules = _jwks_rules(
+            _broker_ingress(tmp_path, self._overlay(ipFamilies=families))
+        )
+
+        assert rules == reference
+
+    def test_extra_ingress_stays_last(self, tmp_path: Path) -> None:
+        extra = {
+            "from": [{"ipBlock": {"cidr": "203.0.113.0/24"}}],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        }
+        overlay = self._overlay(broker={"extraIngress": [extra]})
+
+        assert _broker_ingress(tmp_path, overlay)[-1] == extra
+
+    def test_disabled_policy_renders_no_rule(self, tmp_path: Path) -> None:
+        assert _policies(tmp_path, self._overlay(enabled=False)) == {}
+
+
+_POSTGRES = {"backend": "postgres", "postgres": {"existingSecret": {"name": "dsn"}}}
+_PG_LABELS = {
+    "postgres-operator.crunchydata.com/cluster": "usage",
+    "postgres-operator.crunchydata.com/data": "postgres",
+}
+
+
+def _postgres_overlay(**network_policy: Any) -> dict[str, Any]:
+    usage = {**_POSTGRES, "postgres": {**_POSTGRES["postgres"]}}
+    usage["postgres"]["networkPolicy"] = network_policy
+    return {"broker": {"usage": usage}}
+
+
+class TestStorePeers:
+    """Postgres and the shared-state store take the same peer shape as an endpoint.
+
+    Their URLs live in Secrets, so the peer is declared explicitly:
+    ``namespace`` (default: the release namespace), ``podSelector`` and ``port``.
+    """
+
+    def test_postgres_peer_is_a_namespace_and_pod_selector_on_port_5432(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = _postgres_overlay(namespace="database", podSelector=_PG_LABELS)
+
+        rules = _namespace_rules(_broker_egress(tmp_path, overlay))
+
+        key = "database/" + ",".join(f"{k}={v}" for k, v in sorted(_PG_LABELS.items()))
+        assert _ports(rules[key]) == [5432]
+
+    def test_postgres_namespace_defaults_to_the_release_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = _postgres_overlay(podSelector=_PG_LABELS)
+
+        rules = _namespace_rules(_broker_egress(tmp_path, overlay))
+
+        assert any(key.startswith(f"{_RELEASE_NAMESPACE}/postgres") for key in rules)
+
+    def test_postgres_port_is_configurable(self, tmp_path: Path) -> None:
+        overlay = _postgres_overlay(podSelector=_PG_LABELS, port=6432)
+
+        rules = _namespace_rules(_broker_egress(tmp_path, overlay))
+
+        [rule] = [r for k, r in rules.items() if "postgres" in k]
+        assert _ports(rule) == [6432]
+
+    def test_postgres_without_a_pod_selector_is_refused(self, tmp_path: Path) -> None:
+        result = _helm_template(tmp_path, _postgres_overlay())
+
+        assert result.returncode != 0
+        assert "broker.usage.postgres.networkPolicy.podSelector" in result.stderr
+
+    def test_empty_postgres_pod_selector_opts_into_the_whole_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = _postgres_overlay(namespace="database", podSelector={})
+
+        rules = _namespace_rules(_broker_egress(tmp_path, overlay))
+
+        assert _ports(rules["database"]) == [5432]
+
+    def test_shared_state_peer_is_a_namespace_and_pod_selector(
+        self, tmp_path: Path
+    ) -> None:
+        # ci/test-values.yaml selects the store in namespace "cache".
+        rules = _namespace_rules(_broker_egress(tmp_path))
+
+        assert _ports(rules["cache/app.kubernetes.io/name=redis"]) == [6379]
+
+    def test_shared_state_without_a_pod_selector_or_cidr_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        values = yaml.safe_load(_BASE_VALUES.read_text())
+        del values["broker"]["sharedState"]["networkPolicy"]["podSelector"]
+        base = tmp_path / "base.yaml"
+        base.write_text(yaml.safe_dump(values))
+
+        result = _helm_template(tmp_path, {}, base=base)
+
+        assert result.returncode != 0
+        assert "broker.sharedState.networkPolicy.podSelector" in result.stderr
+
+    def test_shared_state_cidr_renders_an_ip_block(self, tmp_path: Path) -> None:
+        overlay = {
+            "broker": {
+                "sharedState": {
+                    "networkPolicy": {"cidr": "203.0.113.0/24", "port": 6380}
+                }
+            }
+        }
+
+        egress = _broker_egress(tmp_path, overlay)
+
+        [rule] = [
+            r
+            for r in egress
+            if any(
+                p.get("ipBlock", {}).get("cidr") == "203.0.113.0/24"
+                for p in r.get("to", [])
+            )
+        ]
+        assert _ports(rule) == [6380]
+
+    def test_generate_false_drops_the_store_rules(self, tmp_path: Path) -> None:
+        overlay = _postgres_overlay(podSelector=_PG_LABELS)
+        overlay["networkPolicy"] = {"egress": {"generate": False}}
+
+        egress = _broker_egress(tmp_path, overlay)
+
+        assert [r.get("to") for r in egress] == [None]
+
+    @pytest.mark.parametrize(
+        ("overlay", "key"),
+        [
+            (_postgres_overlay(clusterName="usage"), "clusterName"),
+            (
+                {
+                    "broker": {
+                        "sharedState": {
+                            "networkPolicy": {"namespaceSelector": {"a": "b"}}
+                        }
+                    }
+                },
+                "namespaceSelector",
+            ),
+        ],
+        ids=["postgres-clusterName", "shared-state-namespaceSelector"],
+    )
+    def test_the_old_keys_are_rejected_by_the_schema(
+        self, tmp_path: Path, overlay: dict[str, Any], key: str
+    ) -> None:
+        result = _helm_template(tmp_path, overlay)
+
+        assert result.returncode != 0
+        assert key in result.stderr

@@ -607,8 +607,13 @@
                     "namespace": {
                       "type": "string"
                     },
-                    "clusterName": {
-                      "type": "string"
+                    "podSelector": {
+                      "type": "object"
+                    },
+                    "port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
                     }
                   },
                   "additionalProperties": false
@@ -649,8 +654,8 @@
                 "cidr": {
                   "type": "string"
                 },
-                "namespaceSelector": {
-                  "type": "object"
+                "namespace": {
+                  "type": "string"
                 },
                 "podSelector": {
                   "type": "object"
@@ -1204,6 +1209,15 @@
                   "items": {
                     "type": "object"
                   }
+                },
+                "jwks": {
+                  "type": "object",
+                  "properties": {
+                    "generate": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false

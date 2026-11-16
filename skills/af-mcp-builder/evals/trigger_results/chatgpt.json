@@ -1,11 +1,11 @@
 {
- "description": "Use whenever a user is building, implementing, extending, designing, reviewing, auditing, debugging, integrating, or onboarding an MCP server or its tools for the AF MCP platform (maniaclab/af-mcp-platform), UChicago Analysis Facility MCP gateway, or a service intended to run behind that gateway. Covers new server development, existing server assessments, gateway compatibility, service registration and services.yaml configuration, tool discovery and schemas, naming and descriptions, annotations, structured outputs, errors, pagination, transport, stateless HTTP, authentication, broker identity tokens, credential redemption, trust tiers, agent policies, and read-only modes. Applies to Python FastMCP, MCP SDK, Go MCP implementations, and service-specific backends such as Rucio, AMI, HTCondor, and JupyterLab. Also use when reviewing code, investigating integration failures, planning onboarding, or asking what a backend must change to join the AF MCP platform. Do not use for generic MCP questions, standalone MCP tutorials, unrelated application development, or servers targeting other gateways.",
+ "description": "Use whenever a user is building, implementing, extending, designing, reviewing, auditing, debugging, integrating, or onboarding an MCP server or its tools for the AF MCP platform (maniaclab/af-mcp-platform), Example Analysis Facility MCP gateway, or a service intended to run behind that gateway. Covers new server development, existing server assessments, gateway compatibility, service registration and services.yaml configuration, tool discovery and schemas, naming and descriptions, annotations, structured outputs, errors, pagination, transport, stateless HTTP, authentication, broker identity tokens, credential redemption, trust tiers, agent policies, and read-only modes. Applies to Python FastMCP, MCP SDK, Go MCP implementations, and service-specific backends such as Rucio, AMI, HTCondor, and JupyterLab. Also use when reviewing code, investigating integration failures, planning onboarding, or asking what a backend must change to join the AF MCP platform. Do not use for generic MCP questions, standalone MCP tutorials, unrelated application development, or servers targeting other gateways.",
  "results": [
   {
    "id": "p01",
    "split": "train",
    "should_trigger": true,
-   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.af.uchicago.edu. server.py is the first cut. what has to change before we ask the AF admins to onboard it?",
+   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.example.org. server.py is the first cut. what has to change before we ask the AF admins to onboard it?",
    "triggers": 3,
    "runs": 3,
    "visible": [
@@ -55,7 +55,7 @@
    "id": "p03",
    "split": "train",
    "should_trigger": true,
-   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.af.uchicago.edu? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go",
+   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.example.org? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go",
    "triggers": 3,
    "runs": 3,
    "visible": [

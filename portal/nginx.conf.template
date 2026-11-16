@@ -14,7 +14,7 @@ server {
     server_name _;
 
     # Keycloak's registered redirect_uri for mcp-portal is the external
-    # https://mcp-portal.af.uchicago.edu/callback (no trailing slash, per
+    # https://mcp-portal.example.org/callback (no trailing slash, per
     # #42) — outside our control. That request lands here as `/callback`,
     # try_files below sees it as a directory (Astro emits
     # /callback/index.html) and 301s to `/callback/`. Without this,

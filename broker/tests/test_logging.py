@@ -118,9 +118,7 @@ def test_log_request_finished_logs_status_and_duration() -> None:
     assert logs[0]["duration_ms"] >= 10
 
 
-def test_log_request_finished_carries_exc_type_and_no_status_on_a_raised_request() -> (
-    None
-):
+def test_log_request_finished_logs_a_raised_request_at_error_with_status_500() -> None:
     logger = structlog.get_logger("test_logging.request_finished_exc")
 
     with structlog.testing.capture_logs() as logs:
@@ -133,8 +131,28 @@ def test_log_request_finished_carries_exc_type_and_no_status_on_a_raised_request
             exc_type="RuntimeError",
         )
 
-    assert logs[0]["status_code"] is None
+    assert logs[0]["log_level"] == "error"
+    assert logs[0]["status_code"] == 500
     assert logs[0]["exc_type"] == "RuntimeError"
+
+
+def test_log_request_finished_keeps_the_status_already_sent_when_the_request_then_raised() -> (
+    None
+):
+    logger = structlog.get_logger("test_logging.request_finished_exc_after_start")
+
+    with structlog.testing.capture_logs() as logs:
+        log_request_finished(
+            logger,
+            start_time=time.monotonic(),
+            method="GET",
+            path="/mcp",
+            status_code=200,
+            exc_type="RuntimeError",
+        )
+
+    assert logs[0]["log_level"] == "error"
+    assert logs[0]["status_code"] == 200
 
 
 # ---------------------------------------------------------------------------

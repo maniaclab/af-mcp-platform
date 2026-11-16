@@ -27,8 +27,7 @@ broker:
       name: "example-redis-url"
       key: "url"
     networkPolicy:
-      namespaceSelector:
-        kubernetes.io/metadata.name: cache
+      namespace: cache
       podSelector:
         app.kubernetes.io/name: redis
   # Dummy value so `helm template` renders the BROKER_PUBLIC_ORIGIN env var
@@ -37,8 +36,8 @@ broker:
   publicOrigin: "https://portal.example.com"
   identityProviders:
     - type: keycloak-brokered
-      alias: atlas-oidc-example
-      displayName: "ATLAS IAM (example)"
+      alias: idp-oidc-example
+      displayName: "Example IAM (example)"
       enables: "Example VOMS proxy generation and grid certificate credential brokering"
       targets: ["rucio-example"]
     - type: oauth21-direct
@@ -161,7 +160,7 @@ aggregator:
   services:
     - name: rucio-example
       prefix: rucio
-      url: "http://rucio-mcp.example.svc.cluster.local/site/atlas"
+      url: "http://rucio-mcp.example.svc.cluster.local/site/example"
       transport: http
       required_permission: read_data
       apply_namespace: false
@@ -195,7 +194,7 @@ aggregator:
 # broker/src/af_mcp_broker/authorization/policy.yaml.
 entitlements:
   group_permissions:
-    atlas: [read_data, read_metadata]
+    users: [read_data, read_metadata]
 
 # An enabled Ingress needs both hostnames (values.schema.json).
 ingress:
