@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx2
 import pytest
+import structlog.testing
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.credentials import CredentialRegistry
@@ -228,6 +229,12 @@ class TestPrimeJwksCache:
     async def test_a_failed_fetch_is_not_fatal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # A booted app pins module loggers to its processor list, which hides
+        # their events from capture_logs (see conftest's ``unpinned_loggers``).
+        monkeypatch.setattr(
+            lifecycle, "logger", structlog.get_logger(lifecycle.__name__)
+        )
+
         async def _get_jwks(
             settings: Settings, http_client: httpx2.AsyncClient
         ) -> list[Any]:
@@ -235,7 +242,12 @@ class TestPrimeJwksCache:
 
         monkeypatch.setattr(lifecycle, "get_jwks", _get_jwks)
 
-        await prime_jwks_cache(_settings(), httpx2.AsyncClient())
+        with structlog.testing.capture_logs() as logs:
+            await prime_jwks_cache(_settings(), httpx2.AsyncClient())
+
+        assert [
+            (entry["event"], entry["log_level"], entry["error"]) for entry in logs
+        ] == [("jwks_cache_prime_failed", "warning", "keycloak unreachable")]
 
     async def test_a_successful_fetch_primes_the_cache(
         self, monkeypatch: pytest.MonkeyPatch

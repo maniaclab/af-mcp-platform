@@ -138,7 +138,7 @@ async def test_admin_bypasses_maintenance(make_principal: Callable[..., object])
         MaintenanceState(enabled=True, reason="r", enabled_by="x", enabled_at=1.0)
     )
 
-    await check_not_maintenance(principal, settings, store)  # must not raise
+    assert await check_not_maintenance(principal, settings, store) is None
 
 
 async def test_non_admin_blocked_with_reason(make_principal: Callable[..., object]):
@@ -161,7 +161,7 @@ async def test_disabled_maintenance_never_raises(make_principal: Callable[..., o
     principal = make_principal(groups=["atlas"])
     store = InMemoryMaintenanceModeStore()
 
-    await check_not_maintenance(principal, settings, store)  # must not raise
+    assert await check_not_maintenance(principal, settings, store) is None
 
 
 async def test_reason_none_produces_clean_detail_with_no_suffix(
@@ -201,6 +201,11 @@ async def test_admin_bypass_never_calls_store_get(
     settings = Settings(admin_group="af-admins")
     principal = make_principal(groups=["af-admins"])
 
-    await check_not_maintenance(
-        principal, settings, _ExplodingMaintenanceModeStore()
-    )  # must not raise
+    # The exploding store raises if read, so returning at all proves the admin
+    # bypass never consulted it.
+    assert (
+        await check_not_maintenance(
+            principal, settings, _ExplodingMaintenanceModeStore()
+        )
+        is None
+    )

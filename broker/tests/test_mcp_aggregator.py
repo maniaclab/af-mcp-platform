@@ -2849,7 +2849,10 @@ async def test_require_linked_returns_without_context_when_already_linked(
     provider = _FakeProvider(linked=True)
     spec = _spec()
 
-    await _require_linked(provider, make_principal(), spec, settings, None)
+    result = await _require_linked(provider, make_principal(), spec, settings, None)
+
+    assert result is None
+    assert provider.issue_calls == []
 
 
 async def test_require_linked_skips_elicit_when_client_lacks_permission(

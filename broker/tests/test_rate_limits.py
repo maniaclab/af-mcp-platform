@@ -188,7 +188,7 @@ async def test_no_rules_never_touches_the_counter() -> None:
         async def incr_window(self, key: str, window_seconds: int) -> WindowCount:
             raise AssertionError("counter must not be used without rules")
 
-    await check_rate_limits([], _Exploding(), "sub", "x_a", "read")
+    assert await check_rate_limits([], _Exploding(), "sub", "x_a", "read") is None
 
 
 async def test_calls_up_to_the_limit_pass_and_the_next_is_denied(clock: _Clock) -> None:

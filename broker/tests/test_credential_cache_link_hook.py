@@ -51,8 +51,14 @@ def test_notify_linked_calls_on_link_hook():
     assert calls == [("sub-1", TARGET)]
 
 
-def test_notify_linked_without_hook_is_a_noop():
-    CredentialCache().notify_linked("sub-1", TARGET)
+async def test_notify_linked_without_hook_leaves_the_cache_untouched():
+    cache = CredentialCache()
+    cred = _cred(TARGET)
+    await cache.put("sub-1", TARGET, cred)
+
+    cache.notify_linked("sub-1", TARGET)
+
+    assert await cache.peek("sub-1", TARGET) is cred
 
 
 async def test_put_does_not_call_on_link_hook():

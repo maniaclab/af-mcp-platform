@@ -24,7 +24,7 @@ def test_boot_without_an_oidc_issuer_is_refused() -> None:
 def test_boot_with_an_oidc_issuer_is_accepted() -> None:
     settings = Settings(_env_file=None, oidc_issuer="https://keycloak.example.com/r")
 
-    require_oidc_issuer(settings)
+    assert require_oidc_issuer(settings) is None
 
 
 def test_x509_provider_config_requires_voms() -> None:

@@ -63,6 +63,11 @@ async def test_below_the_cap_is_allowed_on_every_replica(
 
     await replica_b.check_mint_rate_limit(subject)
 
+    # The cap is exactly _MAX_MINTS: one more mint reaches it.
+    await replica_a.record_mint(subject)
+    with pytest.raises(PatMintRateLimitError):
+        await replica_b.check_mint_rate_limit(subject)
+
 
 async def test_other_subjects_are_unaffected(
     replicas: list[TokenRegistry], subject: str
@@ -71,6 +76,8 @@ async def test_other_subjects_are_unaffected(
         await replicas[0].record_mint(subject)
 
     await replicas[1].check_mint_rate_limit(f"other-{subject}")
+    with pytest.raises(PatMintRateLimitError):
+        await replicas[1].check_mint_rate_limit(subject)
 
 
 async def test_store_outage_falls_back_to_a_per_replica_cap(

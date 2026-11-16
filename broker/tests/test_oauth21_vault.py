@@ -216,7 +216,10 @@ async def test_delete_nonexistent_is_idempotent(sa_token_path: Path) -> None:
     fake = FakeVault(key_prefix=KV_PATH_PREFIX)
     store = _make_store(fake, sa_token_path)
 
-    await store.delete(SUBJECT, ALIAS)  # must not raise
+    await store.delete(SUBJECT, ALIAS)
+
+    assert await store.get(SUBJECT, ALIAS) is None
+    assert fake.entries == {}
 
 
 # ---------------------------------------------------------------------------

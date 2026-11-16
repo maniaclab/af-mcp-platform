@@ -96,7 +96,13 @@ async def test_no_on_revoke_configured_is_a_noop():
     await cache.put("sub-1", TARGET, _cred(TARGET))
 
     await cache.revoke("sub-1", TARGET)
+    assert await cache.peek("sub-1", TARGET) is None
+
+    await cache.put("sub-1", "rucio", _cred("rucio"))
+    await cache.put("sub-1", "ami", _cred("ami"))
     await cache.revoke_all("sub-1")
+    assert await cache.peek("sub-1", "rucio") is None
+    assert await cache.peek("sub-1", "ami") is None
 
 
 async def test_janitor_expiry_does_not_call_on_revoke_hook():

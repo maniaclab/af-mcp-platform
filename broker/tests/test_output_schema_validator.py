@@ -17,7 +17,7 @@ _SCHEMA = {
 
 class TestOutputSchemaValidator:
     def test_conforming_content_passes(self) -> None:
-        OutputSchemaValidator().validate("t", _SCHEMA, {"n": 1})
+        assert OutputSchemaValidator().validate("t", _SCHEMA, {"n": 1}) is None
 
     def test_violation_names_the_tool_and_the_reason(self) -> None:
         with pytest.raises(
@@ -34,8 +34,10 @@ class TestOutputSchemaValidator:
             OutputSchemaValidator().validate("t", _SCHEMA, None)
 
     def test_a_tool_without_an_output_schema_is_never_checked(self) -> None:
-        OutputSchemaValidator().validate("t", None, None)
-        OutputSchemaValidator().validate("t", None, {"anything": object()})
+        validator = OutputSchemaValidator()
+
+        assert validator.validate("t", None, None) is None
+        assert validator.validate("t", None, {"anything": object()}) is None
 
     def test_an_invalid_schema_is_reported(self) -> None:
         with pytest.raises(RuntimeError, match="Invalid schema for tool t"):
