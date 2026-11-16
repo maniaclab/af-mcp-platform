@@ -18,6 +18,7 @@ function rule(overrides: Partial<RateLimitStatus> = {}): RateLimitStatus {
     used: 0,
     resets_in_seconds: null,
     tools: [],
+    tool_count: 0,
     ...overrides,
   };
 }

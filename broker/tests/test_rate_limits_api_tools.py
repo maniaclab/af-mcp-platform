@@ -21,6 +21,7 @@ from fastmcp.utilities.http import find_available_port
 from af_mcp_broker.api import rate_limits
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
+from af_mcp_broker.authorization.rate_limit import RATE_LIMIT_MAX_TOOLS
 from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 if TYPE_CHECKING:
@@ -189,3 +190,49 @@ async def test_no_rules_lists_no_service(
 
     assert body["rate_limits"] == []
     assert body["unlisted_services"] == []
+
+
+def _wide_backend(count: int) -> FastMCP:
+    backend = FastMCP(name="wide-backend")
+    for i in range(count):
+        # Zero-padded so the sorted order is the creation order.
+        backend.tool(lambda: "ok", name=f"t{i:02d}", description="A tool.")
+    return backend
+
+
+async def test_a_rule_covering_more_tools_than_the_cap_lists_the_first_ones_and_counts_all(
+    make_principal: Callable[..., Any],
+) -> None:
+    total = RATE_LIMIT_MAX_TOOLS + 5
+    async with run_inprocess_server(_wide_backend(total), path="/mcp") as url:
+        registry = ServiceRegistry()
+        registry.register(_spec("wide", url))
+        app = _make_app(
+            registry,
+            _policy(RateLimitRule(1, 300, tool="*")),
+            make_principal(groups=["atlas"]),
+        )
+
+        body = await _get(app)
+
+    [only] = body["rate_limits"]
+    assert only["tools"] == [f"wide_t{i:02d}" for i in range(RATE_LIMIT_MAX_TOOLS)]
+    assert only["tool_count"] == total
+
+
+async def test_tool_count_is_the_listed_number_when_under_the_cap(
+    make_principal: Callable[..., Any], data_backend_url: str
+) -> None:
+    registry = ServiceRegistry()
+    registry.register(_spec("data", data_backend_url))
+    app = _make_app(
+        registry,
+        _policy(DATA_RULE, UNMATCHED_RULE),
+        make_principal(groups=["atlas"]),
+    )
+
+    body = await _get(app)
+
+    data, unmatched = body["rate_limits"]
+    assert data["tool_count"] == len(data["tools"]) == 2
+    assert unmatched["tool_count"] == 0

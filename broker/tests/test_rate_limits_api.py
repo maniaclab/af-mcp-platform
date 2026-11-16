@@ -74,6 +74,7 @@ def test_returns_rules_with_the_callers_usage(
         "window_seconds": 300,
         "used": 12,
         "tools": [],
+        "tool_count": 0,
     }
     # No window is open for a rule the caller never matched.
     assert second == {
@@ -84,6 +85,7 @@ def test_returns_rules_with_the_callers_usage(
         "used": 0,
         "resets_in_seconds": None,
         "tools": [],
+        "tool_count": 0,
     }
 
 
