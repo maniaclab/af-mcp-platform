@@ -526,9 +526,9 @@ class AuthorizationMiddleware(Middleware):
                 )
                 return result
             span.set_attribute("af.outcome", "success")
-            # The result measurement -- an estimate of its context-injection
-            # cost, not wire size; see measure_tool_result's docstring for
-            # exactly what is serialized and counted -- happens on the metering
+            # The result measurement -- wire bytes and estimated context
+            # tokens per content type; see measure_tool_result's docstring for
+            # exactly what is counted -- happens on the metering
             # pipeline's background worker (metering.py), never here:
             # serializing and tokenizing a large result can cost tens of ms,
             # and the tool call must not wait on it (nor on the audit write).

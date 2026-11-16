@@ -17,6 +17,7 @@ from test_request_logging import _capturing_info
 from af_mcp_broker import metering as pipeline
 from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker import shared_state
+from af_mcp_broker.audit.measure import ContentMeasure, ToolMeasurement
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.config import Settings
@@ -713,9 +714,11 @@ async def test_success_records_result_bytes_and_tokens(
 
     measured: list[Any] = []
 
-    def _fake_measure(result: Any, _settings: Any) -> tuple[int | None, int | None]:
+    def _fake_measure(result: Any, _settings: Any) -> ToolMeasurement:
         measured.append(result)
-        return (5, 2)
+        return ToolMeasurement(
+            content={"text": ContentMeasure(blocks=1, bytes=5, tokens_est=2)}
+        )
 
     monkeypatch.setattr(pipeline, "measure_tool_result", _fake_measure)
 
@@ -725,6 +728,9 @@ async def test_success_records_result_bytes_and_tokens(
     record = captured_audits[0]
     assert record.result_bytes == 5
     assert record.result_tokens_est == 2
+    assert record.result_content == {
+        "text": ContentMeasure(blocks=1, bytes=5, tokens_est=2)
+    }
 
 
 async def test_call_next_failure_records_duration_but_no_result_fields(

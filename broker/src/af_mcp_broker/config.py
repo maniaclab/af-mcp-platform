@@ -432,13 +432,14 @@ class Settings(BaseSettings):
     audit_log_file: str = "-"
 
     # tiktoken encoding name used to ESTIMATE how many tokens a tool
-    # result's serialized text would occupy if injected into an LLM
-    # client's context (AuditRecord.result_tokens_est -- see
+    # result's text (text blocks, structured content, text resources) would
+    # occupy if injected into an LLM client's context
+    # (AuditRecord.result_tokens_est -- see
     # audit/measure.py). It is an estimate of context-injection size, not a
     # provider-reported count: different LLMs tokenize differently, and
     # o200k_base is simply a reasonable modern reference tokenizer. Empty
-    # string disables token estimation entirely (the field stays None;
-    # byte measurement is unaffected).
+    # string disables token estimation entirely, images included (the field
+    # stays None; byte measurement is unaffected).
     token_estimate_encoding: str = "o200k_base"  # noqa: S105 -- tiktoken encoding name, not a secret
 
     # Which MeteringBackend implementation (metering.py) carries

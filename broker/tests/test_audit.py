@@ -11,6 +11,7 @@ import pytest
 import structlog
 
 from af_mcp_broker.audit import AuditRecord, write_audit
+from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.logging import (
     AUDIT_LOGGER_NAME,
     AuditFileHandler,
@@ -305,3 +306,50 @@ async def test_write_audit_records_denied_outcome_and_error(audit_buffer) -> Non
     line = json.loads(audit_buffer.getvalue().strip())
     assert line["outcome"] == "denied"
     assert line["error"] == "principal lacks permission 'submit_jobs'"
+
+
+async def test_write_audit_carries_the_content_breakdown(audit_buffer) -> None:
+    """The audit line is authoritative for usage: it carries the
+    per-content-type breakdown, keyed by the real content-type string."""
+    record = AuditRecord(
+        principal_sub="sub-abc",
+        principal_uid=1000,
+        permission="read_data",
+        target="jhub",
+        action="jhub_nb_execute_code",
+        action_type="state_change",
+        args_summary="",
+        timestamp=1234.5,
+        request_id="req-1",
+        result_bytes=24_099,
+        result_tokens_est=428,
+        result_content={
+            "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
+            "image": ContentMeasure(blocks=1, bytes=24_070, tokens_est=414),
+        },
+    )
+    await write_audit(record)
+
+    line = json.loads(audit_buffer.getvalue().strip())
+    assert line["result_content"] == {
+        "text": {"blocks": 1, "bytes": 29, "tokens_est": 14},
+        "image": {"blocks": 1, "bytes": 24_070, "tokens_est": 414},
+    }
+
+
+async def test_write_audit_content_breakdown_defaults_none(audit_buffer) -> None:
+    await write_audit(
+        AuditRecord(
+            principal_sub="sub-abc",
+            principal_uid=1000,
+            permission="read_data",
+            target="x",
+            action="x_y",
+            action_type="read",
+            args_summary="",
+            timestamp=1.0,
+            request_id="r",
+        )
+    )
+
+    assert json.loads(audit_buffer.getvalue().strip())["result_content"] is None
