@@ -37,6 +37,11 @@ export function formatEpochSeconds(epochSeconds: number): string {
   return formatDateTime(new Date(epochSeconds * 1000), { year: true });
 }
 
+/** Exact local time, with year, for an ISO-8601 timestamp; shown on hover next to a relative one. */
+export function formatIsoDateTime(iso: string): string {
+  return formatDateTime(new Date(iso), { year: true });
+}
+
 /** Time left until *date* as "3h 25m remaining" / "45m remaining", or "expired" once it has passed. */
 export function formatRemaining(date: Date, now: Date = new Date()): string {
   const seconds = Math.floor((date.getTime() - now.getTime()) / 1000);

@@ -10,6 +10,7 @@
  */
 import type { X509PreflightCheck } from './api';
 import { describeApiError } from './apiError';
+import { formatDateTime } from './relativeTime';
 
 /**
  * User-facing message for a failed POST /v1/x509/proxy link attempt.
@@ -34,23 +35,6 @@ export function x509LinkErrorMessage(err: unknown): string {
 }
 
 /**
- * Short human form of a Date, e.g. "Aug 18, 09:30 PM GMT".
- *
- * Generic date formatting with nothing x509-specific about it — exported so
- * krb5Identity's Krb5IdentityCard.vue can reuse it rather than duplicating
- * the toLocaleString options.
- */
-export function formatShortDateTime(date: Date): string {
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
-/**
  * Short human form of the x509 entry's `proxy_expires_at` (ISO-8601), e.g.
  * "Aug 18, 09:30 PM GMT" — or null when absent/unparseable so the card can
  * simply omit the expiry line instead of rendering "Invalid Date".
@@ -59,7 +43,7 @@ export function formatProxyExpiry(iso: string | null | undefined): string | null
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return formatShortDateTime(date);
+  return formatDateTime(date);
 }
 
 /**
