@@ -38,6 +38,7 @@ _FIELDS = {
     "oauth21_state_cipher",
     "token_registry",
     "principal_cache",
+    "user_search",
     "mcp_auth_code_store",
     "broker_token_issuer",
     "usage_store",
