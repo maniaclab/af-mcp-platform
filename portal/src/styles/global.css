@@ -60,12 +60,14 @@
 @import 'basecoat-css/components/button-group';
 @import 'basecoat-css/components/chart';
 @import 'basecoat-css/components/checkbox';
+@import 'basecoat-css/components/combobox';
 @import 'basecoat-css/components/dialog';
 @import 'basecoat-css/components/empty';
 @import 'basecoat-css/components/field';
 @import 'basecoat-css/components/input';
 @import 'basecoat-css/components/label';
 @import 'basecoat-css/components/native-select';
+@import 'basecoat-css/components/popover';
 @import 'basecoat-css/components/scrollbar';
 @import 'basecoat-css/components/table';
 @import 'basecoat-css/components/textarea';

@@ -1062,24 +1062,41 @@ export async function fetchUsage(days = 30, subject?: string): Promise<UsageResp
   return apiFetch<UsageResponse>(`/usage?${query}`);
 }
 
-export interface UsageSubject {
+// ---------------------------------------------------------------------------
+// Admin user search — GET /v1/admin/users
+// ---------------------------------------------------------------------------
+
+export interface AdminUser {
   subject: string;
-  unixname: string | null;
+  /** The POSIX unix name when the user has one, else the directory username; empty for a user the directory no longer knows. */
+  username: string;
   email: string;
+  display_name: string;
+  last_seen: string;
+  /** Tokens that are neither revoked nor expired. */
+  pat_count: number;
 }
 
-export interface UsageSubjectsResponse {
-  subjects: UsageSubject[];
+export interface AdminUserSearchResponse {
+  users: AdminUser[];
+  /** More users matched than were returned: the search should be refined. */
+  more: boolean;
+  /** Some seen users could not be checked against their profile, so a match may be missing. */
+  partial: boolean;
 }
 
 /**
- * Admin-only: distinct subjects with recorded usage over a trailing window,
- * resolved to unixname/email for display. Backs the admin usage-view
- * dropdown (see api/usage.py::get_usage_subjects) — the broker 403s this
- * for a non-admin caller.
+ * Admin-only: search the users the platform has seen by name, username, email
+ * or subject (api/admin_users.py). Matching is server-side and the response
+ * is at most *limit* rows, so the portal never holds a user list. The broker
+ * 403s this for a non-admin caller.
  */
-export async function fetchUsageSubjects(days = 30): Promise<UsageSubjectsResponse> {
-  return apiFetch<UsageSubjectsResponse>(`/usage/subjects?days=${days}`);
+export async function searchAdminUsers(
+  search: string,
+  limit = 20,
+): Promise<AdminUserSearchResponse> {
+  const query = new URLSearchParams({ search, limit: String(limit) });
+  return apiFetch<AdminUserSearchResponse>(`/admin/users?${query}`);
 }
 
 // ---------------------------------------------------------------------------

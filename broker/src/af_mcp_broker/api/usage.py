@@ -121,8 +121,9 @@ async def get_usage_subjects(
 ) -> UsageSubjectsResponse:
     """Admin-only: distinct subjects with usage in the trailing window, resolved to unixname/email for display.
 
-    Backs the portal's admin usage-view dropdown. Only ever lists people
-    with broker activity -- never a full Keycloak user directory.
+    Only ever lists people with broker activity -- never a full Keycloak
+    user directory. The portal's admin user picker uses ``GET /v1/admin/users``
+    instead, which searches server-side.
     """
     state = get_broker_state(request)
     subjects = await state.usage_store.list_subjects(days)
