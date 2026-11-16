@@ -344,7 +344,9 @@ The recipe:
             key: "uri"          # the default
           networkPolicy:
             namespace: ""       # empty = the release namespace
-            clusterName: "af-mcp-usage"
+            podSelector:        # the postgres pods (Crunchy PGO labels)
+              postgres-operator.crunchydata.com/cluster: "af-mcp-usage"
+              postgres-operator.crunchydata.com/data: postgres
     ```
 
     The `existingSecret` is rendered as `USAGE_POSTGRES_DSN` via
@@ -353,10 +355,9 @@ The recipe:
 
 3. `broker.usage.postgres.networkPolicy` renders an egress rule (only
    when `backend: postgres` and the chart's NetworkPolicy is enabled)
-   allowing the broker to reach pods labeled
-   `postgres-operator.crunchydata.com/cluster: <clusterName>` and
-   `postgres-operator.crunchydata.com/data: postgres` on port 5432 —
-   exactly the labels PGO puts on the cluster's postgres pods.
+   allowing the broker to reach the pods matching `podSelector` in
+   `namespace` on `port` (5432 by default). `podSelector` is required; the
+   labels above are the ones PGO puts on the cluster's postgres pods.
 
 ### Schema
 

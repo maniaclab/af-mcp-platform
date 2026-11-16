@@ -3,12 +3,13 @@
 {{- $ingress := .Values.networkPolicy.ingress }}
 {{- $ipv4 := has "IPv4" .Values.networkPolicy.ipFamilies }}
 {{- $ipv6 := has "IPv6" .Values.networkPolicy.ipFamilies }}
-# Deny all ingress to the broker except from networkPolicy.ingress.broker
-# (and the chart's own helm-test pod).
+# Deny all ingress to the broker except from networkPolicy.ingress.broker, the
+# in-cluster JWKS clients (unless networkPolicy.ingress.broker.jwks.generate is
+# false) and the chart's own helm-test pod.
 # Deny all egress from the broker except: DNS, networkPolicy.egress.extraEgress
 # and, unless networkPolicy.egress.generate is false, the public internet on
 # the ports of its external URLs, every in-cluster URL in the values (see
-# _networkpolicy.tpl), and the stores selected under broker.usage.postgres and
+# _networkpolicy.tpl), and the stores declared under broker.usage.postgres and
 # broker.sharedState.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -34,6 +35,24 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+    {{- if $ingress.broker.jwks.generate }}
+    {{- $clients := include "af-mcp-platform.netpol.targets" (dict "root" . "urls" (include "af-mcp-platform.netpol.jwksClientUrls" . | fromJsonArray)) | fromJson }}
+    {{- if $clients.hosts }}
+    # JWKS clients: the in-cluster token services and the backends that
+    # verify a broker-issued token fetch the broker's /.well-known/jwks.json
+    # on its API port. One peer per host,
+    # selecting the pods behind it (networkPolicy.egress.endpoints). An empty
+    # `from` would allow every source, so no rule renders without a client.
+    - from:
+        {{- range $host, $target := $clients.hosts }}
+        # {{ $host }}
+        - {{ include "af-mcp-platform.netpol.peer" $target | nindent 10 | trim }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
+    {{- end }}
     {{- with $ingress.broker.extraIngress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -47,7 +66,7 @@ spec:
           port: 53
 
     {{- if $egress.generate }}
-    {{- $targets := include "af-mcp-platform.netpol.targets" . | fromJson }}
+    {{- $targets := include "af-mcp-platform.netpol.targets" (dict "root" . "urls" (include "af-mcp-platform.netpol.urls" . | fromJsonArray)) | fromJson }}
     # External URLs (an external OIDC issuer, an identity provider's token
     # endpoint, a CIMD client metadata document, ...). A NetworkPolicy cannot
     # select a DNS name and the destination IPs of external providers are not
@@ -85,14 +104,7 @@ spec:
     {{- range $host, $target := $targets.hosts }}
     # {{ $host }}
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $target.namespace | quote }}
-          {{- if $target.podSelector }}
-          podSelector:
-            matchLabels:
-              {{- toYaml $target.podSelector | nindent 14 }}
-          {{- end }}
+        - {{ include "af-mcp-platform.netpol.peer" $target | nindent 10 | trim }}
       ports:
         {{- range $port := keys $target.ports | sortAlpha }}
         - protocol: TCP
@@ -100,54 +112,36 @@ spec:
         {{- end }}
     {{- end }}
 
-    # Postgres usage store (broker.usage.backend="postgres") -- allow the broker to
-    # reach the Crunchy PGO postgres pods backing USAGE_POSTGRES_DSN (see values.yaml
-    # broker.usage.postgres.networkPolicy for the namespace/cluster selection).
+    # Postgres usage store (broker.usage.backend="postgres") -- the URL is in a
+    # Secret, so the pods are declared in broker.usage.postgres.networkPolicy.
     {{- if eq .Values.broker.usage.backend "postgres" }}
+    {{- $postgres := .Values.broker.usage.postgres.networkPolicy }}
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.broker.usage.postgres.networkPolicy.namespace | default .Release.Namespace | quote }}
-          podSelector:
-            matchLabels:
-              postgres-operator.crunchydata.com/cluster: {{ .Values.broker.usage.postgres.networkPolicy.clusterName | quote }}
-              postgres-operator.crunchydata.com/data: postgres
+        - {{ include "af-mcp-platform.netpol.storePeer" (dict "policy" $postgres "path" "broker.usage.postgres.networkPolicy" "root" .) | nindent 10 | trim }}
       ports:
         - protocol: TCP
-          port: 5432
+          port: {{ $postgres.port }}
     {{- end }}
 
-    # Shared cross-replica state store (broker.sharedState) -- allow the broker
-    # to reach the redis-protocol server selected by
-    # broker.sharedState.networkPolicy: an ipBlock when `cidr` is set (managed
-    # instance outside the cluster), otherwise a namespace/pod selector (an
-    # empty namespaceSelector means the release namespace; an empty
-    # podSelector allows any pod there).
+    # Shared cross-replica state store (broker.sharedState) -- the URL is in a
+    # Secret, so the store is declared in broker.sharedState.networkPolicy: an
+    # ipBlock when `cidr` is set (managed instance outside the cluster),
+    # otherwise a namespace and pod selector.
     {{- if include "af-mcp-platform.sharedState.configured" . }}
+    {{- $store := .Values.broker.sharedState.networkPolicy }}
     - to:
-        {{- if .Values.broker.sharedState.networkPolicy.cidr }}
-        {{- if not (has (ternary "IPv6" "IPv4" (contains ":" .Values.broker.sharedState.networkPolicy.cidr)) .Values.networkPolicy.ipFamilies) }}
-        {{- fail (printf "broker.sharedState.networkPolicy.cidr %s is in an address family missing from networkPolicy.ipFamilies" .Values.broker.sharedState.networkPolicy.cidr) }}
+        {{- if $store.cidr }}
+        {{- if not (has (ternary "IPv6" "IPv4" (contains ":" $store.cidr)) .Values.networkPolicy.ipFamilies) }}
+        {{- fail (printf "broker.sharedState.networkPolicy.cidr %s is in an address family missing from networkPolicy.ipFamilies" $store.cidr) }}
         {{- end }}
         - ipBlock:
-            cidr: {{ .Values.broker.sharedState.networkPolicy.cidr | quote }}
+            cidr: {{ $store.cidr | quote }}
         {{- else }}
-        - namespaceSelector:
-            matchLabels:
-              {{- if .Values.broker.sharedState.networkPolicy.namespaceSelector }}
-              {{- toYaml .Values.broker.sharedState.networkPolicy.namespaceSelector | nindent 14 }}
-              {{- else }}
-              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
-              {{- end }}
-          {{- if .Values.broker.sharedState.networkPolicy.podSelector }}
-          podSelector:
-            matchLabels:
-              {{- toYaml .Values.broker.sharedState.networkPolicy.podSelector | nindent 14 }}
-          {{- end }}
+        - {{ include "af-mcp-platform.netpol.storePeer" (dict "policy" $store "path" "broker.sharedState.networkPolicy" "root" .) | nindent 10 | trim }}
         {{- end }}
       ports:
         - protocol: TCP
-          port: {{ .Values.broker.sharedState.networkPolicy.port }}
+          port: {{ $store.port }}
     {{- end }}
     {{- end }}
 

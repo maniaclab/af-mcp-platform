@@ -27,7 +27,9 @@ broker:
         key: "uri"
       networkPolicy:
         namespace: "database"
-        clusterName: "example-usage"
+        podSelector:
+          postgres-operator.crunchydata.com/cluster: "example-usage"
+          postgres-operator.crunchydata.com/data: postgres
   # Exercises the postgres maintenance-mode backend without its own
   # existingSecret, so the render also covers the "no
   # MAINTENANCE_MODE_POSTGRES_DSN env var" branch -- the broker falls back

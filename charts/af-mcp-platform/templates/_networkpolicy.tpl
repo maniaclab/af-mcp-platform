@@ -1,4 +1,55 @@
 {{/*
+URLs of the backends and token services the broker connects to, as a JSON list:
+aggregator.services[].url and broker.identityProviders[].serviceUrl. Each one
+is an egress rule (af-mcp-platform.netpol.urls).
+*/}}
+{{- define "af-mcp-platform.netpol.peerUrls" -}}
+{{- $urls := list -}}
+{{- range .Values.aggregator.services -}}
+{{- $urls = append $urls .url -}}
+{{- end -}}
+{{- range .Values.broker.identityProviders -}}
+{{- $urls = append $urls .serviceUrl -}}
+{{- end -}}
+{{- compact $urls | uniq | toJson -}}
+{{- end }}
+
+{{/*
+URLs of the in-cluster clients that fetch the broker's /.well-known/jwks.json,
+as a JSON list: those that verify a broker-signed token. They are
+
+  - the token services (identityProviders[].serviceUrl of a condor-token,
+    krb5-token, servicex-token or x509 entry), which verify the AF Broker
+    Identity Token they exchange, and
+  - the backends that authenticate with an AF Broker Identity Token: a service
+    with auth_type x509, krb5 or servicex, or one that a broker-issued entry
+    targets.
+
+A backend that holds only an upstream token (an oauth21-direct or
+keycloak-brokered target, a condor-token target, auth_type bearer or none) never
+reads the JWKS and is left out: the rule opens the whole API port.
+*/}}
+{{- define "af-mcp-platform.netpol.jwksClientUrls" -}}
+{{- $issued := dict -}}
+{{- $urls := list -}}
+{{- range $idp := .Values.broker.identityProviders -}}
+{{- if eq $idp.type "broker-issued" -}}
+{{- range $t := $idp.targets -}}
+{{- $_ := set $issued $t true -}}
+{{- end -}}
+{{- else if has $idp.type (list "condor-token" "krb5-token" "servicex-token" "x509") -}}
+{{- $urls = append $urls $idp.serviceUrl -}}
+{{- end -}}
+{{- end -}}
+{{- range $svc := .Values.aggregator.services -}}
+{{- if or (has $svc.auth_type (list "x509" "krb5" "servicex")) (hasKey $issued $svc.name) -}}
+{{- $urls = append $urls $svc.url -}}
+{{- end -}}
+{{- end -}}
+{{- compact $urls | uniq | toJson -}}
+{{- end }}
+
+{{/*
 URLs the broker connects to server-side, as a JSON list. Each one becomes an
 egress rule through af-mcp-platform.netpol.targets. Browser-followed URLs (an
 identity provider's authorizationEndpoint and externalLoginUrl) and
@@ -11,11 +62,9 @@ the broker never connects to them.
 {{- if not .Values.broker.oidc.internalUrl -}}
 {{- $urls = append $urls .Values.oidc.issuer -}}
 {{- end -}}
-{{- range .Values.aggregator.services -}}
-{{- $urls = append $urls .url -}}
-{{- end -}}
+{{- $urls = concat $urls (include "af-mcp-platform.netpol.peerUrls" . | fromJsonArray) -}}
 {{- range $idp := .Values.broker.identityProviders -}}
-{{- range $key := list "serviceUrl" "tokenEndpoint" "revocationEndpoint" -}}
+{{- range $key := list "tokenEndpoint" "revocationEndpoint" -}}
 {{- $urls = append $urls (get $idp $key) -}}
 {{- end -}}
 {{- end -}}
@@ -26,7 +75,9 @@ the broker never connects to them.
 {{- end }}
 
 {{/*
-Where each configured URL points, as JSON:
+Where each of a list of URLs points, as JSON. Takes {"root": $, "urls": [...]}
+(af-mcp-platform.netpol.urls for egress, af-mcp-platform.netpol.jwksClientUrls
+for ingress):
 
   hosts:       in-cluster host -> {namespace, podSelector, ports}
   publicPorts: ports of the public-internet rule (443 plus the port of every
@@ -51,10 +102,11 @@ port, or the scheme's default (http 80, https 443); any other scheme needs an
 explicit port.
 */}}
 {{- define "af-mcp-platform.netpol.targets" -}}
-{{- $endpoints := .Values.networkPolicy.egress.endpoints -}}
+{{- $root := .root -}}
+{{- $endpoints := $root.Values.networkPolicy.egress.endpoints -}}
 {{- $hosts := dict -}}
 {{- $publicPorts := dict "443" true -}}
-{{- range $url := include "af-mcp-platform.netpol.urls" . | fromJsonArray -}}
+{{- range $url := .urls -}}
 {{- $u := urlParse $url -}}
 {{- $host := $u.hostname -}}
 {{- if not $host -}}
@@ -75,7 +127,7 @@ explicit port.
 {{- if $endpoint.namespace -}}
 {{- $namespace = $endpoint.namespace -}}
 {{- else if regexMatch "^[a-z0-9-]+$" $host -}}
-{{- $namespace = $.Release.Namespace -}}
+{{- $namespace = $root.Release.Namespace -}}
 {{- else if regexMatch "^[a-z0-9-]+\\.[a-z0-9-]+\\.svc(\\..+)?$" $host -}}
 {{- $namespace = regexReplaceAll "^[a-z0-9-]+\\.([a-z0-9-]+)\\.svc(\\..+)?$" $host "${1}" -}}
 {{- end -}}
@@ -131,4 +183,35 @@ allowing the pods it selects on its ports.
       port: {{ . }}
     {{- end }}
 {{- end }}
+{{- end }}
+
+{{/*
+One NetworkPolicy peer: the pods matching podSelector in the namespace named
+namespace. Takes {"namespace": "...", "podSelector": {...}}; an empty
+podSelector selects every pod in the namespace. Used for egress and ingress
+rules alike, so every in-cluster peer the chart renders has this shape.
+*/}}
+{{- define "af-mcp-platform.netpol.peer" -}}
+namespaceSelector:
+  matchLabels:
+    kubernetes.io/metadata.name: {{ .namespace | quote }}
+{{- if .podSelector }}
+podSelector:
+  matchLabels:
+    {{- toYaml .podSelector | nindent 4 }}
+{{- end }}
+{{- end }}
+
+{{/*
+The peer of a store whose URL lives in a Secret (so no URL names its pods):
+takes {"policy": <values block>, "path": "<its dotted name>", "root": $}. The
+block is {namespace, podSelector, port}, the endpoint shape without a host;
+namespace defaults to the release namespace. podSelector is required, as for an
+endpoint: `{}` opts into the whole namespace explicitly.
+*/}}
+{{- define "af-mcp-platform.netpol.storePeer" -}}
+{{- if not (hasKey .policy "podSelector") -}}
+{{- fail (printf "%s.podSelector is required: set it to the labels of the store's pods (an empty podSelector allows the whole namespace)" .path) -}}
+{{- end -}}
+{{- include "af-mcp-platform.netpol.peer" (dict "namespace" (.policy.namespace | default .root.Release.Namespace) "podSelector" .policy.podSelector) -}}
 {{- end }}

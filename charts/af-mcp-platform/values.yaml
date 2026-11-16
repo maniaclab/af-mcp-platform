@@ -520,14 +520,19 @@ broker:
       existingSecret:
         name: ""
         key: "uri"
-      # Selects the postgres pods for the broker's NetworkPolicy egress rule
-      # (rendered only when backend="postgres" and networkPolicy.enabled):
-      # pods labeled postgres-operator.crunchydata.com/cluster=<clusterName>
-      # and postgres-operator.crunchydata.com/data=postgres in <namespace>
-      # (empty = the release namespace), port 5432.
+      # The postgres pods for the broker's NetworkPolicy egress rule (rendered
+      # only when backend="postgres" and networkPolicy.enabled). The DSN is in
+      # a Secret, so the pods are declared here in the shape of a
+      # networkPolicy.egress.endpoints entry:
+      #   namespace:   the pods' namespace (empty = the release namespace)
+      #   podSelector: matchLabels of the postgres pods (required; `{}`
+      #                allows the whole namespace). For Crunchy PGO:
+      #                  postgres-operator.crunchydata.com/cluster: <cluster>
+      #                  postgres-operator.crunchydata.com/data: postgres
+      #   port:        the pods' port
       networkPolicy:
         namespace: ""
-        clusterName: ""
+        port: 5432
 
   # State that must agree across broker replicas (unlock brute-force limiter;
   # see docs/architecture.md "Replica consistency"). The store is BYO, like
@@ -561,17 +566,19 @@ broker:
     # replicas. Set it before upgrading an existing multi-replica release
     # that has no store yet.
     allowPerReplicaState: false
-    # Selects the store for the broker's NetworkPolicy egress rule (rendered
-    # only when `url` or `existingSecret.name` is set and
-    # networkPolicy.enabled). `cidr`, when set, is used instead of the
-    # selectors -- for a managed instance outside the cluster. Otherwise
-    # namespaceSelector / podSelector are matchLabels maps: an empty
-    # namespaceSelector selects the release namespace; an empty podSelector
-    # allows any pod there.
+    # The store for the broker's NetworkPolicy egress rule (rendered only when
+    # `url` or `existingSecret.name` is set and networkPolicy.enabled). The URL
+    # may be in a Secret, so the store is declared here in the shape of a
+    # networkPolicy.egress.endpoints entry:
+    #   namespace:   the store's namespace (empty = the release namespace)
+    #   podSelector: matchLabels of the store's pods (required; `{}` allows
+    #                the whole namespace)
+    #   port:        the store's port
+    # `cidr`, when set, replaces namespace and podSelector, for a managed
+    # instance outside the cluster.
     networkPolicy:
       cidr: ""
-      namespaceSelector: {}
-      podSelector: {}
+      namespace: ""
       port: 6379
 
   # Broker-wide maintenance mode: only admins get through /v1 and /mcp while
@@ -1026,6 +1033,22 @@ networkPolicy:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
           ports: [9090]
+      # The in-cluster clients that fetch the broker's /.well-known/jwks.json
+      # (the identity providers' token services and the backends that verify
+      # a broker-signed token) may reach the API port (8080). The peers are
+      # derived from the same URLs and `egress.endpoints` entries as the
+      # egress rules: the serviceUrl of a condor-token, krb5-token,
+      # servicex-token or x509 entry, and the url of a service with auth_type
+      # x509, krb5 or servicex or one a broker-issued entry targets, each
+      # paired with the pods behind it. A backend that holds only an upstream
+      # token (oauth21-direct, bearer, none) is not a client. Only in-cluster hosts qualify
+      # (a NetworkPolicy cannot select an external one: allow those through
+      # `sources` or `extraIngress`), and a host served through an ingress
+      # controller is selected as that controller's pods, not the backend's.
+      # The rule is independent of `egress.generate`. false renders no rule:
+      # manage the clients' access with NetworkPolicies of your own.
+      jwks:
+        generate: true
       # NetworkPolicy ingress rules appended verbatim.
       extraIngress: []
     # Who may reach the portal pods (port 8081).

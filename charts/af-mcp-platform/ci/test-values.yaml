@@ -27,8 +27,7 @@ broker:
       name: "example-redis-url"
       key: "url"
     networkPolicy:
-      namespaceSelector:
-        kubernetes.io/metadata.name: cache
+      namespace: cache
       podSelector:
         app.kubernetes.io/name: redis
   # Dummy value so `helm template` renders the BROKER_PUBLIC_ORIGIN env var
