@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatDateTime, formatRelative, formatRemaining } from '../relativeTime';
+import {
+  formatDateTime,
+  formatEpochSeconds,
+  formatRelative,
+  formatRemaining,
+} from '../relativeTime';
 
 const NOW = Date.UTC(2026, 9, 2, 12, 0, 0);
 
@@ -13,6 +18,15 @@ describe('formatRelative', () => {
     [NOW + 4 * 3_600_000, 'in 4 hours'],
   ])('formats %d relative to now as %s', (target, expected) => {
     expect(formatRelative(target, NOW)).toBe(expected);
+  });
+});
+
+describe('formatEpochSeconds', () => {
+  it('is formatDateTime with the year, for a unix-seconds timestamp', () => {
+    const seconds = Math.floor(NOW / 1000);
+    expect(formatEpochSeconds(seconds)).toBe(
+      formatDateTime(new Date(seconds * 1000), { year: true }),
+    );
   });
 });
 
