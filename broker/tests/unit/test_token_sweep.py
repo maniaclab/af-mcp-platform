@@ -141,7 +141,7 @@ async def test_run_returns_nonzero_on_vault_error(
 
     exit_code = await token_sweep._run(settings)
 
-    assert exit_code != 0
+    assert exit_code == 1
 
 
 async def test_run_logs_failure_on_vault_error(

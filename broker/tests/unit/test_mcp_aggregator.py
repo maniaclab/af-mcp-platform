@@ -2495,7 +2495,11 @@ async def test_client_factory_x509_list_time_injects_header_best_effort(
         spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
     )()
 
-    assert client.transport.headers["Authorization"].startswith("Bearer ")
+    auth = client.transport.headers["Authorization"]
+    assert auth.startswith("Bearer ")
+    claims = issuer.verify(auth.removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
 
 
 _MINT_AND_INJECT_AUTH_TYPES = ["x509", "krb5", "servicex"]
@@ -2831,7 +2835,11 @@ async def test_client_factory_krb5_list_time_injects_header_best_effort(
         spec, CredentialRegistry(), settings, _OPEN_POLICY, broker_token_issuer=issuer
     )()
 
-    assert client.transport.headers["Authorization"].startswith("Bearer ")
+    auth = client.transport.headers["Authorization"]
+    assert auth.startswith("Bearer ")
+    claims = issuer.verify(auth.removeprefix("Bearer "))
+    assert claims is not None
+    assert claims["sub"] == "sub-abc"
 
 
 # ---------------------------------------------------------------------------

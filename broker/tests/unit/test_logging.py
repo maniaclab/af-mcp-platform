@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.config
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -38,7 +39,7 @@ def test_bind_new_request_id_binds_a_nonempty_value() -> None:
     bind_new_request_id()
 
     bound = structlog.contextvars.get_contextvars()
-    assert bound["request_id"]
+    assert re.fullmatch(r"[0-9a-f]{32}", bound["request_id"])
 
 
 def test_bind_new_request_id_differs_across_calls() -> None:

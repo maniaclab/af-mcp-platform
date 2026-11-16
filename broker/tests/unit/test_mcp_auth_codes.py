@@ -67,7 +67,7 @@ async def test_code_redeems_just_before_expiry(key: bytes) -> None:
     code = store.put(_record())
 
     clock.now += 119
-    assert await store.consume(code) is not None
+    assert await store.consume(code) == _record()
 
 
 async def test_code_expires_after_120_seconds(key: bytes) -> None:
