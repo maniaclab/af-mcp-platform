@@ -24,7 +24,7 @@ import {
 import { permissionLabel } from '../lib/permissionLabel';
 import { claudeMcpAddSnippet } from '../lib/tokenCliSnippets';
 import { errorMessage } from '../lib/apiError';
-import { formatDateTime } from '../lib/relativeTime';
+import { formatIsoDateTime } from '../lib/relativeTime';
 import { useAsyncAction } from '../lib/useAsyncAction';
 import CopyField from './ui/CopyField.vue';
 
@@ -175,10 +175,6 @@ const claudeAddCommand = computed(() =>
 const claudeHeaderValue = computed(() =>
   mintedToken.value ? `Bearer ${mintedToken.value.token}` : '',
 );
-
-function formatExact(iso: string): string {
-  return formatDateTime(new Date(iso), { year: true });
-}
 </script>
 
 <template>
@@ -338,7 +334,9 @@ function formatExact(iso: string): string {
             {{ permissionGrantLabel(mintedToken.permission_grant) }}
           </dd>
           <dt>Expires</dt>
-          <dd>{{ mintedToken.expires_at ? formatExact(mintedToken.expires_at) : 'Never' }}</dd>
+          <dd>
+            {{ mintedToken.expires_at ? formatIsoDateTime(mintedToken.expires_at) : 'Never' }}
+          </dd>
         </dl>
       </section>
 

@@ -1406,7 +1406,7 @@ Add a new `### KrbTokenProvider: CERN Kerberos tickets (issue #274)` section imm
 - The `POST /v1/krb5/ticket` unlock endpoint and its request/response shape.
 - `is_linked()`'s cache-based semantics (not a durable link).
 - The status-code mapping (400/403/422/429/401→502/other→502) and that response bodies are never relayed.
-- The explicit "no downstream aggregator.services consumer yet" caveat, linking back to issue #274 the same way the flux_apps helmrelease.yaml comment already does.
+- The explicit "no downstream aggregator.services consumer yet" caveat, linking back to issue #274 the same way the deployment's HelmRelease comment already does.
 - Example config snippet matching the one already validated in Task 3's config test.
 
 **Step 2: `docs/ecosystem.md`**

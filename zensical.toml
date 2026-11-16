@@ -8,8 +8,8 @@
 [project]
 
 site_name = "AF MCP Platform"
-site_description = "Credential-brokered MCP gateway for the UChicago ATLAS Analysis Facility."
-site_author = "UChicago ATLAS Analysis Facility"
+site_description = "Credential-brokered MCP gateway for ATLAS analysis facilities."
+site_author = "AF MCP Platform maintainers"
 site_url = "https://maniaclab.github.io/af-mcp-platform/"
 
 repo_url = "https://github.com/maniaclab/af-mcp-platform"

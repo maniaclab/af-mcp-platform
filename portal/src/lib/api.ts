@@ -38,7 +38,7 @@ import type { StatusCta } from './serviceStatus';
 import { soonestExpiringToken, tokenStatus } from './tokenDisplay';
 
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
-// (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
+// (e.g. https://mcp.example.org/v1). It replaces the base wholesale, so a
 // value without `/v1` would silently drop the API prefix. Default is the
 // same-origin `/v1` path.
 const API_BASE = (import.meta.env.PUBLIC_BROKER_URL ?? '/v1') as string;
@@ -242,7 +242,7 @@ export interface IdentityProvider {
   link_permission_denied?: boolean;
   /** Only ever set on a "servicex-token" entry: the URL
    * ServiceXIdentityCard.vue's "Get your ServiceX token" button links out
-   * to (operator-configured, e.g. "https://servicex.af.uchicago.edu/api-token").
+   * to (operator-configured, e.g. "https://servicex.example.org/api-token").
    * Null/absent hides the button. */
   external_login_url?: string | null;
 }
@@ -596,8 +596,8 @@ export async function fetchProxyStatus(): Promise<ProxyStatus> {
 /**
  * Request a new x509 proxy.
  *
- * `valid` is an "HH:MM" lifetime (e.g. "12:00"); `voms` is the VO name with no
- * leading slash (e.g. "atlas"). `remember` is the custody consent: true (the
+ * The VO and proxy lifetime come from the broker's configured x509 identity
+ * provider, not the request. `remember` is the custody consent: true (the
  * default) stores the passphrase encrypted in the AF vault for hands-free
  * renewal; false means the proxy works for its validity window and the user
  * re-links after it expires.
@@ -607,13 +607,11 @@ export async function fetchProxyStatus(): Promise<ProxyStatus> {
  */
 export async function requestProxy(
   passphrase: string,
-  valid: string = '12:00',
-  voms: string = 'atlas',
   remember: boolean = true,
 ): Promise<ProxyMetadata> {
   return apiFetch<ProxyMetadata>('/x509/proxy', {
     method: 'POST',
-    body: JSON.stringify({ passphrase, valid, voms, remember }),
+    body: JSON.stringify({ passphrase, remember }),
   });
 }
 

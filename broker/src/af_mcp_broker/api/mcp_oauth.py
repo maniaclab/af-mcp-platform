@@ -58,7 +58,16 @@ from urllib.parse import urlencode
 import httpx2
 import jwt
 import structlog
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from af_mcp_broker.broker_state import get_broker_state, get_state_settings
@@ -92,7 +101,6 @@ from af_mcp_broker.token_registry import (
 
 if TYPE_CHECKING:
     from cryptography.fernet import Fernet
-    from fastapi import Response
 
     from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 
