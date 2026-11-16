@@ -149,7 +149,7 @@ broker:
     url: "rediss://redis.cache.svc:6379/0"
     # NetworkPolicy egress to the store (when networkPolicy.enabled):
     networkPolicy:
-      namespaceSelector: {kubernetes.io/metadata.name: cache}
+      namespace: cache
       podSelector: {app.kubernetes.io/name: redis}
       # cidr: 203.0.113.0/24   # instead of selectors, for a managed instance
       port: 6379

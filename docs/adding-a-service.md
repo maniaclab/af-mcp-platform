@@ -712,7 +712,7 @@ covers one address family: add an IPv6 twin next to each IPv4 block.
   so something must allow the rest: your own NetworkPolicies, or
   `extraEgress`.
 - Ingress sources are `networkPolicy.ingress.broker.sources` (API and MCP on
-  8080, metrics on 9090) and `networkPolicy.ingress.portal.sources` (8081):
+  8080, metrics on 9090; the in-cluster JWKS clients are generated, see below) and `networkPolicy.ingress.portal.sources` (8081):
   lists of `{namespaceSelector, podSelector, ports}`, with at least one
   selector. The defaults are the stock `ingress-nginx` and a `monitoring`
   namespace; a list you set replaces the default. `extraIngress` appends raw
@@ -722,9 +722,71 @@ covers one address family: add an IPv6 twin next to each IPv4 block.
   chart's, selecting the broker pods by their labels, as UChicago's
   supplemental policies do. Another set of rules is never a patch to these.
 
-The Postgres usage store (`broker.usage.postgres.networkPolicy`) and the
-shared state store (`broker.sharedState.networkPolicy`) keep their own
-selectors because their URLs live in Secrets.
+### The backends' way back: the JWKS ingress rule
+
+A client that verifies a broker-signed token fetches the broker's
+`/.well-known/jwks.json`, so it must reach the broker's API port (8080). Those
+clients are the token services (the `serviceUrl` of a `condor-token`,
+`krb5-token`, `servicex-token` or `x509` identity provider) and the backends
+that authenticate with an AF Broker Identity Token: a service with `auth_type`
+`x509`, `krb5` or `servicex`, or one that a `broker-issued` entry targets. A
+backend that holds only an upstream token (an `oauth21-direct` or
+`keycloak-brokered` target, a `condor-token` target, `auth_type` `bearer` or
+`none`) never reads the JWKS and is not a source, because the rule opens the
+whole API port. The chart generates the rule from the same URLs and the same
+`networkPolicy.egress.endpoints` entries as the egress rules: each client that
+names an in-cluster host becomes a peer selecting the pods behind it (their
+namespace and `podSelector`; `targetPort` does not apply, since the client
+connects to the broker's port, not its own). So Step 4's `endpoints` entry for a
+new backend covers both directions.
+
+- External hosts are skipped: a NetworkPolicy cannot select a DNS name, so
+  their access comes through `networkPolicy.ingress.broker.sources` (the
+  ingress controller) or `extraIngress`. A host declared through
+  `endpoints.<host>.namespace` as served by an ingress controller or Gateway
+  selects that controller's pods, not the backend's; the backend's own pods
+  need an `extraIngress` rule in that case.
+- With no in-cluster client the rule is omitted: an empty `from` would
+  allow every source.
+- The peers are selectors, so `networkPolicy.ipFamilies` does not change the
+  rule.
+- `networkPolicy.ingress.broker.jwks.generate: false` drops the rule, for a
+  site that manages the clients' access itself. The rule does not depend on
+  `networkPolicy.egress.generate`: with it on, every in-cluster client URL
+  needs its `endpoints` entry even while `egress.generate` is false.
+  `extraIngress` still appends raw rules.
+
+### Stores whose URL lives in a Secret
+
+The Postgres usage store and the shared state store (Redis or a compatible
+server) are reached through URLs held in Secrets, so no URL names their pods.
+Each declares its peer in the shape of an `endpoints` entry, minus the host:
+
+```yaml
+values:
+  broker:
+    usage:
+      postgres:
+        networkPolicy:
+          namespace: database         # empty = the release namespace
+          port: 5432                  # the default
+          podSelector:                # required; `{}` allows the whole namespace
+            postgres-operator.crunchydata.com/cluster: example-usage
+            postgres-operator.crunchydata.com/data: postgres
+    sharedState:
+      networkPolicy:
+        namespace: cache
+        port: 6379                    # the default
+        podSelector:
+          app.kubernetes.io/name: redis
+        # cidr: 203.0.113.0/24        # a managed instance outside the cluster
+        #                             # replaces namespace and podSelector
+```
+
+Like an `endpoints` entry, `podSelector` is required (the render fails naming
+the key), so a rule never opens a whole namespace by accident. The rules are
+rendered only while the store is configured and, like every egress rule,
+dropped by `networkPolicy.egress.generate: false`.
 
 Inspect the result with
 `helm template ... | yq 'select(.kind == "NetworkPolicy")'`; a backend that
