@@ -1,10 +1,10 @@
 [
   {"id": "p01", "split": "train", "should_trigger": true,
-   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.af.uchicago.edu. server.py is the first cut. what has to change before we ask the AF admins to onboard it?"},
+   "query": "I'm writing a fastmcp server for our group's beam-scheduler and want it behind the gateway at mcp.example.org. server.py is the first cut. what has to change before we ask the AF admins to onboard it?"},
   {"id": "p02", "split": "test", "should_trigger": true,
    "query": "can you review the tool definitions in ~/src/rucio-mcp/src/rucio_mcp/server.py before we onboard it to the AF MCP platform? mainly worried whether the descriptions and schemas are good enough"},
   {"id": "p03", "split": "train", "should_trigger": true,
-   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.af.uchicago.edu? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go"},
+   "query": "what does my Go htcondor MCP server need to change to sit behind mcp.example.org? it's built on mcp-go and the entrypoint is cmd/condor-mcp/main.go"},
   {"id": "p04", "split": "test", "should_trigger": true,
    "query": "servicex-mcp is running in the cluster now. add servicex-mcp to services.yaml with the right trust_tier, agent_policy and exclude_tools, and tell me if the server itself needs anything first"},
   {"id": "p05", "split": "train", "should_trigger": true,

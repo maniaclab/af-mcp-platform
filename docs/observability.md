@@ -135,7 +135,7 @@ Query parameters:
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
 
-curl -sS "https://mcp.af.uchicago.edu/v1/usage?days=7" \
+curl -sS "https://mcp.example.org/v1/usage?days=7" \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN"
 ```
 
@@ -198,9 +198,9 @@ itself: each call to it appears as one `gateway_service` call in the next usage
 window it reports — accepted and deliberately visible.
 
 The portal shows the same numbers as a usage card on its overview page
-(`mcp-portal.af.uchicago.edu/overview/`), labeled with the same estimate
+(`mcp-portal.example.org/overview/`), labeled with the same estimate
 caveat, and in full — window selector, per-service table, daily activity —
-on its Usage page (`mcp-portal.af.uchicago.edu/usage/`), which also splits tokens
+on its Usage page (`mcp-portal.example.org/usage/`), which also splits tokens
 by content type (`by_content_type`) and shows calls recorded without a
 breakdown as an "Unattributed" row, so the rows always add up to the totals.
 
@@ -664,7 +664,7 @@ tracer = trace.get_tracer("my-agent")
 
 async def main() -> None:
     transport = StreamableHttpTransport(
-        "https://mcp.af.uchicago.edu/mcp/",
+        "https://mcp.example.org/mcp/",
         headers={"Authorization": f"Bearer {os.environ['MCP_BEARER_TOKEN']}"},
     )
     async with Client(transport) as client:

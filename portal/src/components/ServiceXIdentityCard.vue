@@ -48,7 +48,7 @@ const props = defineProps<{
   /** Display names of catalog backends this identity's credential powers, empty/absent if none. */
   powers?: string[];
   /** URL of ServiceX's own token page, e.g.
-   * "https://servicex.af.uchicago.edu/api-token" -- opened in a new tab.
+   * "https://servicex.example.org/api-token" -- opened in a new tab.
    * The "Get your ServiceX token" button is hidden when this is null/absent
    * (an operator hasn't configured one). */
   external_login_url?: string | null;

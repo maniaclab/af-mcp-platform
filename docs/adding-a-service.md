@@ -23,7 +23,7 @@ the portal's Identities page — no separate mapping to keep in sync.
 
   ```yaml
   broker:
-    publicOrigin: "https://mcp-portal.af.uchicago.edu"
+    publicOrigin: "https://mcp-portal.example.org"
     identityProviders:
       - type: oauth21-direct
         alias: my-service-oauth
@@ -107,14 +107,14 @@ client is confidential, an `existingClientSecretSecret`:
 
 ```yaml
 broker:
-  publicOrigin: "https://mcp.af.uchicago.edu"
+  publicOrigin: "https://mcp.example.org"
   identityProviders:
     - type: oauth21-direct
       alias: jupyterhub
       targets: ["jupyterhub_service"]
-      authorizationEndpoint: "https://jupyterhub.af.uchicago.edu/hub/api/oauth2/authorize"
-      tokenEndpoint: "https://jupyterhub.af.uchicago.edu/hub/api/oauth2/token"
-      issuer: "https://jupyterhub.af.uchicago.edu"
+      authorizationEndpoint: "https://jupyterhub.example.org/hub/api/oauth2/authorize"
+      tokenEndpoint: "https://jupyterhub.example.org/hub/api/oauth2/token"
+      issuer: "https://jupyterhub.example.org"
       # JupyterHub scopes are space-separated in the OAuth `scope` param.
       scope: "servers!user access:servers!user read:users:name!user"
       clientId: "service-af-mcp-platform"
@@ -154,7 +154,7 @@ jupyterhub:
     services:
       af-mcp-platform:
         oauth_client_id: service-af-mcp-platform
-        oauth_redirect_uri: https://mcp.af.uchicago.edu/v1/oauth/callback/jupyterhub
+        oauth_redirect_uri: https://mcp.example.org/v1/oauth/callback/jupyterhub
         oauth_no_confirm: true
         oauth_client_allowed_scopes:
           - servers!user
@@ -719,7 +719,7 @@ covers one address family: add an IPv6 twin next to each IPv4 block.
   rules. The chart's own helm-test pod is always allowed on 8080.
 - The chart renders no CNI-specific objects. NetworkPolicies are additive,
   so a site that needs more adds NetworkPolicies of its own next to the
-  chart's, selecting the broker pods by their labels, as UChicago's
+  chart's, selecting the broker pods by their labels, as a facility's
   supplemental policies do. Another set of rules is never a patch to these.
 
 The Postgres usage store (`broker.usage.postgres.networkPolicy`) and the
@@ -781,7 +781,7 @@ see end-to-end, talk to the aggregator's MCP protocol surface directly:
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
-pixi run -e dev python scripts/verify-mcp-flow.py
+pixi run -e dev python scripts/verify-mcp-flow.py --broker-url https://mcp.example.org
 ```
 
 This is the same script [Connecting a Client](connecting-a-client.md)

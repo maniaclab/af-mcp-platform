@@ -111,14 +111,18 @@ def test_tls_secret_names_derive_from_the_release() -> None:
     assert 'secretName: "af-mcp-platform-portal-tls"' in rendered
 
 
-def test_uchicago_example_values_render_the_reference_deployment() -> None:
-    result = _helm_template(_EXAMPLES / "uchicago-values.yaml")
+def test_example_values_render_a_complete_deployment() -> None:
+    result = _helm_template(_EXAMPLES / "example-values.yaml")
 
     assert result.returncode == 0, result.stderr
     for expected in (
         "kind: ServiceMonitor",
         "grafana_dashboard",
-        "mcp.af.uchicago.edu",
+        "mcp.af.example.org",
         "cert-manager.io/cluster-issuer",
+        "kind: NetworkPolicy",
+        "192.0.2.0/24",
+        "2001:db8::/32",
+        "198.51.100.0/24",
     ):
         assert expected in result.stdout

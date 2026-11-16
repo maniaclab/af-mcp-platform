@@ -55,7 +55,6 @@ from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import McpError
 
-DEFAULT_BROKER_URL = "https://mcp.af.uchicago.edu"
 LOCAL_BROKER_URL = "http://localhost:8080"
 TOKEN_ENV_VAR = "MCP_BEARER_TOKEN"
 
@@ -190,8 +189,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--broker-url",
         default=None,
         help=(
-            "Broker base URL (default: "
-            f"{DEFAULT_BROKER_URL}, or {LOCAL_BROKER_URL} with --local)."
+            "Broker base URL (required unless --local, which defaults to "
+            f"{LOCAL_BROKER_URL})."
         ),
     )
     parser.add_argument(
@@ -218,9 +217,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
 
-    args.broker_url = args.broker_url or (
-        LOCAL_BROKER_URL if args.local else DEFAULT_BROKER_URL
-    )
+    args.broker_url = args.broker_url or (LOCAL_BROKER_URL if args.local else None)
+    if not args.broker_url:
+        parser.error("--broker-url is required unless --local is set.")
 
     try:
         json.loads(args.args_json)

@@ -421,7 +421,7 @@ git commit -m "feat(portal): add keytab upload flow for krb5 automatic renewal"
     dns_canonicalize_hostname = false
 ```
 
-as a setting that may be needed in the deployed `krb5.conf` (see the chart's `krb5Config.override`/`krb5Config.contents` values, `charts/krb5-token-service/values.yaml`) to prevent DNS canonicalization of KDC hostnames — confirmed needed on the UChicago AF deployment. Phrase it as guidance ("you may need this, depending on your resolver/network setup — confirmed necessary at UChicago's AF") rather than asserting it's universally required, matching how Giordon described it. Do NOT change the chart's shipped default `krb5.conf` in `values.yaml` — this task is documentation-only, per explicit scope.
+as a setting that may be needed in the deployed `krb5.conf` (see the chart's `krb5Config.override`/`krb5Config.contents` values, `charts/krb5-token-service/values.yaml`) to prevent DNS canonicalization of KDC hostnames — confirmed needed on the reference deployment. Phrase it as guidance ("you may need this, depending on your resolver/network setup — confirmed necessary on the reference deployment") rather than asserting it's universally required, matching how Giordon described it. Do NOT change the chart's shipped default `krb5.conf` in `values.yaml` — this task is documentation-only, per explicit scope.
 
 **Step 3:** No automated test for a docs-only change. Read your diff once for accuracy against what's actually implemented in Tasks 1-6 before committing (don't describe a route/parameter name that ended up different during implementation).
 

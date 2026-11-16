@@ -2,12 +2,12 @@
 
 ## Background
 
-Bringing up `af-mcp-ops-platform` (a condor-only second front door, see the
-`flux_apps` repo's `docs/plans/2026-09-01-mcp-ops-platform-design.md`)
+Bringing up `example-ops-platform` (a condor-only second front door, see the
+the deployment's GitOps repository)
 surfaced two categories of friction: the portal is hardcoded to "AF MCP
 Platform" / "ATLAS Analysis Facility" branding with no way to identify a
 second deployment as distinct, and diagnosing a real audience-mismatch
-misconfiguration (`mcp-ops-gateway` scope missing its Audience mapper) took
+misconfiguration (`mcp-gateway-b` scope missing its Audience mapper) took
 longer than it should have because nothing in the UI or logs pointed
 directly at the cause.
 
