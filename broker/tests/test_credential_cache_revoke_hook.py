@@ -13,7 +13,7 @@ aggregator.
 
 A cached credential simply expiring (the background janitor's sweep) is
 bookkeeping, not an identity change, and must NOT fire ``on_revoke`` -- doing
-so used to drop a subject's warm listing cache for no reason other than a
+so would drop a subject's warm listing cache for no reason other than a
 broker-issued token's 600s lifetime running out. The janitor sweeps through
 ``CredentialCache._expire()`` instead of ``revoke()`` for exactly this
 reason; the tests below pin that split.
@@ -158,7 +158,7 @@ async def test_revoke_logs_revoked_event_with_had_entry_true_when_cached():
 async def test_revoke_logs_revoked_event_with_had_entry_false_when_nothing_cached():
     """Production diagnosis of issue #320's over-invalidation was made harder
     by revoke() staying silent whenever nothing happened to be cached -- it
-    must now log every call, regardless."""
+    must log every call, regardless."""
     cache = CredentialCache()
 
     with structlog.testing.capture_logs() as logs:

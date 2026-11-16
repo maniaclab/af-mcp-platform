@@ -37,7 +37,7 @@ def _register_condor_service(client: TestClient) -> None:
     """condor-mcp (production's HTCondor backend name) isn't in the shipped
     services.yaml -- register it directly on the booted app's registry the
     same way test_catalog_action_type_reflects_target_action_type_overrides
-    does for its own backend, so /v1/authorize (which now derives the
+    does for its own backend, so /v1/authorize (which derives the
     required permission from the registry, not the request body -- issue
     #60) has a real backend to look up."""
 
@@ -205,7 +205,7 @@ def test_catalog_reflects_permissions(
     # __authenticated__ holds read_metadata/read_monitoring but not read_data.
     # Every registered backend is still listed (issue #123: hiding a
     # permission-gated backend entirely left the portal unable to say *why*
-    # it has no tools) -- rucio (read_data) now appears flagged
+    # it has no tools) -- rucio (read_data) appears flagged
     # "permission_required" rather than being omitted.
     assert "docs" in servers
     assert servers["docs"]["status"] == "available"

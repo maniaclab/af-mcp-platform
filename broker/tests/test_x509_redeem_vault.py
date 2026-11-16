@@ -201,7 +201,7 @@ class TestRedeemVaultServe:
     async def test_missing_nickname_records_none_in_the_release_audit(
         self, service_app
     ) -> None:
-        """A record stored before voms-token-service shipped nicknames still
+        """A record stored without a nickname still
         releases successfully, with the audit nickname simply absent."""
         client, store, _, state = service_app
         await _seed_link(store)

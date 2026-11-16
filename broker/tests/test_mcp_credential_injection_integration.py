@@ -199,7 +199,7 @@ async def test_credential_injected_and_inbound_token_not_forwarded(
     prime_jwks([sig_key.jwk])
     provider = _FakeProvider()
     aggregator_app.directory.groups_by_subject["user-123"] = ["atlas"]
-    # POSIX identity now comes from the directory (issue #144 step 3b), not
+    # POSIX identity comes from the directory (issue #144 step 3b), not
     # the JWT's own `posix` claim -- see the fixture docstring above.
     aggregator_app.directory.posix_by_subject["user-123"] = {
         "uid": 501,
@@ -230,7 +230,7 @@ async def test_per_user_credential_isolation(
 ) -> None:
     """Alice and Bob must be genuinely distinct principals (different `sub`),
     not just different POSIX identities on a shared subject: since POSIX
-    identity now comes from the directory keyed by subject (issue #144 step
+    identity comes from the directory keyed by subject (issue #144 step
     3b), a shared subject would resolve to a single, shared uid regardless
     of what the JWT itself claims -- exactly the disagreement this
     unification exists to make impossible."""

@@ -79,7 +79,7 @@ def x509_redeem_env(
         monkeypatch.setenv("SERVICES_FILE", str(services_file))
         # When a test uses a service whose name differs from conftest's default
         # x509 target ("ami"), it must also point the x509 identity_providers
-        # entry at the new name, or the broker refuses to boot
+        # entry at that name, or the broker refuses to boot
         # (validate_x509_provider_targets).
         if x509_targets is not None:
             monkeypatch.setenv(
@@ -200,8 +200,8 @@ class TestRedeemAuth:
         with aud=ami-mcp. The redeem endpoint must map that audience back to
         the x509 target ('ami_service') and serve the proxy stored for it --
         NOT 403 because 'ami-mcp' isn't a target name. This is the redeem-side
-        of the name/audience split; before the fix it 401'd every proxy-needing
-        x509 call in prod on 2026-08-27."""
+        of the name/audience split; a mismatch 401s every proxy-needing
+        x509 call (seen in prod on 2026-08-27)."""
         x509_redeem_env(services_yaml=_DIVERGENT_YAML, x509_targets=["ami_service"])
         with app_client_factory() as (client, _):
             _seed_vault_proxy(client, subject="sub-abc")

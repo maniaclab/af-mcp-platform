@@ -269,7 +269,7 @@ def _make_app(
     principal_state: dict[str, Any] | None = None,
     broker_token_issuer: Any = None,
 ) -> tuple[FastAPI, dict[str, Any]]:
-    """Minimal FastAPI app carrying only the new router plus the BrokerState
+    """Minimal FastAPI app carrying only the catalog-tools router plus the BrokerState
     the route reads. Returns the
     app and the mutable ``{"principal": ...}`` holder (swap the value to
     change who the caller is, same trick as conftest's app_client)."""

@@ -4,8 +4,8 @@ A fake Vault HTTP API is built with ``httpx2.MockTransport`` -- no real Vault
 process, no ``hvac``. Covers KV-v2 CAS read/write/delete semantics, the
 ``SecretStr`` round trip through storage, and error mapping. The
 Kubernetes auth login/re-auth flow this store's ``VaultKV`` uses is covered
-by ``test_vault_kv.py`` instead -- that behavior no longer lives on
-``VaultTokenStore`` itself.
+by ``test_vault_kv.py`` instead -- that behavior lives in
+``VaultKV``, not ``VaultTokenStore`` itself.
 """
 
 from __future__ import annotations

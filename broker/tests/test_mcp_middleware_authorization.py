@@ -353,7 +353,7 @@ async def test_af_method_call_flows_through_the_builtin_service(
     service like any other tool -- no name-based bypass. Its "__none__"
     permission passes for a principal with no groups at all (af_whoami/
     af_link_identity are the bootstrap methods a zero-permission caller
-    needs), and unlike issue #153's bypass the call is now audited and
+    needs), and unlike issue #153's bypass the call is audited and
     metered with service=af-mcp."""
     mw = authorization_middleware(registry, policy)
     principal = make_principal(groups=[])
@@ -1027,7 +1027,7 @@ async def test_success_audit_flows_through_metering_pipeline(
 ) -> None:
     """With a real pipeline installed the success path hands the record
     over and returns without writing; after the pipeline drains, the line
-    carries the same fields the old inline path produced -- including the
+    carries the same fields the inline path produces -- including the
     measurement the worker performed."""
     backend = InProcessMeteringBackend(Settings(), InMemoryUsageStore())
     await backend.start()

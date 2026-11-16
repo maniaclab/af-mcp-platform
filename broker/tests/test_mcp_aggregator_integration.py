@@ -97,7 +97,7 @@ def dead_backend_url() -> str:
 
 # Test-controlled: maps a principal id (a JWT's `sub`) to the groups
 # _fake_directory_resolve below returns for it (issue #144 step 3 --
-# real groups resolution now goes through KeycloakPrincipalDirectory, so
+# real groups resolution goes through KeycloakPrincipalDirectory, so
 # these aggregator-plumbing tests, which care about namespacing/entitlement-
 # filtering/header-forwarding rather than the groups-unification mechanism
 # itself (that's covered by test_identity.py), need a directory double they
@@ -196,7 +196,7 @@ group_permissions:
     monkeypatch.setenv("OIDC_AUDIENCE", AUDIENCE)
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.delenv("BROKER_DEV_INSECURE_PRINCIPAL", raising=False)
-    # Issue #144 step 3: the broker now refuses to start without a
+    # Issue #144 step 3: the broker refuses to start without a
     # configured Keycloak admin service account (dev bypass aside) --
     # KeycloakPrincipalDirectory.resolve is patched below (test-only) rather
     # than hit a real Keycloak, so these fake credentials are only here to
@@ -310,7 +310,7 @@ async def test_unentitled_principal_does_not_see_gated_tools(running_broker, sig
 
 async def test_missing_bearer_rejected(running_broker):
     """A missing bearer must produce a genuine HTTP 401 (issue #138/#144
-    step 1), not the pre-fix HTTP 200 carrying a JSON-RPC -32602 error --
+    step 1), not an HTTP 200 carrying a JSON-RPC -32602 error --
     MCP client OAuth discovery is gated on the real status code, and a
     generic JSON-RPC error gave users no actionable signal for an expired
     token either.
@@ -321,7 +321,7 @@ async def test_missing_bearer_rejected(running_broker):
     without a JSON-RPC-shaped body into a generic
     ``MCPError(INTERNAL_ERROR, "Server returned an error response")`` --
     the real status code and headers are not recoverable from that
-    exception at all, so asserting through the client would no longer
+    exception at all, so asserting through the client would not
     prove what this test exists to prove.
     """
     async with (
@@ -378,8 +378,8 @@ async def test_two_tools_calls_list_each_backend_once_not_per_call(
     ``tools/call`` carrying arguments triggers a full server-side
     ``tools/list`` to validate ``Mcp-Param-*`` headers against the called
     tool's schema (SEP-2243, ``mcp/server/_streamable_http_modern.py``'s
-    ``_mcp_param_rejection``). Before the per-(subject, service) cache, THAT
-    ran fastmcp's uncached ``ProxyProvider._list_tools()`` against every
+    ``_mcp_param_rejection``). Without the per-(subject, service) cache, THAT
+    runs fastmcp's uncached ``ProxyProvider._list_tools()`` against every
     backend on every single ``tools/call``. Force the modern protocol
     (``mode="2026-07-28"``) so this path is actually exercised, then prove
     two ``tools/call`` requests from the same user list each backend once
@@ -421,20 +421,20 @@ async def test_second_session_same_user_lists_every_kind_from_cache(
 ):
     """issue #320 follow-up: ``resources/list``, ``resources/templates/list``,
     and ``prompts/list`` fan out to every backend uncached exactly like
-    ``tools/list`` did before the per-(subject, service) cache -- fastmcp's
+    ``tools/list`` does without the per-(subject, service) cache -- fastmcp's
     ``ProxyProvider._list_resources``/``_list_resource_templates``/
     ``_list_prompts`` (``server/providers/proxy.py``) never consult their own
     freshness cache (only the per-lookup ``_get_resource``/etc. do), same as
-    ``_list_tools`` before it was wrapped by ``_ObservableProxyProvider``.
+    ``_list_tools`` unwrapped by ``_ObservableProxyProvider``.
 
     Confirmed by measuring base ``ProxyProvider._list_*`` call counts across
-    two client sessions for the same subject before this cache existed: a
+    two client sessions for the same subject without this cache: a
     fresh session's connect alone triggers no listing at all, one full round
     of all four listings hits every backend exactly once per kind, and a
     second session's round leaves ``_list_tools`` at 1 (already cached by
     issue #320) while ``_list_resources``/``_list_resource_templates``/
     ``_list_prompts`` each climb to 2 -- re-fanning-out on every reconnect.
-    This test now asserts the fixed behavior: a second session's full round
+    This test asserts that, with the cache, a second session's full round
     adds zero further base calls for any of the four kinds.
     """
     token = sig_key.sign(make_claims())

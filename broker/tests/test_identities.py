@@ -219,8 +219,8 @@ def test_keycloak_brokered_provider_reflects_permission_denied(
 def test_keycloak_brokered_provider_probes_not_jwt_claims(
     app_client_factory: Callable[..., object], make_principal: Callable[..., object]
 ) -> None:
-    """A principal has no JWT-derived sub claim to carry any more (the fields
-    were removed from Principal entirely) — the linked flag must still be
+    """A principal carries no JWT-derived sub claim (Principal has no such
+    field) — the linked flag must still be
     accurate, built purely from the link_status() probe."""
 
     async def _linked(self, principal) -> OIDCLinkStatus:
@@ -499,7 +499,7 @@ def test_broker_issued_link_mechanism_is_none(
 
 # ---------------------------------------------------------------------------
 # The x509 entry — registry-sourced like every other row: conftest.py's
-# app_client_factory default supplies a minimal legacy-mode entry (alias
+# app_client_factory default supplies a minimal entry (alias
 # "x509", targets ["ami"]) covering the shipped services.yaml's auth_type:
 # x509 backend, since the broker refuses to start otherwise (there is no
 # synthesized fallback) — id "x509" matching the credential_provider alias

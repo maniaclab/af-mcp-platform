@@ -1,13 +1,13 @@
 """Tests for ``CredentialCache.get_or_mint()`` single-flighting (issue #94).
 
-Neither ``OIDCProvider.issue()`` nor ``X509Provider.issue()`` used to
-deduplicate concurrent callers for the same ``(uid, target)``: N concurrent
-tool calls needing the same not-yet-cached credential each independently did
-the expensive work (N parallel Keycloak fetches, or N parallel ephemeral k8s
-Job creations). ``get_or_mint()`` centralizes the fix so both providers share
-one mechanism instead of each re-implementing it: concurrent misses for the
-same key await one in-flight ``mint`` call rather than each starting their
-own.
+Neither ``OIDCProvider.issue()`` nor ``X509Provider.issue()`` deduplicates
+concurrent callers for the same ``(uid, target)`` itself: without
+single-flighting, N concurrent tool calls needing the same not-yet-cached
+credential would each independently do the expensive work (N parallel
+Keycloak fetches, or N parallel ephemeral k8s Job creations).
+``get_or_mint()`` centralizes the deduplication so both providers share one
+mechanism: concurrent misses for the same key await one in-flight ``mint``
+call rather than each starting their own.
 
 See test_oidc.py / test_x509.py for the provider-level integration tests
 that exercise this through the real ``issue()`` code paths.

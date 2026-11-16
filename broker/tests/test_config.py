@@ -473,7 +473,7 @@ def test_builtin_service_name_defaults_and_env_override(monkeypatch):
 # broker-issued identity providers (issue #162) — the AF Broker Identity
 # Token's config surface: discriminated-union parsing and the signing-key /
 # issuer / TTL settings the issuer core reads. Per-target token options
-# (audience, requires_posix) no longer live here: they moved to the service
+# (audience, requires_posix) do not live here: they are on the service
 # entry (ServiceSpec, issue #257), so the provider config is just alias +
 # targets + portal metadata.
 # ---------------------------------------------------------------------------
@@ -495,7 +495,7 @@ def test_identity_providers_broker_issued_parses():
 
 
 def test_identity_providers_broker_issued_ignores_stray_target_options():
-    """target_options moved to the service entry (issue #257); a leftover key
+    """target_options belong on the service entry (issue #257); a leftover key
     on the provider entry is harmlessly ignored, not a parse error, so a
     mid-migration config still boots."""
     settings = Settings(

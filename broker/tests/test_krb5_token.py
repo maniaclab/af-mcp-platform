@@ -252,7 +252,7 @@ async def test_issue_returns_cached_credential_without_recontacting_service():
     assert len(client.calls) == 1
     # Relabeled "cache" for THIS response -- distinct from the "tier" the
     # underlying ticket was originally minted under (password_mint here),
-    # which the first issue() call's own returned credential still carries.
+    # which the first issue() call's own returned credential carries.
     assert cred.payload["tier"] == "cache"
 
 
@@ -663,8 +663,8 @@ async def test_issue_tier3_hard_failure_propagates_with_no_keytab_to_fall_throug
     """A genuine infra failure from renew(), with nothing to fall through to,
     must propagate uncaught -- never silently downgraded to demanding a
     password (af-mcp-platform#286 part 2's Krb5TokenMintError docstring
-    note: this is the ONE case where the old "always propagate" behavior is
-    still correct)."""
+    note: this is the ONE case where the "always propagate" behavior
+    still applies)."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_ticket(
@@ -724,8 +724,8 @@ async def test_issue_tier3_hard_failure_falls_through_to_tier4_when_keytab_prese
 async def test_issue_tier3_hard_failure_propagates_when_tier4_also_fails():
     """Both tiers genuinely broken: the renew() infra error still surfaces
     (not a misleading NeedsUnlockError) once tier 4's own mint() also fails for an
-    infra reason -- mirrors tier 4's pre-existing "any other exception from
-    mint() propagates uncaught" rule, just reached via the new fallthrough."""
+    infra reason -- mirrors tier 4's "any other exception from
+    mint() propagates uncaught" rule, just reached via the fallthrough."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
     await vault_store.store_ticket(
@@ -829,7 +829,7 @@ async def test_issue_tier4_bad_keytab_unlinks_and_raises_needs_unlock():
 async def test_issue_tier5_password_mint_does_not_store_keytab_link():
     """A tier-5 password mint never bootstraps or stores a keytab link on
     its own -- but the ticket half IS always stored regardless, since
-    tier-3 renewal must work for every user. Linking a keytab is now a
+    tier-3 renewal must work for every user. Linking a keytab is a
     separate, explicit action (``link_keytab()``, tested below)."""
     client = _FakeClient(ticket=_ticket())
     provider, _, vault_store = provider_factory(client)

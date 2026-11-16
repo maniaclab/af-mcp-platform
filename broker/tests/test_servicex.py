@@ -8,7 +8,7 @@ the Vault access token and — when it's expired or near expiry — REDEEMS
 hands-free with the stored refresh token. A bad-refresh-token failure on
 redeem unlinks and surfaces ``NeedsUnlockError`` so the portal prompts a
 re-paste; infra failures do neither. Unlike ``X509Provider`` there is no
-legacy path and no POSIX identity requirement at all -- every principal,
+POSIX-dependent path and no POSIX identity requirement at all -- every principal,
 linked or not, is eligible.
 
 The Vault store here is a lightweight in-memory fake implementing the

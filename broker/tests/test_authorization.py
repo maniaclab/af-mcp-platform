@@ -137,7 +137,7 @@ def test_losing_a_group_shrinks_a_permission_pats_effective_set(
 ) -> None:
     """The property the whole design turns on: a permission PAT's grant is
     re-intersected against CURRENT groups on every call, so removing the
-    owner from the group that used to grant a permission kills that
+    owner from the group that grants a permission kills that
     permission for the PAT too -- not just for fresh JWTs."""
     grant = frozenset({"read_data", "submit_jobs"})
     still_in_group = make_principal(groups=["atlas"], permission_grant=grant)

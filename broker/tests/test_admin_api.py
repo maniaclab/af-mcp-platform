@@ -445,7 +445,7 @@ _OLD_AOS_KEYS = (
 def _list_renamed_backend(
     client, monkeypatch, advertised: tuple[str, ...]
 ) -> list[dict]:
-    """Register the old atlas_search_service config, then list its backend
+    """Register the atlas_search_service config, then list its backend
     (advertising *advertised*) through its provider and EntitlementMiddleware.
 
     Returns the captured log events. Both modules' loggers are swapped for
