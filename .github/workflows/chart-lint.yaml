@@ -194,6 +194,13 @@ jobs:
       - name: Verify shared state key prefix rendering
         run: bash charts/af-mcp-platform/ci/check-shared-state-rendering.sh
 
+      # Exercises the packaging path the release workflow
+      # (chart-publish.yaml) uses, without pushing anything.
+      - name: helm package (dry run)
+        run: |
+          helm package charts/af-mcp-platform --destination "$RUNNER_TEMP/chart"
+          helm show chart "$RUNNER_TEMP"/chart/af-mcp-platform-*.tgz
+
       - name: ct lint
         run: ct lint --target-branch "$DEFAULT_BRANCH" --check-version-increment=false
         env:
