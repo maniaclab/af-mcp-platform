@@ -1100,6 +1100,32 @@ export async function searchAdminUsers(
 }
 
 // ---------------------------------------------------------------------------
+// Admin token revocation — /v1/admin/tokens
+// ---------------------------------------------------------------------------
+
+/** Admin-only: another user's tokens, in the same shape as listTokens(). */
+export async function listUserTokens(subject: string): Promise<TokenSummary[]> {
+  return apiFetch<TokenSummary[]>(`/admin/tokens?${new URLSearchParams({ subject })}`);
+}
+
+/** Admin-only: revoke one token of any user; the broker resolves its owner from the id. */
+export async function revokeUserToken(lookupId: string): Promise<void> {
+  await apiFetch<{ lookup_id: string; revoked: boolean }>(
+    `/admin/tokens/${encodeURIComponent(lookupId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+/** Admin-only: revoke every active token of *subject*; resolves to the lookup ids this call revoked. */
+export async function revokeAllUserTokens(subject: string): Promise<string[]> {
+  const { revoked } = await apiFetch<{ subject: string; revoked: string[] }>(
+    `/admin/tokens?${new URLSearchParams({ subject })}`,
+    { method: 'DELETE' },
+  );
+  return revoked;
+}
+
+// ---------------------------------------------------------------------------
 // Maintenance mode — GET/POST /v1/admin/maintenance
 // ---------------------------------------------------------------------------
 

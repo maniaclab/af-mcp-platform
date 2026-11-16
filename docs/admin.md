@@ -98,7 +98,11 @@ logged as `principal_cache.principal_rejected` with `reason=disabled`. The
 refusal is recorded in the principal-cache backend, so a restart or another
 replica does not let the user back in during a Keycloak outage (no operator
 action or Vault policy change is required). Their
-PATs remain in the token registry (not revoked) until revoked or expired.
+PATs remain in the token registry (not revoked) until revoked or expired;
+the Admin page's **User tokens** panel finds the user with the same search
+as above, lists their tokens, and revokes one or all of the active ones (each
+behind a confirmation) through `/v1/admin/tokens`, described in
+[auth.md](auth.md).
 See "Authorization is an attribute of the principal, not the token" in
 [auth.md](auth.md). This does not revoke credentials already minted for
 backend services.
