@@ -1059,8 +1059,8 @@ observed their listing.
 
 ### Reserved paths on the portal host
 
-The portal host (the chart's `portalHost`, e.g. `mcp-portal.af.uchicago.edu`
-for the UChicago AF deployment) is a static Astro build; its API
+The portal host (the chart's `portalHost`, e.g. `mcp-portal.example.org`
+in the examples here) is a static Astro build; its API
 client fetches `/v1/*` same-origin. A dedicated `ingress-portal-api.yaml`
 Ingress object (same host, no oauth2-proxy annotations) routes `/v1` and
 `/mcp` to the broker Service, ahead of `ingress-portal.yaml`'s `/`
@@ -1094,8 +1094,8 @@ the simplest correct thing. The extraction path if it becomes necessary:
 ## Full Data Flow for a Tool Call
 
 1. LLM sends `tools/call` MCP message over HTTPS to the broker's MCP host
-   (the chart's `mcpHost`, e.g. `mcp.af.uchicago.edu` for the UChicago AF
-   deployment), with its own Bearer — a raw `aud=mcp-gateway` Keycloak JWT,
+   (the chart's `mcpHost`, e.g. `mcp.example.org` in the
+   examples here), with its own Bearer — a raw `aud=mcp-gateway` Keycloak JWT,
    or (most MCP clients) a broker-issued PAT (see [docs/auth.md](auth.md)
    for how each client identity obtains one).
 2. `IdentityMiddleware` validates the Bearer directly (no ForwardAuth proxy
