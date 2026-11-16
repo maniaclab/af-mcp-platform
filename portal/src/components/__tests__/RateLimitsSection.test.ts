@@ -8,24 +8,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../lib/api', () => ({
   fetchRateLimits: vi.fn(),
-  fetchCatalog: vi.fn(),
-  fetchServerTools: vi.fn(),
   SessionExpiredError: class SessionExpiredError extends Error {},
   AccessDeniedError: class AccessDeniedError extends Error {},
 }));
 
-import {
-  fetchCatalog,
-  fetchRateLimits,
-  fetchServerTools,
-  type CatalogServer,
-  type CatalogTool,
-  type RateLimitsResponse,
-} from '../../lib/api';
+import { fetchRateLimits, type RateLimitsResponse } from '../../lib/api';
 import RateLimitsSection from '../RateLimitsSection.vue';
 
 const RULES: RateLimitsResponse = {
   usage_available: true,
+  unlisted_services: ['jhub_service'],
   rate_limits: [
     {
       action_type: 'state_change',
@@ -34,6 +26,7 @@ const RULES: RateLimitsResponse = {
       window_seconds: 300,
       used: 12,
       resets_in_seconds: 180,
+      tools: ['condor_submit_dag', 'condor_submit_job'],
     },
     {
       action_type: null,
@@ -42,6 +35,7 @@ const RULES: RateLimitsResponse = {
       window_seconds: 300,
       used: 30,
       resets_in_seconds: 45,
+      tools: ['condor_submit_dag', 'condor_submit_job'],
     },
     {
       action_type: null,
@@ -50,46 +44,13 @@ const RULES: RateLimitsResponse = {
       window_seconds: 300,
       used: 0,
       resets_in_seconds: null,
+      tools: [],
     },
   ],
 };
 
-function server(name: string, status: CatalogServer['status'] = 'available'): CatalogServer {
-  return { name, display_name: name, status } as CatalogServer;
-}
-
-function tool(name: string, action_type: CatalogTool['action_type']): CatalogTool {
-  return { name, description: '', action_type, permission: '__none__' };
-}
-
-const TOOLS: Record<string, CatalogTool[]> = {
-  condor_service: [
-    tool('condor_submit_job', 'state_change'),
-    tool('condor_submit_dag', 'state_change'),
-    tool('condor_query_jobs', 'read'),
-  ],
-  rucio_service: [tool('rucio_list_dids', 'read')],
-};
-
-function stubFetches(rules: RateLimitsResponse = RULES, servers: CatalogServer[] = []) {
+function stubFetches(rules: RateLimitsResponse = RULES) {
   vi.mocked(fetchRateLimits).mockResolvedValue(rules);
-  vi.mocked(fetchCatalog).mockResolvedValue({
-    servers: servers.length
-      ? servers
-      : [
-          server('condor_service'),
-          server('rucio_service'),
-          server('jhub_service', 'link_required'),
-        ],
-  });
-  vi.mocked(fetchServerTools).mockImplementation(async (name: string) => ({
-    name,
-    display_name: name,
-    description: '',
-    status: 'ok',
-    status_detail: '',
-    tools: TOOLS[name] ?? [],
-  }));
 }
 
 async function mountSection() {
@@ -125,7 +86,7 @@ describe('RateLimitsSection', () => {
     expect(rows[2].text()).toContain('0 of 10 used');
   });
 
-  it("lists the caller's tools each rule covers, from the services they can list", async () => {
+  it("lists the caller's tools each rule covers, as the broker reports them", async () => {
     stubFetches();
     const wrapper = await mountSection();
 
@@ -135,48 +96,34 @@ describe('RateLimitsSection', () => {
     expect(rows[0].text()).not.toContain('rucio_list_dids');
     expect(rows[1].text()).toContain('condor_submit_dag');
     expect(rows[2].text()).toContain('No tool of yours matches');
-    // A service that needs linking is not asked for its tools.
-    expect(fetchServerTools).not.toHaveBeenCalledWith('jhub_service');
   });
 
-  it('says which services could not be listed rather than implying completeness', async () => {
+  it('says which services the broker could not list rather than implying completeness', async () => {
     stubFetches();
     const wrapper = await mountSection();
 
     expect(wrapper.find('[data-testid="rl-unlisted"]').text()).toContain('jhub_service');
   });
 
-  it('keeps the rules when a service listing fails', async () => {
-    stubFetches();
-    vi.mocked(fetchServerTools).mockImplementation(async (name: string) => {
-      if (name === 'rucio_service') throw new Error('boom');
-      return {
-        name,
-        display_name: name,
-        description: '',
-        status: 'ok',
-        status_detail: '',
-        tools: TOOLS[name] ?? [],
-      };
-    });
+  it('omits the unlisted-services note when every service was listed', async () => {
+    stubFetches({ ...RULES, unlisted_services: [] });
     const wrapper = await mountSection();
 
-    expect(wrapper.findAll('tbody tr')).toHaveLength(3);
-    expect(wrapper.find('[data-testid="rl-unlisted"]').text()).toContain('rucio_service');
+    expect(wrapper.find('[data-testid="rl-unlisted"]').exists()).toBe(false);
   });
 
-  it('shows the empty state, and asks for no tools, when no limits are configured', async () => {
-    stubFetches({ rate_limits: [], usage_available: true });
+  it('shows the empty state when no limits are configured', async () => {
+    stubFetches({ rate_limits: [], usage_available: true, unlisted_services: [] });
     const wrapper = await mountSection();
 
     expect(wrapper.text()).toContain('No rate limits are configured.');
     expect(wrapper.find('table').exists()).toBe(false);
-    expect(fetchCatalog).not.toHaveBeenCalled();
   });
 
   it('marks usage unavailable and says why when the broker could not read it', async () => {
     stubFetches({
       usage_available: false,
+      unlisted_services: [],
       rate_limits: RULES.rate_limits.map((r) => ({ ...r, used: null, resets_in_seconds: null })),
     });
     const wrapper = await mountSection();

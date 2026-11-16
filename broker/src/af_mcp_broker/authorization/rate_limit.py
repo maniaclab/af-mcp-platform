@@ -20,6 +20,8 @@ from af_mcp_broker.authorization.errors import ToolRateLimitError
 from af_mcp_broker.shared_state import SharedStateUnavailableError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from af_mcp_broker.authorization.base import RateLimitRule
     from af_mcp_broker.shared_state import SharedState, WindowCount
 
@@ -39,6 +41,19 @@ def tool_rate_limit_key(rule: RateLimitRule, subject: str) -> str:
     )
     fingerprint = hashlib.sha256(canonical.encode()).hexdigest()[:12]
     return f"tool-rate-limit:{fingerprint}:{subject}"
+
+
+def covered_tool_names(
+    rule: RateLimitRule, tools: Iterable[tuple[str, str]]
+) -> list[str]:
+    """Names, sorted, of the *tools* (``(wire name, action type)`` pairs) that *rule* covers.
+
+    Uses ``RateLimitRule.matches``, the matcher ``check_rate_limits`` counts
+    calls with, so a listing cannot disagree with enforcement.
+    """
+    return sorted(
+        name for name, action_type in tools if rule.matches(name, action_type)
+    )
 
 
 async def check_rate_limits(

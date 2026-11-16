@@ -34,6 +34,7 @@ from af_mcp_broker.service_status import holds_any_required_permission
 
 if TYPE_CHECKING:
     from af_mcp_broker.authorization import EntitlementPolicy
+    from af_mcp_broker.broker_state import BrokerState
     from af_mcp_broker.service_registry import ServiceRegistry, ServiceSpec
 
 logger = structlog.get_logger(__name__)
@@ -177,30 +178,11 @@ def _respond(
     )
 
 
-@router.get(
-    "/catalog/{service}/tools",
-    response_model=ServiceToolsResponse,
-    summary="List one service's tools as the caller would see them via /mcp",
-)
-async def get_service_tools(
-    service: str,
-    request: Request,
-    principal: Annotated[Principal, Depends(keycloak_dependency)],
+async def list_service_tools(
+    state: BrokerState, principal: Principal, spec: ServiceSpec
 ) -> ServiceToolsResponse:
-    """Enumerate *service*'s tools as the caller would see them via /mcp.
-
-    Uses the aggregator's own list-time credential logic
-    (aggregator.resolve_list_time_credential / fetch_service_tool_listing),
-    so what the portal shows always matches what a tools/list through /mcp
-    would return for this caller.
-    """
-    state = get_broker_state(request)
+    """Enumerate *spec*'s tools as *principal* would see them via /mcp, with the listing status when they cannot be listed."""
     registry = state.service_registry
-    spec = registry.get(service)
-    if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"service '{service}' is not registered"
-        )
     policy = state.entitlement_policy
     caps = get_principal_permissions(principal, policy)
 
@@ -293,3 +275,29 @@ async def get_service_tools(
             reason="list_deadline_exceeded",
         )
         return _respond(spec, "unavailable", [], policy, registry, caps)
+
+
+@router.get(
+    "/catalog/{service}/tools",
+    response_model=ServiceToolsResponse,
+    summary="List one service's tools as the caller would see them via /mcp",
+)
+async def get_service_tools(
+    service: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(keycloak_dependency)],
+) -> ServiceToolsResponse:
+    """Enumerate *service*'s tools as the caller would see them via /mcp.
+
+    Uses the aggregator's own list-time credential logic
+    (aggregator.resolve_list_time_credential / fetch_service_tool_listing),
+    so what the portal shows always matches what a tools/list through /mcp
+    would return for this caller.
+    """
+    state = get_broker_state(request)
+    spec = state.service_registry.get(service)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"service '{service}' is not registered"
+        )
+    return await list_service_tools(state, principal, spec)

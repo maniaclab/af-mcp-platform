@@ -551,12 +551,16 @@ export interface RateLimitStatus {
   used: number | null;
   /** Whole seconds until the window closes; null with no open window or unknown usage. */
   resets_in_seconds: number | null;
+  /** The caller's tools this rule covers, sorted, matched by the broker's own matcher. */
+  tools: string[];
 }
 
 export interface RateLimitsResponse {
   rate_limits: RateLimitStatus[];
   /** False when the broker's store was unreachable: rules are listed, usage is unknown. */
   usage_available: boolean;
+  /** Services whose tools are missing from every rule's `tools`: unavailable to the caller or not listable. */
+  unlisted_services: string[];
 }
 
 export async function fetchRateLimits(): Promise<RateLimitsResponse> {

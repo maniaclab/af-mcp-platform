@@ -13,7 +13,10 @@ from af_mcp_broker.authorization import (
     load_policy,
 )
 from af_mcp_broker.authorization.errors import ToolRateLimitError
-from af_mcp_broker.authorization.rate_limit import check_rate_limits
+from af_mcp_broker.authorization.rate_limit import (
+    check_rate_limits,
+    covered_tool_names,
+)
 from af_mcp_broker.errors import BrokerError
 from af_mcp_broker.shared_state import InMemorySharedState, WindowCount
 
@@ -306,3 +309,66 @@ async def test_rules_keep_separate_counters_even_with_identical_matching() -> No
     with pytest.raises(ToolRateLimitError) as excinfo:
         await check_rate_limits(rules, counter, "sub", "x_a", "read")
     assert excinfo.value.limit == 1
+
+
+TOOLS = [
+    ("rucio_list_dids", "read"),
+    ("condor_submit_job", "state_change"),
+    ("condor_submit_dag", "state_change"),
+    ("condor_query_jobs", "read"),
+    ("jhub_create_jupyter_server", "state_change"),
+]
+
+
+@pytest.mark.parametrize(
+    ("rule", "expected"),
+    [
+        pytest.param(
+            RateLimitRule(1, 60, tool="condor_submit_*"),
+            ["condor_submit_dag", "condor_submit_job"],
+            id="glob",
+        ),
+        pytest.param(
+            RateLimitRule(1, 60, action_type="state_change"),
+            ["condor_submit_dag", "condor_submit_job", "jhub_create_jupyter_server"],
+            id="action-type",
+        ),
+        pytest.param(
+            RateLimitRule(1, 60, action_type="read", tool="condor_*"),
+            ["condor_query_jobs"],
+            id="every-selector-must-match",
+        ),
+        pytest.param(
+            RateLimitRule(1, 60, tool="jhub_create_jupyter_server"),
+            ["jhub_create_jupyter_server"],
+            id="exact-name",
+        ),
+        pytest.param(RateLimitRule(1, 60, tool="condor_submit"), [], id="no-match"),
+        pytest.param(RateLimitRule(1, 60, tool="CONDOR_*"), [], id="case-sensitive"),
+        pytest.param(
+            RateLimitRule(1, 60), sorted(name for name, _ in TOOLS), id="no-selector"
+        ),
+    ],
+)
+def test_covered_tool_names_uses_the_limiters_own_matcher(
+    rule: RateLimitRule, expected: list[str]
+) -> None:
+    assert covered_tool_names(rule, TOOLS) == expected
+    # The limiter counts exactly the calls the listing says it covers.
+    for name, action_type in TOOLS:
+        assert (name in expected) == rule.matches(name, action_type)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("a?", ["a1", "a2", "ab"]),
+        ("a[12]", ["a1", "a2"]),
+        ("a[!12]", ["ab"]),
+        ("a[b", ["a[b"]),
+        ("a.b", ["a.b"]),
+    ],
+)
+def test_covered_tool_names_follows_fnmatch(pattern: str, expected: list[str]) -> None:
+    tools = [(name, "read") for name in ("a1", "a2", "ab", "a10", "a[b", "a.b", "axb")]
+    assert covered_tool_names(RateLimitRule(1, 60, tool=pattern), tools) == expected

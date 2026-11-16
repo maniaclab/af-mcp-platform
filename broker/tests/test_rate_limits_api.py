@@ -14,6 +14,7 @@ from broker_state_helpers import set_broker_state
 
 from af_mcp_broker.authorization import EntitlementPolicy, RateLimitRule
 from af_mcp_broker.authorization.rate_limit import tool_rate_limit_key
+from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.shared_state import RedisSharedState
 
 STATE_CHANGE_RULE = RateLimitRule(60, 300, action_type="state_change")
@@ -39,8 +40,13 @@ def _seed(url: str, rule: RateLimitRule, subject: str, calls: int) -> None:
 def _install(client, url: str, *rules: RateLimitRule) -> None:
     policy = EntitlementPolicy()
     policy.rate_limits = list(rules)
+    # An empty registry: these tests are about usage, and a rule over no tools
+    # needs no backend listing (tests/test_rate_limits_api_tools.py covers that).
     set_broker_state(
-        client.app, entitlement_policy=policy, shared_state=RedisSharedState(url)
+        client.app,
+        entitlement_policy=policy,
+        shared_state=RedisSharedState(url),
+        service_registry=ServiceRegistry(),
     )
 
 
@@ -58,6 +64,7 @@ def test_returns_rules_with_the_callers_usage(
     assert resp.status_code == 200
     body = resp.json()
     assert body["usage_available"] is True
+    assert body["unlisted_services"] == []
     first, second = body["rate_limits"]
     assert 0 < first.pop("resets_in_seconds") <= 300
     assert first == {
@@ -66,6 +73,7 @@ def test_returns_rules_with_the_callers_usage(
         "limit": 60,
         "window_seconds": 300,
         "used": 12,
+        "tools": [],
     }
     # No window is open for a rule the caller never matched.
     assert second == {
@@ -75,6 +83,7 @@ def test_returns_rules_with_the_callers_usage(
         "window_seconds": 300,
         "used": 0,
         "resets_in_seconds": None,
+        "tools": [],
     }
 
 
@@ -123,4 +132,8 @@ def test_no_rules_configured_returns_an_empty_list(
 
     resp = client.get("/v1/rate-limits")
 
-    assert resp.json() == {"rate_limits": [], "usage_available": True}
+    assert resp.json() == {
+        "rate_limits": [],
+        "usage_available": True,
+        "unlisted_services": [],
+    }
