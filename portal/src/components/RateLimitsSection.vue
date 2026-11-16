@@ -90,7 +90,16 @@ onMounted(() =>
                 ><span>: {{ describeRule(rule).budget }}</span>
               </th>
               <td>
-                <ToolNameList v-if="rule.tools.length > 0" :names="rule.tools" />
+                <template v-if="rule.tools.length > 0">
+                  <ToolNameList :names="rule.tools" />
+                  <p
+                    v-if="rule.tool_count > rule.tools.length"
+                    class="af-sub"
+                    data-testid="rl-more-tools"
+                  >
+                    and {{ rule.tool_count - rule.tools.length }} more
+                  </p>
+                </template>
                 <span v-else class="af-sub">No tool of yours matches this limit.</span>
               </td>
               <td>

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.api.catalog_tools import list_service_tools
 from af_mcp_broker.authorization.rate_limit import (
+    RATE_LIMIT_MAX_TOOLS,
     RateLimitStatus,
     covered_tool_names,
     rate_limit_statuses,
@@ -37,8 +38,10 @@ class RateLimitRuleStatus(RateLimitStatus):
 
     # Wire names of the caller's tools the rule covers (see
     # RateLimitsResponse.unlisted_services for the services not searched),
-    # sorted. Matched with the limiter's own RateLimitRule.matches.
+    # sorted and capped at RATE_LIMIT_MAX_TOOLS; tool_count is the uncapped
+    # number. Matched with the limiter's own RateLimitRule.matches.
     tools: list[str]
+    tool_count: int
 
 
 class RateLimitsResponse(BaseModel):
@@ -92,14 +95,27 @@ async def build_rate_limits_response(
     )
     statuses = rate_limit_statuses(policy.rate_limits, usage)
     # With no rules there is nothing to match, so no backend is contacted.
+    # With at least one rule, every registered service is listed on every
+    # request, concurrently (see _caller_tools). A service the caller lacks
+    # the permission for costs no backend call. For the rest, a listing
+    # served from the per-service tool-list cache (shared with
+    # GET /v1/catalog/{service}/tools) skips the backend round trip; a cold
+    # cache, or a service whose listing failed (failures are not cached),
+    # costs one backend call, bounded by Settings.mcp_list_timeout_seconds,
+    # so the slowest such service sets the response time.
     tools, unlisted = await _caller_tools(state, principal) if statuses else ([], [])
-    return RateLimitsResponse(
-        rate_limits=[
+    rule_statuses: list[RateLimitRuleStatus] = []
+    for rule, status in zip(policy.rate_limits, statuses, strict=True):
+        covered = covered_tool_names(rule, tools)
+        rule_statuses.append(
             RateLimitRuleStatus(
-                **status.model_dump(), tools=covered_tool_names(rule, tools)
+                **status.model_dump(),
+                tools=covered[:RATE_LIMIT_MAX_TOOLS],
+                tool_count=len(covered),
             )
-            for rule, status in zip(policy.rate_limits, statuses, strict=True)
-        ],
+        )
+    return RateLimitsResponse(
+        rate_limits=rule_statuses,
         usage_available=usage is not None,
         unlisted_services=unlisted,
     )

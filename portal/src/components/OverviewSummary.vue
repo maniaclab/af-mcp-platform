@@ -19,7 +19,7 @@ import type { DashboardSummary, UsageResponse } from '../lib/api';
 import { overviewMessage } from '../lib/overviewBanner';
 import { proxyExpiryState } from '../lib/x509Identity';
 import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
-import { formatTokens } from '../lib/usageFormat';
+import { formatCount } from '../lib/usageFormat';
 import { contentTypeRows } from '../lib/usageContent';
 import TokenEstimateTip from './TokenEstimateTip.vue';
 import ConnectClient from './ConnectClient.vue';
@@ -141,7 +141,7 @@ const usageStatus = computed(() => {
   }
   return {
     tone: 'ok',
-    state: `${formatTokens(u.totals.calls)} calls in ${u.window_days} days`,
+    state: `${formatCount(u.totals.calls)} calls in ${u.window_days} days`,
   } as const;
 });
 
@@ -150,7 +150,7 @@ const tokenBreakdown = computed<string | null>(() => {
   if (!usage.value) return null;
   const parts = contentTypeRows(usage.value.totals, usage.value.by_content_type)
     .filter((r) => r.tokens > 0)
-    .map((r) => `${r.label} ${formatTokens(r.tokens)}`);
+    .map((r) => `${r.label} ${formatCount(r.tokens)}`);
   return parts.length > 0 ? parts.join(' · ') : null;
 });
 
@@ -228,12 +228,12 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
     <div class="af-stats">
       <div class="af-stat">
         <span>Tool calls</span>
-        <b>{{ formatTokens(usage.totals.calls) }}</b>
-        <small>{{ formatTokens(usage.totals.errors) }} errors</small>
+        <b>{{ formatCount(usage.totals.calls) }}</b>
+        <small>{{ formatCount(usage.totals.errors) }} errors</small>
       </div>
       <div class="af-stat">
         <span>Tokens (estimated) <TokenEstimateTip id="ov-token-tip" /></span>
-        <b>{{ formatTokens(usage.totals.result_tokens_est) }}</b>
+        <b>{{ formatCount(usage.totals.result_tokens_est) }}</b>
         <small>{{ tokenBreakdown ?? 'In tool results' }}</small>
       </div>
     </div>

@@ -551,8 +551,10 @@ export interface RateLimitStatus {
   used: number | null;
   /** Whole seconds until the window closes; null with no open window or unknown usage. */
   resets_in_seconds: number | null;
-  /** The caller's tools this rule covers, sorted, matched by the broker's own matcher. */
+  /** The caller's tools this rule covers, sorted, matched by the broker's own matcher; capped by the broker. */
   tools: string[];
+  /** How many tools the rule covers in all; exceeds `tools.length` when the broker capped the list. */
+  tool_count: number;
 }
 
 export interface RateLimitsResponse {

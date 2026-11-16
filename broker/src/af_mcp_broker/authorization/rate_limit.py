@@ -43,6 +43,13 @@ def tool_rate_limit_key(rule: RateLimitRule, subject: str) -> str:
     return f"tool-rate-limit:{fingerprint}:{subject}"
 
 
+# Most tool names listed per rule by both surfaces that report coverage
+# (GET /v1/rate-limits and af_rate_limits); a rule such as "every
+# state-changing call" can cover the whole catalog. The full number travels
+# beside the capped list as ``tool_count``.
+RATE_LIMIT_MAX_TOOLS = 20
+
+
 def covered_tool_names(
     rule: RateLimitRule, tools: Iterable[tuple[str, str]]
 ) -> list[str]:

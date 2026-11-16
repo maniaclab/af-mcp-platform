@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker.authorization import get_action_type, get_principal_permissions
 from af_mcp_broker.authorization.rate_limit import (
+    RATE_LIMIT_MAX_TOOLS,
     RateLimitStatus,
     covered_tool_names,
     rate_limit_statuses,
@@ -225,16 +226,11 @@ class SearchToolsResult(BaseModel):
     note: str | None = None
 
 
-# Most tool names af_rate_limits lists per rule (docs/mcp-design.md B1); a rule
-# such as "every state-changing call" can cover the whole catalog.
-_RATE_LIMIT_MAX_TOOLS = 20
-
-
 class ToolRateLimitStatus(RateLimitStatus):
     """One rate-limit rule, the caller's usage of it, and the caller's tools it covers -- af_rate_limits' per-rule row."""
 
     # Entitled tools the rule covers, sorted by name and capped at
-    # _RATE_LIMIT_MAX_TOOLS; tool_count is the uncapped number.
+    # RATE_LIMIT_MAX_TOOLS; tool_count is the uncapped number.
     tools: list[str]
     tool_count: int
 
@@ -668,7 +664,7 @@ def register_diagnostic_tools(
             rules.append(
                 ToolRateLimitStatus(
                     **status.model_dump(),
-                    tools=covered[:_RATE_LIMIT_MAX_TOOLS],
+                    tools=covered[:RATE_LIMIT_MAX_TOOLS],
                     tool_count=len(covered),
                 )
             )
