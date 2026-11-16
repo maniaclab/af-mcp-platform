@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from af_mcp_broker.app import app
 from af_mcp_broker.config import get_settings
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Activation variables a local mode must not inherit from the test runner's own
 # shell (the dev pixi environment already activates some of them).

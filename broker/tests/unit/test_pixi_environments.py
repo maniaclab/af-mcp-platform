@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_PIXI_TOML = Path(__file__).resolve().parents[2] / "pixi.toml"
+_PIXI_TOML = Path(__file__).resolve().parents[3] / "pixi.toml"
 _IMAGE_ENVIRONMENT = "broker"
 
 

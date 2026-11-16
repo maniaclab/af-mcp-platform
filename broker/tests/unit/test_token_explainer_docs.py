@@ -15,7 +15,7 @@ from af_mcp_broker.audit import image_tokens
 from af_mcp_broker.config import Settings
 from af_mcp_broker.usage.summary import TOKEN_ESTIMATE_CAVEAT
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _HEADING = "## How token counts are estimated"
 
 

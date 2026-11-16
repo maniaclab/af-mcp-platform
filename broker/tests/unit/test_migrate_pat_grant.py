@@ -22,7 +22,7 @@ from test_token_registry import (
 from vault_fakes import FakeVault
 
 _SCRIPT = (
-    Path(__file__).resolve().parents[2] / "scripts" / "migrate-pat-capability-grant.py"
+    Path(__file__).resolve().parents[3] / "scripts" / "migrate-pat-capability-grant.py"
 )
 
 

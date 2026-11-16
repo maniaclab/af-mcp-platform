@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPO_ROOT / "charts" / "af-mcp-platform"
 _BASE_VALUES = _CHART / "ci" / "test-values.yaml"
 _EXAMPLES = _CHART / "examples"
-_BAD_VALUES = Path(__file__).parent / "data" / "chart_values_schema"
+_BAD_VALUES = Path(__file__).resolve().parents[1] / "data" / "chart_values_schema"
 
 
 def _helm_template(

@@ -751,7 +751,7 @@ JWKS — consumers never hardcode a key:
 
 The overlap property (a token signed by the retiring key verifies against
 a JWKS whose active key is the successor) is regression-tested in
-`broker/tests/test_broker_issued.py`.
+`broker/tests/unit/test_broker_issued.py`.
 
 ### CondorTokenProvider: HTCondor IDTOKENs (issue #169)
 

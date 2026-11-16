@@ -72,7 +72,7 @@ kubernetes-helm = ">=4.2,<5"
 # `pixi shell-hook --environment broker` into the image entrypoint, which
 # exports activation vars over the deployment's env, so anything set on a
 # feature of the `broker` environment would override production config
-# (broker/tests/test_pixi_environments.py guards this).
+# (broker/tests/unit/test_pixi_environments.py guards this).
 [feature.localdev.activation.env]
 POLICY_FILE = "${POLICY_FILE:-${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/authorization/policy.yaml}"
 SERVICES_FILE = "${SERVICES_FILE:-${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/mcp/services.yaml}"
@@ -124,7 +124,9 @@ typecheck = { cmd = "mypy broker/src skills --exclude evals/fixtures", descripti
 pre-commit = { cmd = "prek run --all-files", description = "Run pre-commit hooks on all files" }
 lint-imports = { cmd = "lint-imports", cwd = "broker", description = "Check the broker's import layers (import-linter contracts in broker/pyproject.toml)" }
 lint-all = { depends-on = ["lint", "lint-imports", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
-test = { cmd = "pytest broker/ skills/ -v -n auto", description = "Broker unit tests and skill script tests" }
+test = { cmd = "pytest broker/ skills/ -v -n auto", description = "Every broker and skill script test (all tiers)" }
+test-unit = { cmd = "pytest broker/ -m unit -v -n auto", description = "Broker unit tests only (broker/tests/unit)" }
+test-integration = { cmd = "pytest broker/ -m integration -v -n auto", description = "Broker integration tests only (broker/tests/integration)" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
 # COVERAGE_CORE=sysmon: coverage.py's sys.monitoring core (PEP 669, py3.12+)
 # measures line coverage with a fraction of the default C-tracer's overhead

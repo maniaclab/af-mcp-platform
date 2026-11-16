@@ -116,7 +116,7 @@ standard-tier model would count less for large images. Small images (the
 640x480 example) cost the same on both tiers. The assumption is the single
 constant `ASSUMED_TIER` in `broker/src/af_mcp_broker/audit/image_tokens.py`.
 
-`broker/tests/test_token_explainer_docs.py` fails if these numbers and the
+`broker/tests/unit/test_token_explainer_docs.py` fails if these numbers and the
 portal tooltip (`portal/src/lib/tokenExplainer.ts`) drift from the code.
 
 ## Self-service usage: `GET /v1/usage`
