@@ -5,6 +5,8 @@
     "BROKER_STATE_KEY": "<secret:example-broker-state-key/broker-state-key>",
     "BROKER_TOKEN_ISSUER": "https://mcp.example.com",
     "IDENTITY_PROVIDERS": "[{\"alias\":\"rucio-mcp-example\",\"authorization_endpoint\":\"https://rucio-mcp.example.com/authorize\",\"client_id\":null,\"confidential\":false,\"display_name\":\"\",\"enables\":\"\",\"issuer\":\"https://rucio-mcp.example.com\",\"revocation_endpoint\":\"https://rucio-mcp.example.com/revoke\",\"scope\":\"openid profile email\",\"targets\":[\"rucio-mcp-example\"],\"token_endpoint\":\"https://rucio-mcp.example.com/token\",\"type\":\"oauth21-direct\"}]",
+    "KEYCLOAK_ADMIN_CLIENT_ID": "example-keycloak-admin-client",
+    "KEYCLOAK_ADMIN_CLIENT_SECRET": "<secret:example-keycloak-admin-client-secret/keycloak-admin-client-secret>",
     "MAINTENANCE_MODE_BACKEND": "vault",
     "MAINTENANCE_MODE_CACHE_TTL_SECONDS": "5",
     "MCP_REPLICA_COUNT": "2",
@@ -78,8 +80,8 @@
         "type": "oauth21-direct"
       }
     ],
-    "keycloak_admin_client_id": "",
-    "keycloak_admin_client_secret": "",
+    "keycloak_admin_client_id": "example-keycloak-admin-client",
+    "keycloak_admin_client_secret": "**********",
     "keycloak_login_client_id": "",
     "keycloak_login_client_secret": "",
     "log_level": "INFO",

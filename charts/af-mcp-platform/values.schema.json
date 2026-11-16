@@ -172,12 +172,18 @@
           "type": "object",
           "properties": {
             "clientId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             "existingClientSecretSecret": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             }
           },
+          "required": [
+            "clientId",
+            "existingClientSecretSecret"
+          ],
           "additionalProperties": false
         },
         "posixAttributes": {
@@ -785,6 +791,66 @@
       },
       "additionalProperties": false,
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "replicaCount": {
+                "minimum": 2
+              }
+            },
+            "required": [
+              "replicaCount"
+            ]
+          },
+          "then": {
+            "properties": {
+              "sharedState": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "url": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "existingSecret": {
+                        "properties": {
+                          "name": {
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "existingSecret"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "allowPerReplicaState": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "allowPerReplicaState"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sharedState"
+            ]
+          }
+        },
         {
           "if": {
             "anyOf": [

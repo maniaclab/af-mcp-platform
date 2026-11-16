@@ -30,7 +30,6 @@ from af_mcp_broker.credentials.errors import (
     CredentialServiceError,
     UnlockRateLimitError,
 )
-from af_mcp_broker.credentials.stores import VaultLinkStores, build_vault_link_stores
 from af_mcp_broker.identity import (
     AdminRequiredError,
     IdentityError,
@@ -70,7 +69,6 @@ from af_mcp_broker.wiring.credentials import (
     build_credential_cache,
     build_credential_providers,
     build_list_cache_invalidator,
-    build_oauth21_token_store,
     build_state_cipher,
     resolve_x509_provider,
 )
@@ -93,7 +91,7 @@ from af_mcp_broker.wiring.lifecycle import (
 )
 from af_mcp_broker.wiring.services import build_identity_targets, build_service_catalog
 from af_mcp_broker.wiring.state import build_broker_state
-from af_mcp_broker.wiring.vault import build_vault_kv
+from af_mcp_broker.wiring.vault import build_vault_connections
 
 logger = structlog.get_logger(__name__)
 
@@ -210,22 +208,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         credential_cache = build_credential_cache(
             settings, shared_state, list_cache_invalidator, stack
         )
-        vault_kv = await build_vault_kv(settings, http_client)
-        oauth21_token_store = build_oauth21_token_store(settings, vault_kv)
+        vaults = await build_vault_connections(settings, http_client)
         oauth21_state_cipher = build_state_cipher(settings)
         broker_token_issuer = build_broker_token_issuer(settings)
-        link_stores = (
-            build_vault_link_stores(settings, vault_kv)
-            if vault_kv is not None
-            else VaultLinkStores()
-        )
         providers = build_credential_providers(
             settings,
             service_registry=catalog.service_registry,
             cache=credential_cache,
             issuer=broker_token_issuer,
-            token_store=oauth21_token_store,
-            link_stores=link_stores,
+            vaults=vaults,
             http_client=http_client,
         )
         await validate_services_gated(catalog.services, providers.registry)
@@ -236,16 +227,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
         mcp_auth_code_store = build_mcp_auth_code_store(
             settings, oauth21_state_cipher, shared_state
         )
-        token_registries = build_token_registry(settings, vault_kv, shared_state)
+        token_registries = build_token_registry(settings, vaults, shared_state)
         principal_cache = build_principal_cache(
             settings,
-            vault_kv,
+            vaults,
             http_client,
             dev_bypass_active=dev_principal is not None,
         )
-        maintenance_mode_store = await start_maintenance_store(
-            settings, vault_kv, stack
-        )
+        maintenance_mode_store = await start_maintenance_store(settings, vaults, stack)
 
         # Where the tool-listing lint's findings are recorded for the admin
         # tables (lint_observations.py): shared, so every replica reports the
@@ -289,8 +278,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             targets=targets,
             credential_registry=providers.registry,
             issuer=broker_token_issuer,
-            link_stores=link_stores,
-            vault_kv=vault_kv,
+            link_stores=providers.link_stores,
+            vaults=vaults,
             principal_cache=principal_cache,
             http_client=http_client,
             stack=stack,
@@ -303,7 +292,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             providers=providers,
             credential_cache=credential_cache,
             x509_provider=x509_provider,
-            oauth21_token_store=oauth21_token_store,
             oauth21_state_cipher=oauth21_state_cipher,
             token_registry=token_registries.registry,
             principal_cache=principal_cache,
@@ -313,7 +301,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             maintenance_mode_store=maintenance_mode_store,
             lint_observations=lint_observations,
             shared_state=shared_state,
-            link_stores=link_stores,
             credmon_sync=credmon_sync,
             mcp_aggregator=mcp_aggregator,
             mcp_app=mcp_app,

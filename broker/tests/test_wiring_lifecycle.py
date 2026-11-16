@@ -21,6 +21,7 @@ from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
 from af_mcp_broker.metering import InProcessMeteringBackend
 from af_mcp_broker.shared_state import InMemorySharedState
 from af_mcp_broker.usage import InMemoryUsageStore
+from af_mcp_broker.vault_kv import VaultConnections
 from af_mcp_broker.wiring import lifecycle
 from af_mcp_broker.wiring.lifecycle import (
     open_shared_state,
@@ -86,11 +87,13 @@ class TestStartMaintenanceStore:
         monkeypatch.setattr(
             lifecycle,
             "build_maintenance_store",
-            lambda settings, vault_kv: _RecordingMaintenanceStore(events),
+            lambda settings, vaults: _RecordingMaintenanceStore(events),
         )
 
         async with AsyncExitStack() as stack:
-            await start_maintenance_store(_settings(), None, stack)
+            await start_maintenance_store(
+                _settings(), VaultConnections(httpx2.AsyncClient()), stack
+            )
             assert events == ["maintenance.start"]
 
         assert events == ["maintenance.start", "maintenance.aclose"]
@@ -212,7 +215,7 @@ class TestStartCredmonSync:
                 credential_registry=CredentialRegistry(),
                 issuer=None,
                 link_stores=VaultLinkStores(),
-                vault_kv=None,
+                vaults=VaultConnections(httpx2.AsyncClient()),
                 principal_cache=None,
                 http_client=httpx2.AsyncClient(),
                 stack=stack,

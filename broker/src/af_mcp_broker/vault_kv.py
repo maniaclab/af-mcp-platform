@@ -29,6 +29,8 @@ from af_mcp_broker.errors import BrokerError
 if TYPE_CHECKING:
     import httpx2
 
+    from af_mcp_broker.vault_config import VaultConfig
+
 # Vault K8s auth tokens are re-minted this many seconds before their lease
 # actually expires, so a call that starts just under the wire never presents
 # an already-expired token to Vault.
@@ -202,3 +204,32 @@ class VaultKV:
             f"vault kv delete failed for path={path!r}: "
             f"status={resp.status_code} body={resp.text!r}"
         )
+
+
+class VaultConnections:
+    """The process's Vault clients, one per distinct ``VaultConfig``.
+
+    Every Vault-backed store of a deployment shares one client (one K8s auth
+    login per process); a store that is configured for Vault asks for its
+    client with the ``VaultConfig`` its settings carry, so it never holds an
+    optional client.
+    """
+
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
+        self._http_client = http_client
+        self._clients: dict[VaultConfig, VaultKV] = {}
+
+    def connect(self, config: VaultConfig) -> VaultKV:
+        """Return the client for *config*, creating it on first use."""
+        client = self._clients.get(config)
+        if client is None:
+            client = VaultKV(
+                addr=config.addr,
+                auth_mount=config.auth_mount,
+                auth_role=config.auth_role,
+                kv_mount=config.kv_mount,
+                sa_token_path=config.sa_token_path,
+                http_client=self._http_client,
+            )
+            self._clients[config] = client
+        return client

@@ -12,6 +12,10 @@ portal:
   brokerOrigin: "https://mcp.example.com"
 
 broker:
+  # The broker refuses to start without its Keycloak admin service account.
+  keycloakAdmin:
+    clientId: "example-keycloak-admin-client"
+    existingClientSecretSecret: "example-keycloak-admin-client-secret"
   sharedState:
     url: "rediss://cache.example.com:6380/0"
     networkPolicy:
