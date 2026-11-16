@@ -76,7 +76,7 @@ const message = computed(() => resolveServicesMessage(servers.value, providers.v
   >
     <template #error-hint>
       <span class="cp__hint">
-        Make sure your ATLAS IAM and CERN identities are linked on the
+        Make sure your external identities are linked on the
         <a href="/identities/">Identities page</a>.
       </span>
     </template>
