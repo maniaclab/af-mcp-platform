@@ -81,6 +81,15 @@ def test_bad_values_are_rejected_by_the_schema(
         assert fragment in result.stderr
 
 
+@pytest.mark.parametrize("key", ["endpoint", "networkPolicy"])
+def test_removed_tracing_keys_are_unknown_to_the_schema(key: str) -> None:
+    result = _helm_template(sets=(f"broker.tracing.{key}=x",))
+
+    assert result.returncode != 0
+    assert "values don't meet the specifications of the schema" in result.stderr
+    assert f"additional properties '{key}' not allowed" in result.stderr
+
+
 def test_base_values_pass_the_schema() -> None:
     result = _helm_template()
 

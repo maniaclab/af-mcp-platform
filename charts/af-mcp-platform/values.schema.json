@@ -754,9 +754,7 @@
                 "string",
                 "number"
               ]
-            },
-            "endpoint": {},
-            "networkPolicy": {}
+            }
           },
           "additionalProperties": false
         },

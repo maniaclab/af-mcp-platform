@@ -335,7 +335,7 @@ Removed values that now fail, and what replaced them:
 | --- | --- |
 | every `kvPathPrefix` key (token store, token registry, principal cache, maintenance mode) and `x509KvPathPrefix`, `krb5KvPathPrefix`, `servicexKvPathPrefix`, `credmonKvPathPrefix` | one `broker.vault.kvRoot` (records under the old prefixes are not moved; copy them in Vault if they must survive) |
 | `networkPolicy.broker.servicePorts`, and the `clusterName` and `namespaceSelector` keys of the Postgres and shared-state `networkPolicy` blocks | `networkPolicy.egress.endpoints` with `podSelector` and `targetPort`; `broker.usage.postgres.networkPolicy` and `broker.sharedState.networkPolicy` take the same peer shape |
-| `broker.tracing.endpoint`, `broker.tracing.networkPolicy` | `broker.otlp.endpoint`, shared by every OTLP signal (these two keys fail the render with a message naming the replacement) |
+| `broker.tracing.endpoint`, `broker.tracing.networkPolicy` | `broker.otlp.endpoint`, shared by every OTLP signal (the schema rejects these two keys as unknown; the collector egress rule is generated from `broker.otlp.endpoint`, with the collector pods declared under `networkPolicy.egress.endpoints`) |
 | built-in facility defaults for hosts, TLS Secret names, cert-manager issuer, home-directory PVC and Grafana namespace | set them in your values (`ingress.*`, `grafanaDashboard.namespace`); TLS Secret names derive from the release when left empty |
 
 ## Failure modes
