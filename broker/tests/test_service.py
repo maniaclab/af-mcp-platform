@@ -382,7 +382,8 @@ class TestServiceTokenCaching:
         now[0] += 3600 - 61
         second = await provider._get_service_token()
 
-        assert first == second == "svc-token"
+        assert first == second
+        assert first.token == "svc-token"
         assert len(keycloak.requests) == 1
 
     async def test_token_within_the_refresh_buffer_is_refreshed(
@@ -394,9 +395,9 @@ class TestServiceTokenCaching:
 
         keycloak.body = {"access_token": "rotated", "expires_in": 3600}
         now[0] += 3600 - 60  # exactly the buffer: no longer "remaining > buffer"
-        token = await provider._get_service_token()
+        cached = await provider._get_service_token()
 
-        assert token == "rotated"
+        assert cached.token == "rotated"
         assert len(keycloak.requests) == 2
 
     async def test_expired_token_is_refreshed(
@@ -408,10 +409,10 @@ class TestServiceTokenCaching:
 
         keycloak.body = {"access_token": "rotated", "expires_in": 3600}
         now[0] += 7200
-        token = await provider._get_service_token()
+        cached = await provider._get_service_token()
 
-        assert token == "rotated"
-        assert provider._service_token_expires_at == _NOW + 7200 + 3600
+        assert cached.token == "rotated"
+        assert cached.expires_at == _NOW + 7200 + 3600
 
     async def test_concurrent_callers_share_one_refresh(
         self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
@@ -424,7 +425,7 @@ class TestServiceTokenCaching:
             *(provider._get_service_token() for _ in range(5))
         )
 
-        assert tokens == ["svc-token"] * 5
+        assert [cached.token for cached in tokens] == ["svc-token"] * 5
         assert len(keycloak.requests) == 1
 
     async def test_failed_refresh_is_retried_by_the_next_caller(
@@ -437,9 +438,9 @@ class TestServiceTokenCaching:
             await provider._get_service_token()
 
         keycloak.status = 200
-        token = await provider._get_service_token()
+        cached = await provider._get_service_token()
 
-        assert token == "svc-token"
+        assert cached.token == "svc-token"
         assert len(keycloak.requests) == 2
 
     async def test_failed_refresh_does_not_discard_the_cached_token_bookkeeping(
@@ -447,16 +448,14 @@ class TestServiceTokenCaching:
     ) -> None:
         _use_client_credentials(monkeypatch)
         provider = _provider(keycloak)
-        await provider._get_service_token()
-        expires_at = provider._service_token_expires_at
+        cached = await provider._get_service_token()
 
         now[0] += 3600
         keycloak.status = 500
         with pytest.raises(httpx2.HTTPStatusError):
             await provider._get_service_token()
 
-        assert provider._service_token == "svc-token"
-        assert provider._service_token_expires_at == expires_at
+        assert provider._service_token == cached
 
     async def test_a_token_that_expires_inside_the_buffer_is_refreshed_every_time(
         self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
@@ -469,6 +468,39 @@ class TestServiceTokenCaching:
         await provider._get_service_token()
 
         assert len(keycloak.requests) == 2
+
+
+class TestTokenExpiryPairing:
+    async def test_issue_pairs_the_token_with_its_own_expiry_across_a_concurrent_refresh(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        """A refresh landing between token retrieval and use must not re-label the token."""
+        _use_client_credentials(monkeypatch)
+        provider = _provider(keycloak)
+        get_service_token = provider._get_service_token
+        token_retrieved = asyncio.Event()
+        resume_issue = asyncio.Event()
+
+        # Holds issue() between getting the token and using it, the window a
+        # refresh on another task can land in.
+        async def gated(min_remaining_seconds: int = 0):
+            result = await get_service_token(min_remaining_seconds)
+            token_retrieved.set()
+            await resume_issue.wait()
+            return result
+
+        monkeypatch.setattr(provider, "_get_service_token", gated)
+        issuing = asyncio.create_task(provider.issue(_principal(), "docs"))
+        await token_retrieved.wait()
+
+        keycloak.body = {"access_token": "rotated", "expires_in": 7200}
+        now[0] += 3600
+        await get_service_token()
+        resume_issue.set()
+        cred = await issuing
+
+        assert cred.payload["access_token"] == "svc-token"
+        assert cred.expires_at == _NOW + 3600
 
 
 class TestIssue:
