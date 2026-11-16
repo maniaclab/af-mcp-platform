@@ -4,17 +4,18 @@
  * authenticated app shell) and PublicBase.astro (the unauthenticated
  * landing page) so the two layouts don't each carry their own copy.
  */
+import { DEFAULT_BRANDING } from '../lib/branding';
+
 const appVersion = import.meta.env.PUBLIC_APP_VERSION || 'dev';
 ---
 
 <footer class="af-footer" aria-label="Site footer">
   <div class="af-wrap af-footer__in">
-    <span><span data-af-brand="facilityName">ATLAS Analysis Facility</span> · MCP Platform</span>
+    <span
+      ><span data-af-brand="facilityName">{DEFAULT_BRANDING.facilityName}</span> · MCP Platform</span
+    >
     <span>v{appVersion}</span>
     <a href="/design/" class="af-footer__link">Design</a>
-    <a href="https://atlas.cern" class="af-footer__link" target="_blank" rel="noopener noreferrer">
-      atlas.cern
-    </a>
     <a
       href="https://giordonstark.com/"
       class="af-footer__link"

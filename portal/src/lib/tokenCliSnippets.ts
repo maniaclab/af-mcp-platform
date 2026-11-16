@@ -89,5 +89,5 @@ asyncio.run(main())`;
  */
 export function claudeMcpAddSnippet(brokerOrigin: string, token: string): string {
   const origin = normalizeOrigin(brokerOrigin);
-  return `claude mcp add --transport http atlas-af ${origin}/mcp/ --header "Authorization: Bearer ${token}"`;
+  return `claude mcp add --transport http af-mcp ${origin}/mcp/ --header "Authorization: Bearer ${token}"`;
 }
