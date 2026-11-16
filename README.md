@@ -111,6 +111,14 @@ work once this is merged. Publishing to a public marketplace is not done yet.
 
 Deployment is via the Helm chart in [`charts/af-mcp-platform`](charts/af-mcp-platform) — `values.yaml` documents every configurable field. Follow the ordered [deployment runbook](docs/deployment-runbook.md) at a new facility; [docs/values-reference.md](docs/values-reference.md) tabulates every value. See [docs/architecture.md](docs/architecture.md) for the reference architecture and auth model.
 
+Each release publishes the chart to GitHub's container registry as an OCI artifact, so a checkout is not needed to install it:
+
+```bash
+helm install af-mcp-platform oci://ghcr.io/maniaclab/charts/af-mcp-platform --version X.Y.Z -f values.yaml
+```
+
+The chart version equals the release tag without the `v`. See the [deployment runbook](docs/deployment-runbook.md#chart-source) for pulling the chart and for Flux.
+
 `values.schema.json` validates every value before anything renders: `helm install`, `upgrade`, `template` and `lint` list all violations in one error (a misspelt key, a wrong type, an unsupported backend, a missing `oidc.issuer`, `portal.oidc.clientId` or `portal.brokerOrigin`, an empty `aggregator.services`, an empty `entitlements.group_permissions`, enabled ingress without `ingress.mcpHost`/`ingress.portalHost`, or an x509 identity provider without `voms`). The chart carries no facility-specific defaults: `ingress` hosts, the `oidc.issuer` realm and the group map are required, and `serviceMonitor` and `grafanaDashboard` are opt-in. [`examples/example-values.yaml`](charts/af-mcp-platform/examples/example-values.yaml) shows a worked set of facility values with placeholder names; The broker likewise refuses to boot without `OIDC_ISSUER`. Free-form blocks (`broker.env`, `resources`, annotations, `entitlements.target_action_types`) stay open.
 
 ## For Developers
