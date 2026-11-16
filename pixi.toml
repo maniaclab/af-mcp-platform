@@ -127,7 +127,7 @@ lint-all = { depends-on = ["lint", "lint-imports", "typecheck", "pre-commit"], d
 test = { cmd = "pytest broker/ skills/ -m 'not e2e' -v -n auto", description = "Every broker and skill script test except e2e (which needs a deployment)" }
 test-unit = { cmd = "pytest broker/ -m unit -v -n auto", description = "Broker unit tests only (broker/tests/unit)" }
 test-integration = { cmd = "pytest broker/ -m integration -v -n auto", description = "Broker integration tests only (broker/tests/integration)" }
-test-e2e = { cmd = "pytest broker/ -m e2e -v -rs", description = "Run the e2e tests against a deployment (E2E_BROKER_URL, MCP_BEARER_TOKEN); operator-run after a release, not part of test" }
+test-e2e = { cmd = "pytest broker/ -m e2e -v -rs -s", description = "Run the e2e tests against a deployment (E2E_BROKER_URL, MCP_BEARER_TOKEN); operator-run after a release, not part of test" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
 # COVERAGE_CORE=sysmon: coverage.py's sys.monitoring core (PEP 669, py3.12+)
 # measures line coverage with a fraction of the default C-tracer's overhead
