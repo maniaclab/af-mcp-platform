@@ -1992,8 +1992,8 @@ second question is actually about authorization. This also makes standing
 up a new facility simpler: `mcp-gateway`'s Keycloak config (client scope +
 Audience mapper, Optional, empty Scope tab) is stock, generic, and requires
 no group to pre-provision; only `read-token`/ATLAS-IAM linking (if a
-deployment even has that integration — `mcp-ops-platform` in `flux_apps`,
-condor-only, does not) needs its own group.
+deployment even has that integration — a condor-only deployment does not)
+needs its own group.
 
 **Consequence for `resource_access.broker`:** Keycloak's built-in `roles`
 client scope ships an **Audience Resolve** mapper that unconditionally adds
@@ -2052,7 +2052,7 @@ rejects an empty `entitlements.group_permissions`. Group names come from
 the deployer's own Keycloak realm, so a same-named group in a different
 realm could mean something else entirely: every deployment **must** set
 `entitlements.group_permissions` in its `HelmRelease` overlay with its own
-group names (see the UChicago and non-ATLAS worked examples below), or every backend whose `required_permission` isn't
+group names (see the worked examples below), or every backend whose `required_permission` isn't
 `__none__` becomes unreachable by everyone. The broker's startup check (see
 `app.py`'s lifespan) walks every backend's `required_permission` and
 **refuses to start** if no group grants it, naming both the backend and the
@@ -2060,34 +2060,27 @@ permission — a Kubernetes rollout failure with zero outage (the previous
 ReplicaSet keeps serving) is far more visible than a config that silently
 deploys broken.
 
-This is the ATLAS AF's own mapping (also in
-`charts/af-mcp-platform/examples/uchicago-values.yaml`), copyable as a
-starting point if you're deploying for that AF or want a similar shape:
+This is the mapping in
+`charts/af-mcp-platform/examples/example-values.yaml`, copyable as a
+starting point for a similar shape:
 
 ```yaml
 group_permissions:
-  # Full ATLAS analysis + compute access.
-  atlas: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, read_files]
-  # Analysis + compute access, no Jupyter management.
-  cms: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
-  # Analysis + compute access, no monitoring dashboards.
-  dune: [read_data, read_metadata, submit_jobs, manage_jobs, launch_compute, read_files]
-  # Read-only data + metadata access.
-  escape: [read_data, read_metadata, read_files]
+  # Analysis + compute access.
+  users: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, read_files]
   # Full access plus data management and platform administration.
-  af-admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_data, admin, read_files]
+  admins: [read_data, read_metadata, read_monitoring, submit_jobs, manage_jobs, launch_compute, manage_jupyter, manage_data, admin, read_files]
   # Any authenticated user (no group membership required)
   __authenticated__: [read_metadata, read_monitoring]
 ```
 
-#### Worked example: a non-ATLAS site
+#### Worked example: a realm with its own group names
 
-If you are running this chart for a facility other than the UChicago ATLAS
-AF, override `entitlements.group_permissions` entirely — the group names
+Override `entitlements.group_permissions` entirely — the group names
 on the left must match Keycloak group names in *your* realm exactly (see
 "Create the groups you reference in `group_permissions`" above); reusing
-`atlas`/`cms`/`dune`/`escape`/`af-admins` only makes sense if your realm
-happens to define groups with those same names. For example, a facility
+the `users`/`admins` names above only makes sense if your realm happens to
+define groups with those same names. For example, a facility
 whose Keycloak realm defines `myexperiment-users` and
 `myexperiment-admins` groups instead might set:
 
