@@ -343,6 +343,66 @@ for the other providers.
 
 ---
 
+## Platform membership (`ACCESS_GROUPS`)
+
+Keycloak decides **how** users log in (username/password, a GitHub or CERN
+social login, an ORCID link); the broker decides **who is a member** of the
+platform. Any account in the realm can obtain a token whose audience is
+`mcp-gateway`, including a first-time social login that holds no groups, so
+without a membership rule every such account could call the gateway's own
+tools (`af_whoami`, `af_list_identities`, `af_list_mcp_servers`, which need no
+permission) and mint a PAT.
+
+`broker.accessGroups` (chart, a YAML list) renders the comma-separated
+`ACCESS_GROUPS` env var (`Settings.access_groups`). The name follows the other
+group setting, `ADMIN_GROUP`; the semantics mirror golang-htcondor's
+`HTTP_API_MCP_ACCESS_GROUP`:
+
+- Entries are separated by commas, surrounding whitespace is trimmed, empty
+  entries are dropped.
+- A principal is a member when it holds **any** listed group, compared
+  case-insensitively and exactly.
+- **Empty or unset admits every authenticated principal.** That is the
+  default, so a deployment that does not set it behaves as before.
+- Spell entries the way the broker sees group names: bare names by default,
+  full paths (`/example/af`) when `broker.groupFullPath` is true.
+- The principal directory reports only the groups a user belongs to
+  **directly** (Keycloak's `GET /users/{id}/groups` does not add parent
+  groups), so a member of `/example/af/analysis` does not match `/example/af`.
+  List every group, subgroups included, that should be admitted.
+
+The check runs once, in `identity.require_platform_member`, right after the
+principal's current groups are resolved: `get_principal` (JWT) and
+`pat_auth.resolve_pat_principal` (PAT) both call it, so it covers `/v1` and
+`/mcp` alike and runs before any route or tool. Groups are re-resolved per
+request through the principal cache, so a user removed from the group loses
+access within one cache refresh. A non-member gets a `403`:
+
+```json
+{"detail": {"error": "not_a_platform_member",
+            "message": "You don't have access to this platform. It requires membership in one of: /example/af. Ask to join one of these groups."}}
+```
+
+`/mcp` answers the same status with the `message` as its `detail`. The
+unauthenticated routes (health, readiness, JWKS, well-known documents,
+OpenAPI) stay open. Members keep the gateway tools as a baseline even with no
+other permission; membership is a gate in front of authorization, not a
+permission. The local-development bypass principal is not checked.
+
+The denial is an expected policy outcome, so it logs at `info` as
+`identity.not_a_member` with `subject` and `reason`, and writes no audit
+record (audit records are per tool call, and a refused principal never
+reaches one). The broker logs `identity.access_groups` once at boot with
+`mode` (`open` or `restricted`) and the groups. The portal shows the
+message in its "Access not yet granted" state when `/v1` returns this 403.
+
+The token audience check stays: it stops a token minted for another client of
+the realm from being replayed at the broker. It answers "was this token meant
+for us", membership answers "is this person allowed here", and neither
+substitutes for the other.
+
+---
+
 ## Authorization is an attribute of the principal, not the token
 
 **Issue maniaclab/af-mcp-platform#144 steps 3 and 3b unified this for every credential type.** Before
