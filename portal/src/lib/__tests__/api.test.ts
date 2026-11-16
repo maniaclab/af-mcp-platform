@@ -1038,9 +1038,21 @@ describe('requestProxy() custody consent', () => {
       expires_at: '2026-08-27T00:00:00+00:00',
       remaining_seconds: 100,
     });
-    await requestProxy('hunter2', '12:00', 'atlas', false);
+    await requestProxy('hunter2', '12:00', false);
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toMatchObject({ remember: false });
+  });
+
+  it('does not send a voms field (the broker takes the VO from its configuration)', async () => {
+    globalThis.fetch = mockJson(201, {
+      dn: '/CN=x',
+      voms_attributes: [],
+      expires_at: '2026-08-27T00:00:00+00:00',
+      remaining_seconds: 100,
+    });
+    await requestProxy('hunter2');
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('voms');
   });
 });
 

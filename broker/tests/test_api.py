@@ -10,6 +10,7 @@ from broker_state_helpers import set_broker_state
 from cryptography.fernet import Fernet
 from x509_fakes import seed_x509_link, seed_x509_proxy
 
+from af_mcp_broker.api.credentials import ProxyRequest
 from af_mcp_broker.app import app
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
@@ -1068,3 +1069,8 @@ def test_catalog_dict_form_granting_groups_union_across_tools(
 
     assert mixed["status"] == "permission_required"
     assert mixed["granting_groups"] == ["analysts", "ops"]
+
+
+def test_proxy_request_schema_has_no_voms_field() -> None:
+    """The VO is the x509 provider's configured ``voms``, never client-supplied."""
+    assert "voms" not in ProxyRequest.model_json_schema()["properties"]

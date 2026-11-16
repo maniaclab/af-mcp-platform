@@ -592,9 +592,9 @@ export async function fetchProxyStatus(): Promise<ProxyStatus> {
 /**
  * Request a new x509 proxy.
  *
- * `valid` is an "HH:MM" lifetime (e.g. "12:00"); `voms` is the VO name with no
- * leading slash (e.g. "atlas"). `remember` is the custody consent: true (the
- * default) stores the passphrase encrypted in the AF vault for hands-free
+ * `valid` is an "HH:MM" lifetime (e.g. "12:00"). The VO comes from the broker's
+ * configured x509 identity provider, not the request. `remember` is the custody
+ * consent: true (the default) stores the passphrase encrypted in the AF vault for hands-free
  * renewal; false means the proxy works for its validity window and the user
  * re-links after it expires.
  *
@@ -604,12 +604,11 @@ export async function fetchProxyStatus(): Promise<ProxyStatus> {
 export async function requestProxy(
   passphrase: string,
   valid: string = '12:00',
-  voms: string = 'atlas',
   remember: boolean = true,
 ): Promise<ProxyMetadata> {
   return apiFetch<ProxyMetadata>('/x509/proxy', {
     method: 'POST',
-    body: JSON.stringify({ passphrase, valid, voms, remember }),
+    body: JSON.stringify({ passphrase, valid, remember }),
   });
 }
 
