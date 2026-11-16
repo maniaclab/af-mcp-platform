@@ -191,6 +191,7 @@ def test_protected_resource_metadata_503_when_unconfigured(
         resp: Any = client.get("/.well-known/oauth-protected-resource")
 
     assert resp.status_code == 503
+    assert resp.json()["detail"] == "MCP OAuth discovery metadata is not configured"
 
 
 def test_authorization_server_metadata_advertises_cimd(
@@ -305,6 +306,7 @@ def test_authorize_never_calls_keycloak_dependency(
             follow_redirects=False,
         )
     assert resp.status_code == 302, resp.text
+    assert resp.headers["location"].startswith(ISSUER)
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +690,7 @@ def test_authorize_rejects_unregistered_redirect_uri(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "redirect_uri is not registered for this client_id"
 
 
 def test_authorize_rejects_missing_pkce(
@@ -724,12 +727,17 @@ def test_keycloak_callback_rejects_tampered_state(
     _configure_env(monkeypatch, Fernet.generate_key().decode())
 
     with app_client_factory() as (client, _):
+        # With the nonce cookie present, the state token itself is what is judged.
+        client.cookies.set(
+            "mcp_oauth_state_nonce", "n", path="/v1/oauth/keycloak-login/callback"
+        )
         resp: Any = client.get(
             "/v1/oauth/keycloak-login/callback",
             params={"code": "some-code", "state": "not-a-real-state-token"},
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "state token is invalid or expired"
 
 
 def test_keycloak_callback_rejects_replayed_state_after_expiry(
@@ -766,6 +774,7 @@ def test_keycloak_callback_rejects_replayed_state_after_expiry(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "state token is invalid or expired"
 
 
 def test_keycloak_callback_rejects_nonce_cookie_mismatch(
@@ -777,7 +786,7 @@ def test_keycloak_callback_rejects_nonce_cookie_mismatch(
     cipher = Fernet(fernet_key.encode())
     state = build_mcp_authorize_state(
         cipher,
-        iss=BROKER_ORIGIN,
+        iss=ISSUER,
         pkce_verifier="v",
         mcp_client_id=MCP_CLIENT_ID,
         mcp_redirect_uri=MCP_REDIRECT_URI,
@@ -799,6 +808,7 @@ def test_keycloak_callback_rejects_nonce_cookie_mismatch(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "OAuth state nonce does not match cookie"
 
 
 def test_token_rejects_pkce_mismatch(
