@@ -144,8 +144,11 @@ class TestLink:
         with app_client_factory() as (client, _):
             _fake_provider(client, outcome=ServiceXBadRefreshTokenError())
             resp = client.post(_LINK, json={"refresh_token": "bad-token"})
+            store = client.app.state.broker.identity_providers["servicex"]._vault_store
 
         assert resp.status_code == 400
+        assert "ServiceX rejected this token" in resp.json()["detail"]
+        assert store.records == {}
 
     def test_bad_refresh_token_400_carries_the_correlation_id(
         self, servicex_link_env, app_client_factory
@@ -169,6 +172,7 @@ class TestLink:
             resp = client.post(_LINK, json={"refresh_token": "a-token"})
 
         assert resp.status_code == 502
+        assert "temporarily unavailable" in resp.json()["detail"]
 
     def test_explicit_target_selects_that_entry(
         self, servicex_link_env, app_client_factory
@@ -193,3 +197,6 @@ class TestLink:
             )
 
         assert resp.status_code == 404
+        assert resp.json()["detail"] == (
+            "No servicex-token credential provider is configured for 'nope'"
+        )

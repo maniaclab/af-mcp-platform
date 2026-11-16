@@ -324,6 +324,7 @@ def test_bad_credential_maps_to_400(krb5_app) -> None:
     )
 
     assert resp.status_code == 400, resp.text
+    assert "rejected the given CERN username/password" in resp.json()["detail"]
 
 
 def test_account_error_maps_to_403(krb5_app) -> None:
@@ -336,6 +337,7 @@ def test_account_error_maps_to_403(krb5_app) -> None:
     )
 
     assert resp.status_code == 403, resp.text
+    assert "revoked or its password has expired" in resp.json()["detail"]
 
 
 def test_invalid_request_maps_to_422(krb5_app) -> None:
@@ -348,6 +350,7 @@ def test_invalid_request_maps_to_422(krb5_app) -> None:
     )
 
     assert resp.status_code == 422, resp.text
+    assert "username or ticket lifetime was invalid" in resp.json()["detail"]
 
 
 def test_rate_limited_maps_to_429_with_retry_after(krb5_app) -> None:

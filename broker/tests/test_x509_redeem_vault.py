@@ -236,6 +236,7 @@ class TestRedeemVaultServe:
         resp = _redeem(client, _mint_token(client))
 
         assert resp.status_code == 404
+        assert "No valid x509/VOMS proxy is cached" in resp.json()["detail"]
 
     async def test_no_link_is_the_existing_404(self, service_app) -> None:
         client, _, _, _ = service_app
@@ -355,6 +356,7 @@ class TestUnlockEndpointServiceMode:
         resp = client.post(_UNLOCK, json={"passphrase": "hunter2"})
 
         assert resp.status_code == 502
+        assert "temporarily unavailable" in resp.json()["detail"]
 
     def test_certificate_expired_is_422_with_the_real_detail(self, service_app) -> None:
         """af-mcp-platform#288: distinct from both the 400 (bad passphrase)
