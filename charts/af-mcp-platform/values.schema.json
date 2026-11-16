@@ -1549,6 +1549,10 @@
             "facilityName": {
               "type": "string"
             },
+            "facilityUrl": {
+              "type": "string",
+              "pattern": "^(https?://[^\\s]+)?$"
+            },
             "accentColor": {
               "type": "string"
             },
