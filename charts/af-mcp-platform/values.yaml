@@ -876,6 +876,9 @@ portal:
     fullName: ""
     # Facility/institution name shown in the overview hero and footer.
     facilityName: ""
+    # Optional http(s) URL of the facility's website. When set, the footer
+    # links the facility name to it; empty leaves the name as plain text.
+    facilityUrl: ""
     # Optional accent colour as "#rrggbb", e.g. "#800000". Leave empty to keep
     # the default neutral ink theme; nothing is overridden until you set it.
     accentColor: ""

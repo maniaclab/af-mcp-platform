@@ -30,6 +30,21 @@ helm pull oci://ghcr.io/maniaclab/charts/af-mcp-platform --version X.Y.Z --untar
 helm lint af-mcp-platform -f my-values.yaml
 ```
 
+Every release image and chart carries a signed build provenance attestation (GitHub artifact attestations, SLSA provenance), stored in the registry next to the artifact. Verify before installing, with the GitHub CLI:
+
+```bash
+# The chart in the registry:
+gh attestation verify oci://ghcr.io/maniaclab/charts/af-mcp-platform:X.Y.Z --owner maniaclab
+
+# The packaged chart file from `helm pull`:
+helm pull oci://ghcr.io/maniaclab/charts/af-mcp-platform --version X.Y.Z
+gh attestation verify af-mcp-platform-X.Y.Z.tgz --owner maniaclab
+
+# The images:
+gh attestation verify oci://ghcr.io/maniaclab/af-mcp-platform-broker:X.Y.Z --owner maniaclab
+gh attestation verify oci://ghcr.io/maniaclab/af-mcp-platform-portal:X.Y.Z --owner maniaclab
+```
+
 Flux can consume the same artifact, either as an `OCIRepository` (`spec.url: oci://ghcr.io/maniaclab/charts/af-mcp-platform`, `spec.ref.tag: X.Y.Z`) that a `HelmRelease` references through `chartRef`, or as a `HelmRepository` with `spec.type: oci` and `spec.url: oci://ghcr.io/maniaclab/charts` that a `HelmRelease` references through `chart.spec.chart: af-mcp-platform`. Argo CD and other OCI-aware tools take the same URL. A checkout of this repository pointed at `charts/af-mcp-platform` also works, and is the way to test unreleased chart changes.
 
 Steps 8 and 9 below use the checkout path; substitute the registry reference or the pulled directory.

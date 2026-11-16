@@ -184,6 +184,7 @@ explained in the Deployment Runbook.
 | `portal.branding.shortName` | string | `""` | no | Short mark in the sidebar/topbar logo, e.g. "Example AF Ops". |
 | `portal.branding.fullName` | string | `""` | no | Full name, used in the logo links' aria-label ("<fullName> home"). |
 | `portal.branding.facilityName` | string | `""` | no | Facility/institution name shown in the overview hero and footer. |
+| `portal.branding.facilityUrl` | string | `""` | no | Optional http(s) URL of the facility's website. |
 | `portal.branding.accentColor` | string | `""` | no | Optional accent colour as "#rrggbb", e.g. "#800000". |
 | `portal.branding.accentColorDark` | string | `""` | no | Optional accent colour for the dark theme, as "#rrggbb". |
 
