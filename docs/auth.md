@@ -1555,7 +1555,7 @@ holds, rotating that owner's group membership continues to bound every
 permission PAT they've ever minted, not just their own interactive access.
 
 **Audit.** A denied tool call's audit record (`AuditRecord
-.principal_permission_grant`, written by `mcp/middleware/authorization_mw
+.permission_grant`, written by `mcp/middleware/authorization_mw
 .py`) carries the calling PAT's effective permission grant when it has
 one — `null` for a JWT or an identity PAT. This is what lets an admin
 reading a denial tell "the principal doesn't hold this permission at all"

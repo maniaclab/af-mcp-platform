@@ -541,7 +541,7 @@ class TestIssue:
         lines = [json.loads(line) for line in audit_buffer.getvalue().splitlines()]
         (audit,) = [line for line in lines if line["event"] == "audit"]
         assert audit["subject"] == "user-123"
-        assert audit["principal_uid"] == 50123
+        assert audit["uid"] == 50123
         assert audit["permission"] == "service_account"
         assert audit["target"] == "monitoring"
         assert audit["action"] == "credential.issued"
@@ -574,7 +574,7 @@ class TestIssue:
 
         lines = [json.loads(line) for line in audit_buffer.getvalue().splitlines()]
         (audit,) = [line for line in lines if line["event"] == "audit"]
-        assert audit["principal_uid"] is None
+        assert audit["uid"] is None
         assert audit["args_summary"] == (
             "on_behalf_of=n@example.org username=<no-posix-identity>"
         )

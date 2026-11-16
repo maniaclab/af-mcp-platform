@@ -218,10 +218,16 @@ def test_exceptions_are_reported_once() -> None:
 
 
 def test_audit_record_uses_the_log_field_names() -> None:
-    """The audit line is a log line: it names the user ``subject``, the request ``request_id`` and a token ``jti``."""
+    """The audit line is a log line: it names the user ``subject``, the request ``request_id``, a token ``jti``, the POSIX uid ``uid`` and a PAT's scope ``permission_grant``."""
     fields = {f.name for f in dataclasses.fields(AuditRecord)}
-    assert {"subject", "request_id", "jti"} <= fields
-    assert not fields & {"principal_sub", "correlation_id", "principal_id"}
+    assert {"subject", "request_id", "jti", "uid", "permission_grant"} <= fields
+    assert not fields & {
+        "principal_sub",
+        "correlation_id",
+        "principal_id",
+        "principal_uid",
+        "principal_permission_grant",
+    }
 
 
 def test_scanner_flags_each_kind_of_outlier() -> None:
