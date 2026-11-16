@@ -22,13 +22,20 @@ import { formatIsoDateTime, formatRelative } from '../lib/relativeTime';
 import InfoTip from './ui/InfoTip.vue';
 import StatusMark from './ui/StatusMark.vue';
 
-defineProps<{
-  tokens: TokenSummary[];
-  /** lookup_id of the row whose revoke is in flight, if any. */
-  revokingLookupId: string | null;
-  /** lookup_id of the row whose delete is in flight, if any. */
-  deletingLookupId: string | null;
-}>();
+withDefaults(
+  defineProps<{
+    tokens: TokenSummary[];
+    /** lookup_id of the row whose revoke is in flight, if any. */
+    revokingLookupId: string | null;
+    /** lookup_id of the row whose delete is in flight, if any. */
+    deletingLookupId: string | null;
+    /** Accessible name of the table. */
+    label?: string;
+    /** Whether a revoked or expired row offers Delete (a user's own list does; an admin's view of another user's does not). */
+    deletable?: boolean;
+  }>(),
+  { label: 'Your issued tokens', deletable: true },
+);
 
 const emit = defineEmits<{
   revoke: [lookupId: string, name: string];
@@ -65,7 +72,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
 <template>
   <div class="table-container af-box" role="region" aria-label="Issued tokens" tabindex="0">
-    <table class="table" aria-label="Your issued tokens">
+    <table class="table" :aria-label="label">
       <thead>
         <tr>
           <th scope="col">Name</th>
@@ -157,7 +164,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               {{ revokingLookupId === row.lookup_id ? 'Revoking…' : 'Revoke' }}
             </button>
             <button
-              v-else
+              v-else-if="deletable"
               type="button"
               class="btn"
               data-variant="outline"
