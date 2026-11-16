@@ -19,7 +19,7 @@ operators run into. A few common questions, and where to read the answer:
 | If you're wondering... | Read |
 |---|---|
 | How does a browser or CLI get its first token at all? | [Portal auth (OIDC public client)](#portal-auth-oidc-public-client) |
-| Does `mcp-gateway`'s audience decide who's allowed to do what, or just who's talking to the broker at all? | [`mcp-gateway`/`mcp-ops-gateway`: audience is population, not permission](#mcp-gatewaymcp-ops-gateway-audience-is-population-not-permission) |
+| Does `mcp-gateway`'s audience decide who's allowed to do what, or just who's talking to the broker at all? | [`mcp-gateway`/`mcp-gateway-b`: audience is population, not permission](#mcp-gatewaymcp-gateway-b-audience-is-population-not-permission) |
 | Why did `read-token`/`broker` appear or vanish from someone's token when their group membership changed? | [Client scope Scope tab: a filter, not a grant](#client-scope-scope-tab-a-filter-not-a-grant) |
 | How does an MCP client (Claude Desktop, Claude Code) get a credential without a human visiting the portal? | [MCP OAuth discovery + PAT bootstrap](#mcp-oauth-discovery-pat-bootstrap-issue-140) |
 | Why can't a leaked PAT just mint itself a replacement? | [Where PATs are accepted — and where they deliberately are not](#where-pats-are-accepted-and-where-they-deliberately-are-not) |
@@ -1402,7 +1402,7 @@ is why introspection, RFC 7662, exists at all).
    same decode `/v1` applies to every bearer
    (`identity.decode_broker_bearer`). The id_token proves *who* logged in;
    the access token proves the login went through a client actually
-   entitled to request `mcp-gateway` (see "`mcp-gateway`/`mcp-ops-gateway`:
+   entitled to request `mcp-gateway` (see "`mcp-gateway`/`mcp-gateway-b`:
    audience is population, not permission" below) — a login that somehow
    lacks the audience gets an `access_denied` redirect — no authorization
    code, no PAT — symmetric with the `TokenAudienceError` a JWT caller
@@ -1811,7 +1811,7 @@ Secret in place.
    needed; *Optional* means only when explicitly requested — the broker
    does request it, so Optional also works, but Default is the required
    baseline so the gate cannot be skipped. The scope itself carries no
-   per-user role restriction (see "`mcp-gateway`/`mcp-ops-gateway`: audience
+   per-user role restriction (see "`mcp-gateway`/`mcp-gateway-b`: audience
    is population, not permission" below) — the audience mints for any
    `example`-realm user who authenticates through this client, unconditionally.
    **Fail-closed symptom:** with this attachment missing, no access
@@ -1931,7 +1931,7 @@ excluded from the mapper too, so minted tokens are missing the audience
 entirely, not just the role. If a decoded token's `aud` doesn't contain the
 audience you expected on a client scope that *does* carry a Scope-tab role
 restriction, suspect this before anything else in the credential path — as
-of this writing, that applies to nothing `mcp-gateway`/`mcp-ops-gateway`
+of this writing, that applies to nothing `mcp-gateway`/`mcp-gateway-b`
 related (see the next section), but the mechanism is generic and any
 future scope could hit it.
 
@@ -1957,13 +1957,13 @@ adding it there, since the realm may serve more than just the facility and
 opening it realm-wide would let any `example` user retrieve a stored token
 from *any* brokered IdP the realm ever configures, not just `atlas-oidc`.
 
-### `mcp-gateway`/`mcp-ops-gateway`: audience is population, not permission
+### `mcp-gateway`/`mcp-gateway-b`: audience is population, not permission
 
 Earlier revisions of this setup also listed `read-token` on `mcp-gateway`'s
-(and `mcp-ops-gateway`'s) own Scope tab, so the audience only minted for
+(and `mcp-gateway-b`'s) own Scope tab, so the audience only minted for
 members of the same `mcp-users` group `read-token` came from. That
 coupling is now removed (issue tracked alongside the ops-platform usability
-pass): **`mcp-gateway` and `mcp-ops-gateway` are Optional client scopes with
+pass): **`mcp-gateway` and `mcp-gateway-b` are Optional client scopes with
 an empty Scope tab**, explicitly requested by their portal client
 (`portal.oidc.scope` in the Helm values already includes it) — the audience
 mints unconditionally for any `example`-realm user who authenticates
