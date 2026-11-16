@@ -56,6 +56,7 @@ prek = "*"
 tbump = ">=6.7.0"
 httpx2 = ">=2.7.0,<3"
 pytest-timeout = ">=2.4.0,<3"
+pytest-xdist = ">=3.6"
 postgresql = ">=18.4,<19"
 redis-server = ">=8.0"
 # Enforces the broker's import layers (see [tool.importlinter] in broker/pyproject.toml).
@@ -123,13 +124,13 @@ typecheck = { cmd = "mypy broker/src skills --exclude evals/fixtures", descripti
 pre-commit = { cmd = "prek run --all-files", description = "Run pre-commit hooks on all files" }
 lint-imports = { cmd = "lint-imports", cwd = "broker", description = "Check the broker's import layers (import-linter contracts in broker/pyproject.toml)" }
 lint-all = { depends-on = ["lint", "lint-imports", "typecheck", "pre-commit"], description = "Everything the CI lint job runs" }
-test = { cmd = "pytest broker/ skills/ -v", description = "Broker unit tests and skill script tests" }
+test = { cmd = "pytest broker/ skills/ -v -n auto", description = "Broker unit tests and skill script tests" }
 test-spikes = { cmd = "pytest spikes/ -v", description = "Spike validation tests" }
 # COVERAGE_CORE=sysmon: coverage.py's sys.monitoring core (PEP 669, py3.12+)
 # measures line coverage with a fraction of the default C-tracer's overhead
 # -- roughly halves the coverage run's test time here with byte-identical
 # coverage.xml totals. Line coverage only, which is all this task collects.
-test-all = { cmd = "pytest broker/ skills/ spikes/ -v --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", env = { COVERAGE_CORE = "sysmon" }, description = "All tests with coverage" }
+test-all = { cmd = "pytest broker/ skills/ spikes/ -v -n auto --cov=af_mcp_broker --cov-report=xml --cov-report=term-missing", env = { COVERAGE_CORE = "sysmon" }, description = "All tests with coverage" }
 check = { depends-on = ["lint", "typecheck", "test"], description = "Quick check: lint + typecheck + broker tests" }
 check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: all linting + all tests with coverage" }
 
