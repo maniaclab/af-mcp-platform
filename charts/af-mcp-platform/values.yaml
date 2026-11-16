@@ -321,8 +321,9 @@ broker:
   #   # (broker.oauth21.tokenStore.vault). Multiple x509 entries with
   #   # different serviceUrl/voms are supported.
   #   serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
-  #   # VOMS attribute set and proxy validity (HH:MM) forwarded on every
-  #   # mint; audience must match the service's EXPECTED_AUDIENCE.
+  #   # VOMS attribute set (required; the experiment's VO name) and proxy
+  #   # validity (HH:MM) forwarded on every mint; audience must match the
+  #   # service's EXPECTED_AUDIENCE.
   #   voms: "atlas"
   #   valid: "192:00"
   #   audience: "voms-token-service"
@@ -771,22 +772,16 @@ entitlements:
   # The rendered policy.yaml is mounted at /etc/af-mcp/policy.yaml.
   # group_permissions is required and must have at least one entry
   # (values.schema.json): a chart that renders no grants cannot admit anyone.
-  # Leaving group_permissions unset (the default, `{}` here) renders the
-  # UChicago ATLAS AF's own Keycloak group names -- atlas, cms, dune,
-  # escape, af-admins -- see templates/configmap-policy.yaml's `else`
-  # branch for the exact mapping. That is a convenience default for *that
-  # one deployment* and a template for what an overlay looks like, NOT a
-  # generic default: group names are inherently site-specific (they come
-  # from the deployer's own Keycloak realm), so a same-named group in
-  # another realm could mean something else entirely. If you are deploying
-  # this chart for any analysis facility OTHER than the UChicago AF, you
-  # MUST override group_permissions below with your own Keycloak group
-  # names, or every service whose `required_permission` (services.yaml)
-  # isn't __none__ becomes unreachable by everyone -- the broker refuses to
-  # start, naming the offending service and permission, rather than
-  # deploying silently broken (issue #125). See docs/auth.md's "Group-to-
-  # Permission Mapping Example" section for both the UChicago mapping and a
-  # worked example for a non-ATLAS site.
+  # There is no default mapping: group names are inherently site-specific
+  # (they come from the deployer's own Keycloak realm), so a same-named
+  # group in another realm could mean something else entirely. Set
+  # group_permissions to your own Keycloak group names, or every service
+  # whose `required_permission` (services.yaml) isn't __none__ becomes
+  # unreachable by everyone -- the broker refuses to start, naming the
+  # offending service and permission, rather than deploying silently broken
+  # (issue #125). See examples/uchicago-values.yaml for a worked mapping and
+  # docs/auth.md's "Group-to-Permission Mapping Example" section for a
+  # non-ATLAS site.
   # Which permission a service target requires is declared by
   # `required_permission` in services.yaml (aggregator.services), not here --
   # see issue #60.
@@ -907,19 +902,24 @@ portal:
 ingress:
   enabled: true
   className: nginx
-  # FQDN for the broker (REST + MCP) endpoints
-  mcpHost: mcp.af.uchicago.edu
-  # FQDN for the portal (static site)
-  portalHost: mcp-portal.af.uchicago.edu
-  # Extra annotations merged onto the Ingress.
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+  # FQDN for the broker (REST + MCP) endpoints. REQUIRED while
+  # ingress.enabled is true (values.schema.json): there is no default host.
+  mcpHost: ""
+  # FQDN for the portal (static site). REQUIRED while ingress.enabled is true.
+  portalHost: ""
+  # Extra annotations merged onto the Ingress, e.g. the cert-manager
+  # ClusterIssuer that issues the TLS certificates:
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  # The issuer name is a fact about your cluster, so none is set here.
+  annotations: {}
   tls:
     enabled: true
-    # Secret name for the broker TLS certificate (managed by cert-manager)
-    mcpSecretName: letsencrypt-generated-af-mcp
-    # Secret name for the portal TLS certificate (managed by cert-manager)
-    portalSecretName: letsencrypt-generated-af-mcp-portal
+    # Secret name for the broker TLS certificate (e.g. managed by
+    # cert-manager); empty derives "<fullname>-mcp-tls".
+    mcpSecretName: ""
+    # Secret name for the portal TLS certificate; empty derives
+    # "<fullname>-portal-tls".
+    portalSecretName: ""
 
 # ---------------------------------------------------------------------------
 # Network Policy
@@ -941,8 +941,10 @@ networkPolicy:
 # ---------------------------------------------------------------------------
 # Prometheus ServiceMonitor
 # ---------------------------------------------------------------------------
+# Requires the Prometheus Operator (ServiceMonitor CRD); off by default so the
+# chart installs on clusters without it.
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   # Namespace for the ServiceMonitor resource; defaults to the release namespace.
   namespace: ""
@@ -965,7 +967,8 @@ prometheusRule:
 # Grafana Dashboard ConfigMap
 # ---------------------------------------------------------------------------
 grafanaDashboard:
-  enabled: true
-  # Namespace where the ConfigMap is deployed.
-  # The Grafana sidecar (label grafana_dashboard: "1") watches this namespace.
-  namespace: prom
+  enabled: false
+  # Namespace where the ConfigMap is deployed; empty uses the release
+  # namespace. The Grafana sidecar (label grafana_dashboard: "1") watches
+  # its own namespace set, so point this at one it covers.
+  namespace: ""

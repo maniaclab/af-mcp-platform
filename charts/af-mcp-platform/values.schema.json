@@ -357,8 +357,14 @@
                 },
                 "then": {
                   "required": [
-                    "serviceUrl"
-                  ]
+                    "serviceUrl",
+                    "voms"
+                  ],
+                  "properties": {
+                    "voms": {
+                      "minLength": 1
+                    }
+                  }
                 }
               },
               {
@@ -1092,7 +1098,35 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "properties": {
+              "mcpHost": {
+                "minLength": 1
+              },
+              "portalHost": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "mcpHost",
+              "portalHost"
+            ]
+          }
+        }
+      ]
     },
     "networkPolicy": {
       "type": "object",

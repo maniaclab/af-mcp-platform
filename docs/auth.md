@@ -2047,14 +2047,12 @@ JWTs when "Full group path" was left OFF.
 
 ### Group-to-Permission Mapping Example
 
-The chart ships the UChicago ATLAS AF's own `group_permissions` mapping as
-its default (below) — a convenience for that one deployment and a template
-for what an overlay looks like, **not** a generic default. Group names come
-from the deployer's own Keycloak realm, so a same-named group in a
-different realm could mean something else entirely: any analysis facility
-other than the UChicago AF **must** override `entitlements.group_permissions`
-in its `HelmRelease` overlay with its own group names (see the non-ATLAS
-worked example below), or every backend whose `required_permission` isn't
+The chart has no default `group_permissions` mapping: `values.schema.json`
+rejects an empty `entitlements.group_permissions`. Group names come from
+the deployer's own Keycloak realm, so a same-named group in a different
+realm could mean something else entirely: every deployment **must** set
+`entitlements.group_permissions` in its `HelmRelease` overlay with its own
+group names (see the UChicago and non-ATLAS worked examples below), or every backend whose `required_permission` isn't
 `__none__` becomes unreachable by everyone. The broker's startup check (see
 `app.py`'s lifespan) walks every backend's `required_permission` and
 **refuses to start** if no group grants it, naming both the backend and the
@@ -2062,7 +2060,8 @@ permission — a Kubernetes rollout failure with zero outage (the previous
 ReplicaSet keeps serving) is far more visible than a config that silently
 deploys broken.
 
-This is the ATLAS AF's own mapping, the chart default, copyable as a
+This is the ATLAS AF's own mapping (also in
+`charts/af-mcp-platform/examples/uchicago-values.yaml`), copyable as a
 starting point if you're deploying for that AF or want a similar shape:
 
 ```yaml

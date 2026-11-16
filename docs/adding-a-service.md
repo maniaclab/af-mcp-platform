@@ -88,7 +88,7 @@ the portal's Identities page — no separate mapping to keep in sync.
         alias: x509
         targets: ["my-x509-service"]
         serviceUrl: "http://voms-token-service.voms-token.svc.cluster.local:8080"
-        voms: "atlas"       # optional, default "atlas"
+        voms: "atlas"       # required: the experiment's VOMS attribute set
         valid: "192:00"     # optional, default "192:00"
         displayName: "Grid certificate (x509)"
         enables: "VOMS proxy minting for x509-authenticated services"

@@ -77,6 +77,7 @@ def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
@@ -405,6 +406,7 @@ def test_providers_order_matches_identity_providers_config_order(
                 # must still cover it or the broker refuses to start.
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
@@ -478,6 +480,7 @@ def test_broker_issued_link_mechanism_is_none(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],
@@ -602,6 +605,7 @@ def test_explicit_x509_entry_renders_from_its_config(
             [
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "grid-cert-atlas",
                     "display_name": "ATLAS grid certificate",
@@ -982,6 +986,7 @@ def test_unlink_oauth21_alias_204_even_when_revocation_endpoint_fails(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],

@@ -844,6 +844,7 @@ def test_catalog_credential_provider_oauth21_direct(
                 # needs an explicit entry or the broker refuses to start.
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],

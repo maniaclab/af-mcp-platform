@@ -418,6 +418,7 @@ def _bootstrap_oauth21_vault_env(
                 # start (there is no synthesized fallback).
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "service_url": "http://voms-token-service.invalid:8000",
                     "alias": "x509",
                     "targets": ["ami"],

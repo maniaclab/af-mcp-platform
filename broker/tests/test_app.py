@@ -47,6 +47,7 @@ def test_build_target_to_alias_covers_all_auth_shapes() -> None:
             issuer="https://backend-as.example",
         ),
         X509ProviderConfig(
+            voms="atlas",
             alias="x509",
             targets=["ami"],
             service_url="http://voms-token-service.invalid",
@@ -69,6 +70,7 @@ def test_build_target_to_alias_uses_the_real_x509_entry_alias() -> None:
     mapping = build_target_to_alias(
         [
             X509ProviderConfig(
+                voms="atlas",
                 alias="grid-cert-atlas",
                 targets=["ami", "panda"],
                 service_url="http://voms-token-service.invalid",

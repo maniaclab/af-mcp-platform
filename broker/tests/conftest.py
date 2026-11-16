@@ -107,6 +107,7 @@ _DEFAULT_IDENTITY_PROVIDERS = [
     },
     {
         "type": "x509",
+        "voms": "atlas",
         "alias": "x509",
         "display_name": "Grid certificate (x509)",
         "enables": (

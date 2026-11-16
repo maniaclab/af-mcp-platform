@@ -255,7 +255,10 @@ class TestBuildCredentialProviders:
         settings = _settings(
             identity_providers=[
                 X509ProviderConfig(
-                    alias="x509", targets=["ami"], service_url="http://v.invalid"
+                    voms="atlas",
+                    alias="x509",
+                    targets=["ami"],
+                    service_url="http://v.invalid",
                 )
             ],
             broker_signing_key_file=str(broker_signing_key_file),
@@ -297,6 +300,7 @@ class TestResolveX509Provider:
         settings = _settings(
             identity_providers=[
                 X509ProviderConfig(
+                    voms="atlas",
                     alias="x509",
                     targets=["ami", "ami2"],
                     service_url="http://v.invalid",

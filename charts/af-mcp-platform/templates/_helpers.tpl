@@ -208,7 +208,7 @@ ServiceX token" link, optional).
       "display_name" (.displayName | default "")
       "enables" (.enables | default "")
       "service_url" (required "an x509 identityProviders entry needs serviceUrl (the voms-token-service base URL)" .serviceUrl)
-      "voms" (.voms | default "atlas")
+      "voms" (required "an x509 identityProviders entry needs voms (the VOMS attribute set, e.g. the experiment name)" .voms)
       "valid" (.valid | default "192:00")
       "audience" (.audience | default "voms-token-service")
     ) -}}

@@ -49,6 +49,7 @@ def _bootstrap_env(monkeypatch: pytest.MonkeyPatch) -> None:
             [
                 {
                     "type": "x509",
+                    "voms": "atlas",
                     "alias": "x509",
                     "targets": ["ami"],
                     "service_url": "http://voms-token-service.invalid:8000",

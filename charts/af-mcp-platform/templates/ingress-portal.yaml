@@ -27,7 +27,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.portalHost | quote }}
-      secretName: {{ .Values.ingress.tls.portalSecretName | quote }}
+      secretName: {{ .Values.ingress.tls.portalSecretName | default (printf "%s-portal-tls" (include "af-mcp-platform.fullname" .)) | quote }}
   {{- end }}
   rules:
     # Portal host — everything falls through to the portal Service here.

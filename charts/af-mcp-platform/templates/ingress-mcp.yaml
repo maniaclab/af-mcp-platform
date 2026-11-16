@@ -24,7 +24,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.mcpHost | quote }}
-      secretName: {{ .Values.ingress.tls.mcpSecretName | quote }}
+      secretName: {{ .Values.ingress.tls.mcpSecretName | default (printf "%s-mcp-tls" (include "af-mcp-platform.fullname" .)) | quote }}
   {{- end }}
   rules:
     # Broker host — routes /v1 (REST API, including the MCP OAuth bootstrap
