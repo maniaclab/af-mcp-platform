@@ -25,7 +25,7 @@ import contextlib
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import structlog
 
 from af_mcp_broker.constants import POOL_MAX_SIZE, POOL_MIN_SIZE

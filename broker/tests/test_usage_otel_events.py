@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import pytest
 from _otlp_collector import OtlpCollector
 from opentelemetry.sdk._logs.export import (
