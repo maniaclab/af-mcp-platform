@@ -708,7 +708,7 @@ shape as every other broker log line. Each is one JSON object with
 | `logger` | `af_mcp_broker.audit.logger`. |
 | `recorded_at` | ISO 8601 UTC time the record was **created**; for a record the metering worker wrote later, earlier than `timestamp`. |
 | `request_id`, `subject` | The request's id and the caller (for an admin action, the actor). A queued tool-call record carries the request that submitted it. The request's id is on every record, so the audit, `http.request.*` and usage lines of one call share one id. A token's identifier is never put here: `jti` carries a broker identity token's id on credential-release records and `token_id` a PAT's `lookup_id`. |
-| everything else | The `AuditRecord` fields: `audit_id`, `subject`, `principal_uid`, `permission`, `target`, `action`, `action_type`, `args_summary`, `outcome`, `error`, and the metering and attribution fields above. |
+| everything else | The `AuditRecord` fields: `audit_id`, `subject`, `uid`, `permission`, `permission_grant`, `target`, `action`, `action_type`, `args_summary`, `outcome`, `error`, and the metering and attribution fields above. |
 
 Where the lines go: `AUDIT_LOG_FILE` is `-` (stdout, the default) or a file
 path opened for appending. Either way the line is written through the audit
@@ -862,6 +862,23 @@ so one query finds a user or a request on every surface:
   4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7)), a token's
   identifier. A credential-release record names its redeem request in
   `request_id` and the broker identity token in `jti`.
+- **`uid`** is the user's POSIX uid, the name every log line that carries it
+  already used (with `unixname`). The audit field was `principal_uid`.
+- **`permission_grant`** is a PAT's permission scope, the name the token API
+  (`/v1/tokens`), the token registry and the principal use. The audit field was
+  `principal_permission_grant`.
+
+The audit line renames both with no alias, so a query, dashboard or
+log-pipeline rule on the old names stops matching:
+
+| Before | Now |
+|---|---|
+| `principal_uid` | `uid` |
+| `principal_permission_grant` | `permission_grant` |
+
+No usage table has a column for either, and the OTel usage events do not
+carry them, so there is no database migration. `/v1` response bodies and the
+portal never carried the old names.
 
 ## Finding rate-limit refusals
 

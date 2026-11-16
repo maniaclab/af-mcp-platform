@@ -765,7 +765,7 @@ def usage_store() -> UsageStore:
 def _usage_record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
         "subject": "user-123",
-        "principal_uid": 1000,
+        "uid": 1000,
         "permission": "read_data",
         "target": "rucio",
         "action": "rucio_list_dids",

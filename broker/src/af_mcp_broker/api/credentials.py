@@ -947,7 +947,7 @@ def _release_audit(
     """
     return AuditRecord(
         subject=subject,
-        principal_uid=uid,
+        uid=uid,
         permission=None,
         target=audience,
         action="x509_proxy_release",
@@ -1124,7 +1124,7 @@ async def redeem_x509_proxy(request: Request) -> ProxyRedeemResponse:
         await write_audit(
             AuditRecord(
                 subject=subject,
-                principal_uid=claims.get("uid"),
+                uid=claims.get("uid"),
                 permission=None,
                 target=token_aud,
                 action="x509_proxy_release",
@@ -1222,7 +1222,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
         await write_audit(
             AuditRecord(
                 subject=subject,
-                principal_uid=claims.get("uid"),
+                uid=claims.get("uid"),
                 permission=None,
                 target=token_aud,
                 action="krb5_ticket_release",
@@ -1264,7 +1264,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
             await write_audit(
                 AuditRecord(
                     subject=subject,
-                    principal_uid=claims.get("uid"),
+                    uid=claims.get("uid"),
                     permission=None,
                     target=target,
                     action="krb5_ticket_release",
@@ -1293,7 +1293,7 @@ async def redeem_krb5_ticket(request: Request) -> KrbTicketRedeemResponse:
     await write_audit(
         AuditRecord(
             subject=subject,
-            principal_uid=claims.get("uid"),
+            uid=claims.get("uid"),
             permission=None,
             target=target,
             action="krb5_ticket_release",
@@ -1386,7 +1386,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
         await write_audit(
             AuditRecord(
                 subject=subject,
-                principal_uid=claims.get("uid"),
+                uid=claims.get("uid"),
                 permission=None,
                 target=token_aud,
                 action="servicex_token_release",
@@ -1419,7 +1419,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
             await write_audit(
                 AuditRecord(
                     subject=subject,
-                    principal_uid=claims.get("uid"),
+                    uid=claims.get("uid"),
                     permission=None,
                     target=target,
                     action="servicex_token_release",
@@ -1440,7 +1440,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
             await write_audit(
                 AuditRecord(
                     subject=subject,
-                    principal_uid=claims.get("uid"),
+                    uid=claims.get("uid"),
                     permission=None,
                     target=target,
                     action="servicex_token_release",
@@ -1464,7 +1464,7 @@ async def redeem_servicex_token(request: Request) -> ServiceXRedeemResponse:
     await write_audit(
         AuditRecord(
             subject=subject,
-            principal_uid=claims.get("uid"),
+            uid=claims.get("uid"),
             permission=None,
             target=target,
             action="servicex_token_release",

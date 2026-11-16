@@ -293,17 +293,15 @@ Stop the port-forward when done.
 
 ### A tool call
 
-With a bearer token for any user of the realm (see [Connecting a Client](connecting-a-client.md)), call the gateway's own `af_whoami` tool. It needs no linked identity and shows your subject, groups and effective permissions:
+With a bearer token for any user of the realm (see [Connecting a Client](connecting-a-client.md)), run the e2e tests. They connect to the deployment, list the tools the caller can see, and call the gateway's own `af_whoami` tool, which needs no linked identity and shows your subject, groups and effective permissions:
 
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
-pixi run -e dev python scripts/verify-mcp-flow.py \
-  --broker-url https://mcp.af.example.org \
-  --call af_whoami
+E2E_BROKER_URL=https://mcp.af.example.org pixi run test-e2e
 ```
 
-The script lists every tool the caller can see first. An empty list for a user who should have access means no group grants a permission any service requires. Then call a tool of a real backend to prove the broker reaches it.
+A tools/list without `af_whoami` for a user who should have access means the broker rejected or mis-resolved the principal; an otherwise short list means no group grants a permission the missing services require. Then prove the broker reaches a real backend by naming one of its read-only, argument-free tools: `E2E_TOOL=rucio_whoami E2E_BROKER_URL=... pixi run test-e2e`. See [Testing](testing.md#the-e2e-tier).
 
 ### NetworkPolicy
 

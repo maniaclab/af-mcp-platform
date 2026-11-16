@@ -449,7 +449,7 @@ def test_mint_writes_one_audit_record_with_every_field(
     principal = state["principal"]
     lookup_id = body["lookup_id"]
     assert record.subject == principal.subject
-    assert record.principal_uid == principal.uid
+    assert record.uid == principal.uid
     assert record.permission == "tokens"
     assert record.target == "mcp-gateway"
     assert record.action == "token.minted"
@@ -491,7 +491,7 @@ def test_revoke_writes_one_audit_record_with_every_field(
     [record] = audited
     principal = state["principal"]
     assert record.subject == principal.subject
-    assert record.principal_uid == principal.uid
+    assert record.uid == principal.uid
     assert record.permission == "tokens"
     assert record.target == "mcp-gateway"
     assert record.action == "token.revoked"

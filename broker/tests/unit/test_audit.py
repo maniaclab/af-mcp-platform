@@ -22,7 +22,7 @@ from af_mcp_broker.logging import (
 def _record(**overrides: object) -> AuditRecord:
     fields: dict[str, object] = {
         "subject": "sub-abc",
-        "principal_uid": 1000,
+        "uid": 1000,
         "permission": "submit_jobs",
         "target": "panda",
         "action": "submit_task",
@@ -39,7 +39,7 @@ async def test_write_audit_emits_json_line(audit_buffer) -> None:
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -56,7 +56,7 @@ async def test_write_audit_emits_json_line(audit_buffer) -> None:
     assert line["event"] == "audit"
     assert line["target"] == "panda"
     assert line["action_type"] == "state_change"
-    assert line["principal_uid"] == 1000
+    assert line["uid"] == 1000
     # outcome defaults to "success" so pre-existing call sites (that never
     # set it) still audit as a successful invocation.
     assert line["outcome"] == "success"
@@ -71,7 +71,7 @@ async def test_write_audit_metering_fields_default_none(audit_buffer) -> None:
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -92,7 +92,7 @@ async def test_write_audit_metering_fields_serialize_when_set(audit_buffer) -> N
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -119,7 +119,7 @@ async def test_write_audit_token_id_defaults_none(audit_buffer) -> None:
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -138,7 +138,7 @@ async def test_write_audit_token_id_serializes_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -161,7 +161,7 @@ async def test_write_audit_nickname_defaults_none(audit_buffer) -> None:
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -180,7 +180,7 @@ async def test_write_audit_nickname_serializes_when_set(audit_buffer) -> None:
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission=None,
         target="ami",
         action="x509_proxy_release",
@@ -292,7 +292,7 @@ async def test_write_audit_records_denied_outcome_and_error(audit_buffer) -> Non
 
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="submit_jobs",
         target="panda",
         action="submit_task",
@@ -315,7 +315,7 @@ async def test_write_audit_carries_the_content_breakdown(audit_buffer) -> None:
     per-content-type breakdown, keyed by the real content-type string."""
     record = AuditRecord(
         subject="sub-abc",
-        principal_uid=1000,
+        uid=1000,
         permission="read_data",
         target="jhub",
         action="jhub_nb_execute_code",
@@ -343,7 +343,7 @@ async def test_write_audit_content_breakdown_defaults_none(audit_buffer) -> None
     await write_audit(
         AuditRecord(
             subject="sub-abc",
-            principal_uid=1000,
+            uid=1000,
             permission="read_data",
             target="x",
             action="x_y",
