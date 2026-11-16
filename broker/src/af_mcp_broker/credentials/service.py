@@ -7,6 +7,7 @@ import uuid
 from typing import TYPE_CHECKING, ClassVar
 
 import anyio
+import jwt
 import structlog
 
 from af_mcp_broker.audit.logger import AuditRecord, write_audit
@@ -67,7 +68,9 @@ class ServiceProvider(CredentialProvider):
 
         # Shared (non-per-user) service token cache
         self._service_token: str | None = None
-        self._service_token_expires_at: float = 0.0
+        # None: the token carries no expiry (a static token without an exp claim)
+        self._service_token_expires_at: float | None = 0.0
+        self._static_no_expiry_warned = False
         self._refresh_lock = asyncio.Lock()
 
     async def is_linked(self, principal: Principal) -> bool:  # noqa: ARG002 (interface)
@@ -78,7 +81,7 @@ class ServiceProvider(CredentialProvider):
         self,
         principal: Principal,
         target: str,
-        min_remaining_seconds: int = 300,  # noqa: ARG002 (interface)
+        min_remaining_seconds: int = 300,
         passphrase: SecretBytes | None = None,  # noqa: ARG002 (interface)
     ) -> IssuedCredential:
         """Return a bearer credential backed by the AF service account.
@@ -86,7 +89,7 @@ class ServiceProvider(CredentialProvider):
         Always records an audit entry — this is the "AF logs the real user"
         invariant for on-behalf credentials.
         """
-        svc_token = await self._get_service_token()
+        svc_token = await self._get_service_token(min_remaining_seconds)
         audit_id = uuid.uuid4().hex
 
         cred = IssuedCredential(
@@ -120,21 +123,31 @@ class ServiceProvider(CredentialProvider):
     # Service token management
     # ------------------------------------------------------------------
 
-    async def _get_service_token(self) -> str:
-        """Return a valid service token, refreshing via client_credentials if needed."""
+    def _is_usable(self, min_remaining_seconds: int) -> bool:
+        """Return True when the cached token outlives both the refresh buffer and *min_remaining_seconds*."""
+        if self._service_token is None:
+            return False
+        if self._service_token_expires_at is None:
+            return True
         remaining = self._service_token_expires_at - time.time()
-        if (
-            self._service_token is not None
-            and remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS
-        ):
+        return (
+            remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS
+            and remaining >= min_remaining_seconds
+        )
+
+    async def _get_service_token(self, min_remaining_seconds: int = 0) -> str:
+        """Return a service token with at least *min_remaining_seconds* left, refreshing if needed.
+
+        A freshly refreshed token is returned even when its lifetime is still
+        shorter than requested, the same as the per-user providers.
+        """
+        if self._service_token is not None and self._is_usable(min_remaining_seconds):
             return self._service_token
 
         async with self._refresh_lock:
             # Re-check under lock to avoid double-refresh
-            remaining = self._service_token_expires_at - time.time()
-            if (
-                self._service_token is not None
-                and remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS
+            if self._service_token is not None and self._is_usable(
+                min_remaining_seconds
             ):
                 return self._service_token
 
@@ -143,7 +156,37 @@ class ServiceProvider(CredentialProvider):
             self._service_token_expires_at = expires_at
             return self._service_token
 
-    async def _refresh_service_token(self) -> tuple[str, float]:
+    def _static_token_expires_at(self, token: str, source: str) -> float | None:
+        """Return the expiry of a static *token* from its JWT ``exp`` claim, None when it carries none.
+
+        The signature is deliberately not verified: the broker is not the
+        token's audience and only needs the lifetime the issuer stamped on it.
+        A token without a readable ``exp`` (opaque, or a JWT lacking the
+        claim) is treated as non-expiring and logged once at warning level,
+        because the broker cannot tell when it stops working.
+
+        Raises:
+            RuntimeError: if the token's ``exp`` is already in the past.
+
+        """
+        try:
+            claims = jwt.decode(token, options={"verify_signature": False})
+        except jwt.DecodeError:
+            claims = {}
+        exp = claims.get("exp")
+        if isinstance(exp, bool) or not isinstance(exp, int | float):
+            if not self._static_no_expiry_warned:
+                self._static_no_expiry_warned = True
+                self._log.warning("service.token.static_no_expiry", source=source)
+            return None
+        if exp <= time.time():
+            raise RuntimeError(
+                f"The static AF service token from {source} has expired "
+                f"(exp={exp}); replace it."
+            )
+        return float(exp)
+
+    async def _refresh_service_token(self) -> tuple[str, float | None]:
         """Perform the client_credentials grant to get a fresh service token.
 
         Token source priority:
@@ -152,14 +195,18 @@ class ServiceProvider(CredentialProvider):
           3. OAuth2 client_credentials grant using ``AF_SERVICE_CLIENT_ID`` /
              ``AF_SERVICE_CLIENT_SECRET`` against the Keycloak token endpoint.
 
+        The second element is the token's expiry in epoch seconds, or None for
+        a static token that carries none.
+
         Never stores the client secret or any refresh token.
         """
         # Option 1: static token from env (dev/testing shortcut only)
         static_token = os.environ.get("AF_SERVICE_TOKEN")
         if static_token:
             self._log.debug("service.token.from_env")
-            # Assume it expires far in the future — caller will never refresh
-            return static_token, time.time() + 3600
+            return static_token, self._static_token_expires_at(
+                static_token, "AF_SERVICE_TOKEN"
+            )
 
         # Option 2: token file (Kubernetes Secret mounted as file)
         token_file = os.environ.get("AF_SERVICE_TOKEN_FILE")
@@ -170,7 +217,9 @@ class ServiceProvider(CredentialProvider):
                 # loudly, not issue "Bearer " credentials to every backend.
                 raise RuntimeError(f"AF_SERVICE_TOKEN_FILE {token_file} is empty.")
             self._log.debug("service.token.from_file", path=token_file)
-            return token, time.time() + 3600
+            return token, self._static_token_expires_at(
+                token, f"AF_SERVICE_TOKEN_FILE {token_file}"
+            )
 
         # Option 3: OAuth2 client_credentials grant
         client_id = os.environ.get("AF_SERVICE_CLIENT_ID")
