@@ -23,7 +23,7 @@ import json
 import time
 from typing import Any
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import mcp.types as mt
 import pytest
 import structlog

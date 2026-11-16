@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from af_mcp_broker.authorization import EntitlementPolicy, load_policy
 from af_mcp_broker.service_registry import ServiceRegistry
