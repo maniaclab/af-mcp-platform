@@ -5,9 +5,10 @@
  * collapses behind a "Show more" toggle so a service with many methods stays
  * scannable instead of turning into a wall of prose.
  */
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import type { CatalogTool } from '../../lib/api';
+import { loadMarkdownRenderer } from '../../lib/markdownRenderer';
 import ToolTable from '../ToolTable.vue';
 
 function tool(overrides: Partial<CatalogTool> = {}): CatalogTool {
@@ -101,6 +102,9 @@ describe('markdown descriptions', () => {
       },
     });
 
+    await loadMarkdownRenderer();
+    await flushPromises();
+
     expect(wrapper.find('strong').text()).toBe('wildcards');
     await wrapper.find('.tool-table__more-toggle').trigger('click');
     expect(wrapper.find('li').text()).toBe('first');
@@ -120,6 +124,8 @@ describe('markdown descriptions', () => {
       },
     });
     await wrapper.find('.tool-table__more-toggle').trigger('click');
+    await loadMarkdownRenderer();
+    await flushPromises();
 
     expect(wrapper.find('script, img').exists()).toBe(false);
     const hrefs = wrapper.findAll('a').map((a) => a.attributes('href') ?? null);
