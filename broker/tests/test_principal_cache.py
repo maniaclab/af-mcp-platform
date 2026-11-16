@@ -12,6 +12,7 @@ contract.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,7 @@ import httpx2
 import pytest
 import structlog.testing
 
+from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.principal_cache import (
     InMemoryPrincipalCacheBackend,
     PersistedPrincipalRecord,
@@ -36,7 +38,7 @@ from af_mcp_broker.principal_directory import (
     PrincipalNotActiveError,
     PrincipalNotFoundError,
 )
-from af_mcp_broker.vault_kv import VaultKV
+from af_mcp_broker.vault_kv import VaultError, VaultKV
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -988,3 +990,453 @@ async def test_records_survive_reconstructing_the_cache() -> None:
     attrs = await cache_after.get("p1")
 
     assert attrs.groups == ["atlas"]
+
+
+# ---------------------------------------------------------------------------
+# Boundary behaviour under a controlled clock. The clock starts far from zero
+# so that a sign error in an elapsed-time computation (``now + x`` for
+# ``now - x``) changes the outcome instead of hiding behind ``x == 0``.
+# ---------------------------------------------------------------------------
+
+_CLOCK_START = 1_000_000.0
+
+
+class _Clock:
+    """Mutable stand-in for ``time.monotonic`` and ``time.time``, both reading the same value."""
+
+    def __init__(self) -> None:
+        self.now = _CLOCK_START
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(time, "monotonic", lambda: fake.now)
+    monkeypatch.setattr(time, "time", lambda: fake.now)
+    return fake
+
+
+def _boundary_cache(
+    directory: _FakeDirectory,
+    backend: PrincipalCacheBackend | None = None,
+    *,
+    refresh: float = 30.0,
+    max_staleness: float = 100.0,
+    heartbeat: float = 3600.0,
+) -> PrincipalCache:
+    return PrincipalCache(
+        directory,
+        backend=backend or InMemoryPrincipalCacheBackend(),
+        refresh_interval_seconds=refresh,
+        max_staleness_seconds=max_staleness,
+        heartbeat_interval_seconds=heartbeat,
+    )
+
+
+class TestRefreshBoundary:
+    async def test_value_one_tick_before_the_interval_is_served_from_cache(
+        self, clock: _Clock
+    ) -> None:
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs()
+        cache = _boundary_cache(directory)
+        await cache.get("p1")
+
+        clock.now += 29.999
+        await cache.get("p1")
+
+        assert directory.calls == ["p1"]
+
+    async def test_value_exactly_one_interval_old_is_refreshed(
+        self, clock: _Clock
+    ) -> None:
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs()
+        cache = _boundary_cache(directory)
+        await cache.get("p1")
+
+        clock.now += 30.0
+        await cache.get("p1")
+
+        assert directory.calls == ["p1", "p1"]
+
+    async def test_a_changed_group_is_visible_after_the_interval(
+        self, clock: _Clock
+    ) -> None:
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs(groups=["atlas"])
+        cache = _boundary_cache(directory)
+        await cache.get("p1")
+
+        directory.responses["p1"] = _attrs(groups=["atlas", "admins"], uid=None)
+        clock.now += 30.0
+        refreshed = await cache.get("p1")
+
+        assert refreshed.groups == ["atlas", "admins"]
+        assert refreshed.uid is None
+
+
+class TestMaxStalenessBoundary:
+    async def test_value_exactly_max_staleness_old_is_still_served_in_an_outage(
+        self, clock: _Clock
+    ) -> None:
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs()
+        cache = _boundary_cache(directory)
+        await cache.get("p1")
+
+        directory.fail_next = 1
+        clock.now += 100.0
+        attrs = await cache.get("p1")
+
+        assert attrs.groups == ["atlas"]
+
+    async def test_value_past_max_staleness_fails_closed_in_an_outage(
+        self, clock: _Clock
+    ) -> None:
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs()
+        cache = _boundary_cache(directory)
+        await cache.get("p1")
+
+        directory.fail_next = 1
+        clock.now += 100.001
+        with pytest.raises(PrincipalUnavailableError):
+            await cache.get("p1")
+
+
+class TestRejectionBoundary:
+    async def _rejected(self, clock: _Clock) -> tuple[_FakeDirectory, PrincipalCache]:
+        directory = _FakeDirectory()
+        directory.rejected["p1"] = PrincipalDisabledError("p1")
+        cache = _boundary_cache(directory)
+        with pytest.raises(PrincipalRejectedError):
+            await cache.get("p1")
+        return directory, cache
+
+    async def test_rejection_is_answered_without_the_directory_within_the_interval(
+        self, clock: _Clock
+    ) -> None:
+        directory, cache = await self._rejected(clock)
+
+        clock.now += 29.999
+        with pytest.raises(PrincipalRejectedError):
+            await cache.get("p1")
+
+        assert directory.calls == ["p1"]
+
+    async def test_rejection_exactly_one_interval_old_asks_the_directory_again(
+        self, clock: _Clock
+    ) -> None:
+        directory, cache = await self._rejected(clock)
+        directory.rejected.clear()
+        directory.responses["p1"] = _attrs()
+
+        clock.now += 30.0
+        attrs = await cache.get("p1")
+
+        assert attrs.unixname == "auser"
+        assert directory.calls == ["p1", "p1"]
+
+    async def test_still_disabled_after_the_interval_is_rejected_again(
+        self, clock: _Clock
+    ) -> None:
+        directory, cache = await self._rejected(clock)
+
+        clock.now += 30.0
+        with pytest.raises(PrincipalRejectedError):
+            await cache.get("p1")
+
+        assert directory.calls == ["p1", "p1"]
+
+    async def test_rejection_exactly_one_interval_old_is_pruned(
+        self, clock: _Clock
+    ) -> None:
+        directory, cache = await self._rejected(clock)
+        directory.rejected["p2"] = PrincipalDisabledError("p2")
+
+        clock.now += 30.0
+        with pytest.raises(PrincipalRejectedError):
+            await cache.get("p2")
+
+        assert set(cache._rejections) == {"p2"}
+
+    async def test_unexpired_rejections_survive_another_principals_prune(
+        self, clock: _Clock
+    ) -> None:
+        directory, cache = await self._rejected(clock)
+        directory.rejected["p2"] = PrincipalDisabledError("p2")
+
+        clock.now += 29.0
+        with pytest.raises(PrincipalRejectedError):
+            await cache.get("p2")
+
+        assert set(cache._rejections) == {"p1", "p2"}
+
+    async def test_rejection_is_persisted_once_while_it_stays_in_force(
+        self, clock: _Clock
+    ) -> None:
+        backend = _CountingBackend()
+        directory = _FakeDirectory()
+        directory.rejected["p1"] = PrincipalDisabledError("p1")
+        cache = _boundary_cache(directory, backend)
+
+        for _ in range(3):
+            with pytest.raises(PrincipalRejectedError):
+                await cache.get("p1")
+
+        assert backend.put_calls == 1
+
+
+class TestHeartbeatBoundary:
+    async def test_unchanged_value_is_not_rewritten_before_the_heartbeat(
+        self, clock: _Clock
+    ) -> None:
+        backend = _CountingBackend()
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs()
+        cache = _boundary_cache(directory, backend, heartbeat=100.0)
+        await cache.get("p1")
+
+        clock.now += 99.0
+        await cache.get("p1")
+
+        assert backend.put_calls == 1
+
+    async def test_unchanged_value_is_rewritten_exactly_at_the_heartbeat(
+        self, clock: _Clock
+    ) -> None:
+        backend = _CountingBackend()
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs()
+        cache = _boundary_cache(directory, backend, heartbeat=100.0)
+        await cache.get("p1")
+
+        clock.now += 100.0
+        await cache.get("p1")
+
+        assert backend.put_calls == 2
+
+
+class TestColdStartBoundary:
+    async def test_persisted_value_exactly_one_interval_old_asks_the_directory(
+        self, clock: _Clock
+    ) -> None:
+        backend = InMemoryPrincipalCacheBackend()
+        await backend.put(
+            "p1",
+            PersistedPrincipalRecord(
+                attributes=_attrs(uid=42), resolved_at=clock.now - 30.0
+            ),
+        )
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs(uid=999)
+        cache = _boundary_cache(directory, backend)
+
+        attrs = await cache.get("p1")
+
+        assert attrs.uid == 999
+
+    async def test_persisted_value_just_inside_the_interval_is_served(
+        self, clock: _Clock
+    ) -> None:
+        backend = InMemoryPrincipalCacheBackend()
+        await backend.put(
+            "p1",
+            PersistedPrincipalRecord(
+                attributes=_attrs(uid=42), resolved_at=clock.now - 29.0
+            ),
+        )
+        directory = _FakeDirectory()
+        cache = _boundary_cache(directory, backend)
+
+        attrs = await cache.get("p1")
+
+        assert attrs.uid == 42
+        assert directory.calls == []
+
+    async def test_persisted_value_from_a_future_timestamp_ages_from_now(
+        self, clock: _Clock
+    ) -> None:
+        # A replica whose wall clock runs ahead must not produce a negative
+        # age: the value counts as just written, then ages normally.
+        backend = InMemoryPrincipalCacheBackend()
+        await backend.put(
+            "p1",
+            PersistedPrincipalRecord(
+                attributes=_attrs(uid=42), resolved_at=clock.now + 500.0
+            ),
+        )
+        directory = _FakeDirectory()
+        directory.responses["p1"] = _attrs(uid=999)
+        cache = _boundary_cache(directory, backend)
+
+        assert (await cache.get("p1")).uid == 42
+        clock.now += 29.5
+        assert (await cache.get("p1")).uid == 42
+        assert directory.calls == []
+
+        clock.now += 0.5
+        assert (await cache.get("p1")).uid == 999
+
+    async def test_old_tombstone_never_seeds_attributes_during_an_outage(
+        self, clock: _Clock
+    ) -> None:
+        backend = InMemoryPrincipalCacheBackend()
+        await backend.put(
+            "p1",
+            PersistedPrincipalRecord(
+                attributes=_attrs(uid=42),
+                resolved_at=clock.now - 3 * 24 * 3600.0,
+                rejected_reason="disabled",
+            ),
+        )
+        directory = _FakeDirectory()
+        directory.fail_next = 1
+        cache = _boundary_cache(directory, backend)
+
+        with pytest.raises(PrincipalUnavailableError):
+            await cache.get("p1")
+
+    async def test_fresh_tombstone_rejects_without_the_directory(
+        self, clock: _Clock
+    ) -> None:
+        backend = InMemoryPrincipalCacheBackend()
+        await backend.put(
+            "p1",
+            PersistedPrincipalRecord(
+                attributes=_attrs(uid=42),
+                resolved_at=clock.now - 29.0,
+                rejected_reason="disabled",
+            ),
+        )
+        directory = _FakeDirectory()
+        cache = _boundary_cache(directory, backend)
+
+        with pytest.raises(PrincipalRejectedError) as excinfo:
+            await cache.get("p1")
+
+        assert excinfo.value.reason == "disabled"
+        assert directory.calls == []
+
+
+class _BlockingDirectory(PrincipalDirectory):
+    """Directory whose ``resolve`` for one principal waits on an event, counting calls per principal."""
+
+    def __init__(self, blocked: str) -> None:
+        self.blocked = blocked
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()
+        self.calls: list[str] = []
+
+    async def resolve(self, principal_id: str) -> PrincipalAttributes:
+        self.calls.append(principal_id)
+        if principal_id == self.blocked:
+            self.started.set()
+            await self.release.wait()
+        return _attrs(unixname=principal_id)
+
+
+class TestPerPrincipalLocking:
+    async def test_concurrent_gets_for_one_principal_share_one_resolve(self) -> None:
+        directory = _BlockingDirectory(blocked="p1")
+        cache = _boundary_cache(directory)  # type: ignore[arg-type]
+
+        first = asyncio.create_task(cache.get("p1"))
+        await directory.started.wait()
+        second = asyncio.create_task(cache.get("p1"))
+        await asyncio.sleep(0)
+        directory.release.set()
+        results = await asyncio.gather(first, second)
+
+        assert directory.calls == ["p1"]
+        assert [r.unixname for r in results] == ["p1", "p1"]
+
+    async def test_a_slow_principal_does_not_block_another(self) -> None:
+        directory = _BlockingDirectory(blocked="p1")
+        cache = _boundary_cache(directory)  # type: ignore[arg-type]
+
+        slow = asyncio.create_task(cache.get("p1"))
+        await directory.started.wait()
+        other = await asyncio.wait_for(cache.get("p2"), timeout=1.0)
+        directory.release.set()
+        await slow
+
+        assert other.unixname == "p2"
+
+
+# ---------------------------------------------------------------------------
+# VaultPrincipalCacheBackend.put() compare-and-set retries.
+# ---------------------------------------------------------------------------
+
+
+class _ConflictingVault(_FakePrincipalCacheVault):
+    """Rejects the next *conflicts* writes with a CAS mismatch, as a concurrent writer would."""
+
+    def __init__(self, conflicts: int) -> None:
+        super().__init__()
+        self.conflicts = conflicts
+        self.write_attempts = 0
+
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
+        if request.method == "POST" and request.url.path.startswith(
+            f"/v1/{KV_MOUNT}/data/"
+        ):
+            self.write_attempts += 1
+            if self.conflicts > 0:
+                self.conflicts -= 1
+                return httpx2.Response(
+                    400,
+                    json={
+                        "errors": [
+                            "check-and-set parameter did not match the current version"
+                        ]
+                    },
+                    request=request,
+                )
+        return super().handle(request)
+
+
+class TestVaultPutCasRetries:
+    async def test_a_cas_conflict_is_retried_and_the_record_lands(
+        self, sa_token_path: Path
+    ) -> None:
+        fake = _ConflictingVault(conflicts=2)
+        backend = _make_vault_backend(fake, sa_token_path)
+
+        await backend.put(
+            "p1", PersistedPrincipalRecord(attributes=_attrs(uid=7), resolved_at=1.0)
+        )
+
+        got = await backend.get("p1")
+        assert got is not None
+        assert got.attributes.uid == 7
+        assert fake.write_attempts == 3
+
+    async def test_exhausting_the_retry_budget_raises_vault_error(
+        self, sa_token_path: Path
+    ) -> None:
+        fake = _ConflictingVault(conflicts=MAX_CAS_RETRIES + 1)
+        backend = _make_vault_backend(fake, sa_token_path)
+
+        with pytest.raises(VaultError, match="exceeded retry budget"):
+            await backend.put(
+                "p1",
+                PersistedPrincipalRecord(attributes=_attrs(), resolved_at=1.0),
+            )
+
+        assert fake.write_attempts == MAX_CAS_RETRIES
+        assert await backend.get("p1") is None
+
+    async def test_record_fields_roundtrip_through_vault(
+        self, sa_token_path: Path
+    ) -> None:
+        backend = _make_vault_backend(_FakePrincipalCacheVault(), sa_token_path)
+        record = PersistedPrincipalRecord(
+            attributes=_attrs(uid=None, gid=None, unixname=None, groups=[], email=""),
+            resolved_at=5.0,
+            rejected_reason="disabled",
+        )
+        await backend.put("p1", record)
+
+        assert await backend.get("p1") == record
