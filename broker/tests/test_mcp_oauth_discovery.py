@@ -34,13 +34,13 @@ from cryptography.fernet import Fernet
 from structlog.testing import capture_logs
 
 from af_mcp_broker.api import mcp_oauth
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.api.mcp_oauth import (
     _keycloak_authorization_endpoint,
     _keycloak_token_endpoint,
 )
 from af_mcp_broker.app import app
 from af_mcp_broker.config import Settings
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeRecord
 from af_mcp_broker.oauth_state import build_mcp_authorize_state, generate_pkce_pair
 

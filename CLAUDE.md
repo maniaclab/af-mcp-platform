@@ -12,7 +12,7 @@ Everything Python runs through [pixi](https://pixi.sh); dependencies live in `pi
 
 ```bash
 pixi run -e dev broker       # run broker locally with reload → http://localhost:8080/docs
-pixi run test                # broker unit tests (pytest broker/ -v)
+pixi run test                # broker + skills tests in parallel (pytest broker/ skills/ -v -n auto; -n 0 to debug serially)
 pixi run test-spikes         # spike validation tests (pytest spikes/ -v)
 pixi run lint                # ruff check + format --check on broker/
 pixi run fmt                 # ruff format + autofix

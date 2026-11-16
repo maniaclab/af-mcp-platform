@@ -31,6 +31,7 @@ from test_request_logging import _capturing_info
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.api import credentials as credentials_api
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.credentials import (
     CredentialKind,
     ExecutionModel,
@@ -40,7 +41,6 @@ from af_mcp_broker.credentials.errors import (
     Krb5TokenMintError,
     Krb5TokenRenewalWindowClosedError,
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.vault_kv import VaultKV
 
 if TYPE_CHECKING:

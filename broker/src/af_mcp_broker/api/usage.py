@@ -24,9 +24,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.auth import keycloak_dependency, require_admin
 from af_mcp_broker.authorization import is_admin
 from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.identity import keycloak_dependency, require_admin
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 from af_mcp_broker.usage.summary import (

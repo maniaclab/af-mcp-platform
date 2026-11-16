@@ -33,6 +33,7 @@ from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 
 from af_mcp_broker.api import catalog_tools
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.config import Settings
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
@@ -43,7 +44,6 @@ from af_mcp_broker.credentials import (
     ExecutionModel,
     IssuedCredential,
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.mcp.diagnostics import register_diagnostic_tools
 from af_mcp_broker.service_registry import (
     DIAGNOSTIC_TOOL_NAMES,

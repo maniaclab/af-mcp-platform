@@ -4,11 +4,11 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.broker_state import get_broker_state, get_state_settings
 from af_mcp_broker.config import (
     Settings,  # noqa: TC001 -- FastAPI resolves the dependency annotations at runtime
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.maintenance import check_not_maintenance_or_fail_open
 from af_mcp_broker.principal import Principal
 

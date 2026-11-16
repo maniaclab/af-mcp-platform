@@ -57,15 +57,21 @@ def _wait_for_port(
     raise RuntimeError(msg)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def serve() -> Iterator[Callable[[str, str], int]]:
     """Start a fixture server subprocess on a free port; return its port.
 
     Call as ``serve("compliant", "http")`` or ``serve("status", "401")``.
+    One server per ``(kind, mode)`` is shared by every test in the session
+    (and per xdist worker): the servers hold no state a test can change, and
+    starting a Python process that imports fastmcp costs ~0.5s each.
     """
     procs: list[subprocess.Popen[bytes]] = []
+    ports: dict[tuple[str, str], int] = {}
 
     def start(kind: str, mode: str) -> int:
+        if (kind, mode) in ports:
+            return ports[kind, mode]
         port = _free_port()
         proc = subprocess.Popen(
             [sys.executable, str(FIXTURE_SERVERS), kind, mode, str(port)],
@@ -74,6 +80,7 @@ def serve() -> Iterator[Callable[[str, str], int]]:
         )
         procs.append(proc)
         _wait_for_port(port, proc)
+        ports[kind, mode] = port
         return port
 
     yield start

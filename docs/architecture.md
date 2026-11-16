@@ -537,9 +537,9 @@ non-Optional, validated once when the record is read.
 Extracts and validates the AF principal from the incoming request.
 
 - Validates the caller's Keycloak-issued JWT directly (`HTTPBearer` +
-  `keycloak_dependency`) — there's no ForwardAuth proxy forwarding it; every
-  caller (portal SPA, Claude Desktop, `curl`) presents its own Bearer. See
-  [docs/auth.md](auth.md) for the per-client-identity breakdown.
+  `keycloak_dependency` in `api/auth.py`) — there's no ForwardAuth proxy
+  forwarding it; every caller (portal SPA, Claude Desktop, `curl`) presents
+  its own Bearer. See [docs/auth.md](auth.md) for the per-client-identity breakdown.
 - Resolves the POSIX `uid` / `gid` for the principal (needed for x509
   minting, which voms-token-service performs as that user).
 - Produces a `Principal` dataclass that flows through the rest of the call.
@@ -745,6 +745,11 @@ The threshold and window are configurable via `Settings`:
 |---|---|---|
 | `CREDENTIAL_UNLOCK_MAX_FAILURES` | `credential_unlock_max_failures` | 5 attempts |
 | `CREDENTIAL_UNLOCK_WINDOW_SECONDS` | `credential_unlock_window_seconds` | 900s (15 min) |
+
+The limit is the number of failures tolerated per window: with the default of 5, the
+fifth failed unlock is still allowed to pass and the sixth is refused (the counter
+must *exceed* the limit). `check_unlock_rate_limit()` therefore passes at exactly
+the limit.
 
 Five attempts is generous enough to tolerate a mistyped passphrase but tight
 enough to slow a brute-force guesser; fifteen minutes roughly matches how

@@ -38,7 +38,7 @@ through in the Keycloak admin console to make the narrative true.
 Every caller of the broker — the portal SPA, Claude Desktop, `curl`, any
 future MCP client — obtains its **own** OAuth token for the broker's
 audience (`mcp-gateway`) and sends it as a Bearer directly. The broker
-validates it itself (`HTTPBearer` + `keycloak_dependency` in `identity.py`);
+validates it itself (`HTTPBearer` + `keycloak_dependency` in `api/auth.py`);
 there is no ForwardAuth proxy in this path, or in front of the portal's
 HTML/static assets — the portal enforces its own client-side OIDC login —
 see [Portal auth](#portal-auth-oidc-public-client) below.
@@ -2001,7 +2001,7 @@ client scope ships an **Audience Resolve** mapper that unconditionally adds
 entry — which `read-token`-holders always do, independent of
 `mcp-gateway`. A user's token can therefore still show `aud` containing
 both `mcp-gateway` and `broker` (the latter purely from holding
-`read-token` for IAM purposes) — `identity.py`'s `keycloak_dependency` only
+`read-token` for IAM purposes) — `api/auth.py`'s `keycloak_dependency` only
 ever checks that `aud` *contains* `mcp-gateway`, so the extra `broker`
 entry is inert to the broker and safe to ignore.
 

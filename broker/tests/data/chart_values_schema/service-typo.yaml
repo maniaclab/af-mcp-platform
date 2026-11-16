@@ -1,0 +1,6 @@
+# A misspelt key on a service entry would be dropped silently by the broker.
+aggregator:
+  services:
+    - name: docs-example
+      url: "http://docs-mcp.example.svc.cluster.local/mcp"
+      requried_permission: __none__

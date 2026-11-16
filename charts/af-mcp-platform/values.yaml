@@ -712,6 +712,8 @@ tokenSweep:
 # Aggregator: FastMCP service registry
 # ---------------------------------------------------------------------------
 aggregator:
+  # Required, at least one entry (values.schema.json). The schema also rejects
+  # keys that are not ServiceSpec fields.
   # List of ServiceSpec objects passed verbatim into services.yaml.
   # Each entry should follow the FastMCP ServiceSpec schema, e.g.:
   #   - name: my-tool
@@ -766,6 +768,8 @@ aggregator:
 # ---------------------------------------------------------------------------
 entitlements:
   # The rendered policy.yaml is mounted at /etc/af-mcp/policy.yaml.
+  # group_permissions is required and must have at least one entry
+  # (values.schema.json): a chart that renders no grants cannot admit anyone.
   # Leaving group_permissions unset (the default, `{}` here) renders the
   # UChicago ATLAS AF's own Keycloak group names -- atlas, cms, dune,
   # escape, af-admins -- see templates/configmap-policy.yaml's `else`

@@ -1,0 +1,7 @@
+# Three independent violations: helm must report all of them in one error.
+broker:
+  keycloakAdmn:
+    clientId: typo
+  replicaCount: abc
+aggregator:
+  services: []

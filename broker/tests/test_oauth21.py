@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from af_mcp_broker.api import oauth21 as oauth21_module
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.config import get_settings
 from af_mcp_broker.credentials import CredentialRegistry
@@ -39,7 +40,6 @@ from af_mcp_broker.credentials.oauth21 import (
     StoredOAuthCredential,
     normalize_token_response,
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,

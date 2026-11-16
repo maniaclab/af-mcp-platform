@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING, Any, cast
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 from fastmcp.server.providers.proxy import ProxyTool
-from jsonschema import SchemaError  # type: ignore[import-untyped]
-from jsonschema import (  # type: ignore[import-untyped]
+from jsonschema import SchemaError
+from jsonschema import (
     exceptions as jsonschema_exceptions,
 )
-from jsonschema.validators import validator_for  # type: ignore[import-untyped]
+from jsonschema.validators import validator_for
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
