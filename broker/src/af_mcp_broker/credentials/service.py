@@ -4,6 +4,7 @@ import asyncio
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 import anyio
@@ -37,6 +38,19 @@ _DEFAULT_SERVICE_TARGETS: frozenset[str] = frozenset(
 _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS = 60
 
 
+@dataclass(frozen=True)
+class _ServiceToken:
+    """A service token with the expiry it was minted with.
+
+    Immutable so a reader always sees a token and the expiry that belongs to
+    it, even when another task refreshes the cache in between.
+    """
+
+    token: str
+    # None: the token carries no expiry (a static token without an exp claim)
+    expires_at: float | None
+
+
 class ServiceProvider(CredentialProvider):
     """Issues on-behalf-of credentials using the AF service account.
 
@@ -67,9 +81,7 @@ class ServiceProvider(CredentialProvider):
         self._log = structlog.get_logger(__name__).bind(provider="ServiceProvider")
 
         # Shared (non-per-user) service token cache
-        self._service_token: str | None = None
-        # None: the token carries no expiry (a static token without an exp claim)
-        self._service_token_expires_at: float | None = 0.0
+        self._service_token: _ServiceToken | None = None
         self._static_no_expiry_warned = False
         self._refresh_lock = asyncio.Lock()
 
@@ -96,9 +108,9 @@ class ServiceProvider(CredentialProvider):
             cred_class=self.cred_class,
             target=target,
             kind=CredentialKind.BEARER,
-            expires_at=self._service_token_expires_at,
+            expires_at=svc_token.expires_at,
             payload={
-                "access_token": svc_token,
+                "access_token": svc_token.token,
                 "on_behalf_of": principal.email,
                 "token_type": "Bearer",
             },
@@ -127,15 +139,15 @@ class ServiceProvider(CredentialProvider):
         """Return True when the cached token outlives both the refresh buffer and *min_remaining_seconds*."""
         if self._service_token is None:
             return False
-        if self._service_token_expires_at is None:
+        if self._service_token.expires_at is None:
             return True
-        remaining = self._service_token_expires_at - time.time()
+        remaining = self._service_token.expires_at - time.time()
         return (
             remaining > _SERVICE_TOKEN_REFRESH_BUFFER_SECONDS
             and remaining >= min_remaining_seconds
         )
 
-    async def _get_service_token(self, min_remaining_seconds: int = 0) -> str:
+    async def _get_service_token(self, min_remaining_seconds: int = 0) -> _ServiceToken:
         """Return a service token with at least *min_remaining_seconds* left, refreshing if needed.
 
         A freshly refreshed token is returned even when its lifetime is still
@@ -152,8 +164,7 @@ class ServiceProvider(CredentialProvider):
                 return self._service_token
 
             token, expires_at = await self._refresh_service_token()
-            self._service_token = token
-            self._service_token_expires_at = expires_at
+            self._service_token = _ServiceToken(token, expires_at)
             return self._service_token
 
     def _static_token_expires_at(self, token: str, source: str) -> float | None:
