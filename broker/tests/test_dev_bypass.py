@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import configure_x509_service_env
+from conftest import TEST_SERVICES, configure_x509_service_env
 from fastapi.testclient import TestClient
 
 from af_mcp_broker.app import app
@@ -20,7 +20,6 @@ from af_mcp_broker.config import get_settings
 # The shipped policy/backends need to be findable regardless of the caller's CWD.
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 # Copy-paste value from docs/local-development.md so the tests exercise the
 # exact string a developer will use.
@@ -38,7 +37,7 @@ DEV_PRINCIPAL_JSON = json.dumps(
 def _bootstrap_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the app at the shipped YAML and an ephemeral metrics port."""
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
+    monkeypatch.setenv("SERVICES_FILE", str(TEST_SERVICES))
     monkeypatch.setenv("METRICS_PORT", "0")
     # The shipped services.yaml wires "ami" with auth_type: x509, which
     # needs an explicit identity_providers entry covering it or the broker

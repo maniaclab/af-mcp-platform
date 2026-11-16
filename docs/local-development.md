@@ -21,38 +21,49 @@ past that instead of standing up a real Keycloak locally.
 
 ## The two-terminal workflow
 
-**Terminal 1 — broker on :8080:**
+**Terminal 1 — broker on :8080, auth bypassed:**
 
 ```bash
-pixi run -e dev broker
+pixi run -e bypass broker
 ```
 
-Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>.
+Starts uvicorn with `--reload`. API is at <http://localhost:8080/docs>. The
+`bypass` environment is the one for UI work: it needs no Keycloak, and the
+broker returns a fixed dev principal on every request (see "Getting past auth
+for UI work" below).
 
-> The broker also refuses to boot when `POLICY_FILE` is missing, unreadable
-> or grants no permissions, with or without the bypass below. The pixi `dev`
-> and `bypass` environments (their `localdev` feature) set `POLICY_FILE` to
-> the dev-only policy at `broker/src/af_mcp_broker/authorization/policy.yaml`
-> (ATLAS AF group names), so `pixi run -e dev broker` works out of the box.
+> The broker refuses to boot when `POLICY_FILE` is missing, unreadable or
+> grants no permissions, and when `SERVICES_FILE` is missing, unreadable,
+> invalid or defines no services; the bypass changes neither. The pixi `dev`
+> and `bypass` environments (their `localdev` feature) point them at the
+> dev-only policy `broker/src/af_mcp_broker/authorization/policy.yaml` (ATLAS
+> AF group names) and the dev registry
+> `broker/src/af_mcp_broker/mcp/services.yaml`, so both work out of the box.
 > The `broker` environment, which the container image is built from, sets
 > neither path: the image's entrypoint would export them over the deployment's
-> own configuration. To use your own, export
-> `POLICY_FILE=/path/to/policy.yaml` first; it needs at least one group that
-> maps to a non-empty permission list.
+> own configuration. Export `POLICY_FILE=/path/to/policy.yaml` (it needs at
+> least one group that maps to a non-empty permission list) and/or
+> `SERVICES_FILE=/path/to/services.yaml` first to use your own; an exported
+> value wins over the default.
 >
-> It likewise refuses to boot when `SERVICES_FILE` is missing, unreadable,
-> invalid or defines no services. The `localdev` feature sets `SERVICES_FILE` to
-> the dev registry at `broker/src/af_mcp_broker/mcp/services.yaml`; export
-> `SERVICES_FILE=/path/to/services.yaml` to use your own.
+> The dev registry holds only services the local modes can satisfy, so it has
+> no `auth_type: x509` entry. An x509 service needs an `x509`
+> `IDENTITY_PROVIDERS` entry covering it, the voms-token-service
+> (`service_url`), the broker signing key (`BROKER_SIGNING_KEY_FILE`) and Vault
+> (`VAULT_ADDR`, `VAULT_KV_ROOT`, `VAULT_AUTH_ROLE`) at boot. If you have that
+> infrastructure, copy `services.yaml` to a file of your own, add the service
+> (see `broker/tests/data/x509-ami-service.yaml` for the entry shape) and
+> export `SERVICES_FILE` for it, `IDENTITY_PROVIDERS` with an `x509` entry whose
+> `targets` names it (see docs/auth.md), and the settings above.
 
-> `pixi run -e dev broker` refuses to start unless a Keycloak admin service
-> account is configured: every credential type (JWT included, not just
-> PATs) resolves its groups and POSIX identity from that account, so a
-> broker with neither it nor the bypass below configured can never
-> authenticate anyone — see docs/auth.md's "Operator setup: the Keycloak
-> admin service account" for details. If you don't have a real Keycloak
-> realm handy, skip straight to `pixi run -e bypass broker` in the next
-> section instead.
+> `pixi run -e dev broker` is the mode without the bypass. It refuses to start
+> unless `OIDC_ISSUER` names a real Keycloak realm (`https://…/realms/…`) and a
+> Keycloak admin service account is configured
+> (`KEYCLOAK_ADMIN_CLIENT_ID`/`KEYCLOAK_ADMIN_CLIENT_SECRET`): every credential
+> type (JWT included, not just PATs) resolves its groups and POSIX identity from
+> that account, so a broker with neither it nor the bypass can never
+> authenticate anyone — see docs/auth.md's "Operator setup: the Keycloak admin
+> service account" for details. Use it only with a real realm to point at.
 
 **Terminal 2 — portal on :4321:**
 
@@ -82,14 +93,26 @@ At this point the broker will 401 on every `/v1/*` call because no bearer
 is being sent. The broker ships a local-dev opt-in that returns a hardcoded
 "dev principal" without inspecting the token.
 
-Restart the broker in terminal 1 with the `bypass` environment — it sets
-both env vars as pixi feature activation:
+The `bypass` environment (terminal 1 above) sets both env vars as pixi
+feature activation:
 
 ```bash
 pixi run -e bypass broker
 ```
 
-Equivalent long form, for one-off overrides:
+The activation exports `BROKER_DEV_INSECURE_PRINCIPAL` and `OIDC_ISSUER`; an
+`OIDC_ISSUER` already exported in your shell is kept, and so are `POLICY_FILE`
+and `SERVICES_FILE`. `BROKER_DEV_INSECURE_PRINCIPAL` is always overwritten
+(its JSON value cannot be wrapped in a shell default), so to change the dev
+principal, set it with `env` after pixi's activation has run:
+
+```bash
+pixi run -e bypass env \
+  BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["cms"]}' \
+  uvicorn af_mcp_broker.app:app --port 8080 --reload
+```
+
+Equivalent long form, without the `bypass` environment:
 
 ```bash
 # the dev policy (`POLICY_FILE`) grants read_data and friends to atlas; pick a
@@ -98,6 +121,21 @@ export BROKER_DEV_INSECURE_PRINCIPAL='{"uid":1000,"gid":1000,"unixname":"devuser
 export OIDC_ISSUER=http://localhost:8081/realms/dev
 pixi run -e dev broker
 ```
+
+Note that last form still needs the Keycloak admin service account only when
+the bypass is off; with `BROKER_DEV_INSECURE_PRINCIPAL` set it boots as is.
+
+### Viewing the Admin page
+
+The Admin page and `/v1/admin/*` need the principal to be in the group named
+by `ADMIN_GROUP`, which is empty by default (nobody is an admin). Export it
+before starting the broker, naming a group the dev principal is in:
+
+```bash
+ADMIN_GROUP=atlas pixi run -e bypass broker
+```
+
+`GET /v1/identities` then reports `"is_admin": true`.
 
 You should see a very loud warning line at startup:
 

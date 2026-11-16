@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import SHIPPED_POLICY, SHIPPED_SERVICES
+from conftest import SHIPPED_POLICY, TEST_SERVICES
 
 from af_mcp_broker.config import (
     KeycloakBrokeredProviderConfig,
@@ -76,7 +76,7 @@ class TestBuildServiceCatalog:
 
     def test_the_shipped_dev_services_are_accepted(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path, "")
-        settings.services_file = str(SHIPPED_SERVICES)
+        settings.services_file = str(TEST_SERVICES)
         settings.policy_file = str(SHIPPED_POLICY)
 
         catalog = build_service_catalog(settings)

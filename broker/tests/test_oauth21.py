@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx2
 import pytest
 import structlog
-from conftest import configure_x509_service_env
+from conftest import TEST_SERVICES, configure_x509_service_env
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -64,7 +64,6 @@ EXPECTED_STATE_ISSUER = "https://keycloak.invalid/realms/connect"
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
 TOKEN_ENDPOINT = "https://backend-as.example/token"
@@ -1412,7 +1411,7 @@ def _x509_service_env(
 def _bootstrap_no_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the app at the shipped YAML with no keycloak_dependency override."""
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
+    monkeypatch.setenv("SERVICES_FILE", str(TEST_SERVICES))
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("OIDC_ISSUER", EXPECTED_STATE_ISSUER)
     # Issue #144 step 3: the broker refuses to start without a configured

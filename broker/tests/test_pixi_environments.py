@@ -58,7 +58,7 @@ def test_local_environments_point_at_the_dev_policy_and_services(
     env: dict[str, str] = {}
     for feature in _environment_features(manifest, environment):
         env.update(_activation_env(manifest, feature))
-    assert env["POLICY_FILE"].endswith(
-        "broker/src/af_mcp_broker/authorization/policy.yaml"
-    )
-    assert env["SERVICES_FILE"].endswith("broker/src/af_mcp_broker/mcp/services.yaml")
+    # Both are `${VAR:-<default>}`: the default is the dev file, and a
+    # caller's own export wins.
+    assert "broker/src/af_mcp_broker/authorization/policy.yaml" in env["POLICY_FILE"]
+    assert "broker/src/af_mcp_broker/mcp/services.yaml" in env["SERVICES_FILE"]
