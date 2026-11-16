@@ -69,7 +69,7 @@ SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
 TOKEN_ENDPOINT = "https://backend-as.example/token"
 PROVIDER_ISSUER = "https://backend-as.example"
-CLIENT_ID = "https://mcp.af.uchicago.edu/.well-known/cimd"
+CLIENT_ID = "https://mcp.example.org/.well-known/cimd"
 REVOCATION_ENDPOINT = "https://backend-as.example/revoke"
 
 # A statically-registered confidential client (e.g. a JupyterHub service),

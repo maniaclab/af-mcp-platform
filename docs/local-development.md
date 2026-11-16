@@ -182,12 +182,12 @@ so by default `astro dev` skips OIDC entirely (see the bypass workflow
 above — that's the normal path for UI work). To exercise the real
 Authorization Code + PKCE flow against a real Keycloak realm instead, edit
 that file locally with your facility's own values (never commit real
-values). UChicago's ATLAS AF, for example, uses:
+values). A facility's values might look like:
 
 ```json
 {
   "oidc": {
-    "issuer": "https://auth.af.uchicago.edu/realms/connect",
+    "issuer": "https://auth.example.org/realms/example",
     "clientId": "mcp-portal",
     "scope": "openid profile email mcp-gateway"
   },

@@ -70,7 +70,7 @@ the ones registered in the reference deployment today:
 ## Deploying your own mix
 
 None of the services above are required by af-mcp-platform itself — they're
-what UChicago's ATLAS AF happens to run behind its broker. A different
+what the reference deployment happens to run behind its broker. A different
 facility or experiment deploys the same broker + portal chart and registers
 whichever backend MCP servers and credential services fit its own compute
 and storage systems; see [Adding a Service](adding-a-service.md) for the

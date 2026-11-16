@@ -1,8 +1,8 @@
 # Connecting a Client
 
 How to point an MCP client at an AF broker and get real AF tools (Rucio,
-AMI, ...) inside it. Examples below use the UChicago ATLAS AF's deployment
-(`https://mcp.af.uchicago.edu/mcp`) as the concrete worked example —
+AMI, ...) inside it. Examples below use a placeholder deployment
+(`https://mcp.example.org/mcp`) as the concrete worked example —
 connecting to another facility's deployment follows the same flow against
 that facility's own broker hostname and Keycloak realm. This page covers the
 client side; see [Architecture](architecture.md) for how the broker itself
@@ -15,7 +15,7 @@ Before a tool call succeeds, three things have to be true, in order:
 
 1. **You have an AF account** that can obtain an `aud=mcp-gateway` access
    token from AF Keycloak's `connect` realm. This is the same login the
-   portal (`mcp-portal.af.uchicago.edu`) uses.
+   portal (`mcp-portal.example.org`) uses.
 2. **Your Keycloak group membership grants the permission the tool's
    backend requires** (e.g. Rucio tools require `read_data`). Permissions
    come from the `groups` claim on your token via `policy.yaml`'s
@@ -25,7 +25,7 @@ Before a tool call succeeds, three things have to be true, in order:
 3. **For backends that need your own credential** (`auth_type: bearer` in
    `services.yaml` — Rucio is the Phase 1 example), **you've linked that
    identity provider from the portal's Identities page**
-   (`mcp-portal.af.uchicago.edu/identities/`). Without this, the tool is
+   (`mcp-portal.example.org/identities/`). Without this, the tool is
    visible in `tools/list` (entitlement filtering only checks the
    permission, not linkage) but fails at call time with a "not linked"
    error.
@@ -49,7 +49,7 @@ there is no ForwardAuth proxy in front of `/mcp` (see
 - **A manually minted PAT** — for CI, scripts, and clients that cannot do
   OAuth (no browser to open, or a client too old to implement the spec).
   Mint one at
-  [`mcp-portal.af.uchicago.edu/tokens`](https://mcp-portal.af.uchicago.edu/tokens/)
+  [`mcp-portal.example.org/tokens`](https://mcp-portal.example.org/tokens/)
   and paste it into your client's configuration once (see
   [Programmatic client bootstrap](auth.md#programmatic-client-bootstrap) for
   what that page's mint/list/revoke endpoints actually do, including the
@@ -74,7 +74,7 @@ is the same request:
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
 
-curl -sS -X POST "https://mcp.af.uchicago.edu/v1/tokens" \
+curl -sS -X POST "https://mcp.example.org/v1/tokens" \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-laptop", "note": "optional free-text note"}'
@@ -97,7 +97,7 @@ known limitations for why.
 Add a custom connector with just the server URL — no header, no token:
 
 1. Go to **Settings > Connectors > Add custom connector**.
-2. Enter the server URL: `https://mcp.af.uchicago.edu/mcp/` (note the
+2. Enter the server URL: `https://mcp.example.org/mcp/` (note the
    trailing slash — see [Errors](#errors-youll-see)).
 3. Click **Add**, then enable the connector for your conversation via the
    "+" button's Connectors menu.
@@ -119,7 +119,7 @@ Claude stores either credential securely and does not display it again.
 ## Claude Code
 
 ```bash
-claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp/
+claude mcp add --transport http atlas-af https://mcp.example.org/mcp/
 ```
 
 No `--header` needed. The first tool call 401s, Claude Code discovers the
@@ -135,7 +135,7 @@ scope via `claude mcp add --scope user ...`):
   "mcpServers": {
     "atlas-af": {
       "type": "http",
-      "url": "https://mcp.af.uchicago.edu/mcp/"
+      "url": "https://mcp.example.org/mcp/"
     }
   }
 }
@@ -149,7 +149,7 @@ static header instead, the same way as before:
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
 
-claude mcp add --transport http atlas-af https://mcp.af.uchicago.edu/mcp/ \
+claude mcp add --transport http atlas-af https://mcp.example.org/mcp/ \
   --header "Authorization: Bearer $MCP_BEARER_TOKEN"
 ```
 
@@ -159,7 +159,7 @@ time — the token itself never needs to be written into the JSON file.
 ## Any other MCP-over-HTTP client
 
 The pattern is the same everywhere: HTTP (or SSE) transport, pointed at
-`https://mcp.af.uchicago.edu/mcp/`. A client built on an MCP SDK with OAuth
+`https://mcp.example.org/mcp/`. A client built on an MCP SDK with OAuth
 support (e.g. the Python or TypeScript `mcp` SDKs' own client auth helpers)
 needs nothing else configured — it follows the same discovery-then-login
 sequence described above on its own. A client without that support still
@@ -173,7 +173,7 @@ your own token before wiring up a client:
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
-pixi run -e dev python scripts/verify-mcp-flow.py
+pixi run -e dev python scripts/verify-mcp-flow.py --broker-url https://mcp.example.org
 ```
 
 ## What tools you should expect to see
@@ -258,7 +258,7 @@ to your own traces — both are covered in
   your own agent's tool calls.
 - [Authentication](auth.md) — how identity providers, IAM-brokered tokens,
   and x509/VOMS proxies work.
-- The portal's [Identities page](https://mcp-portal.af.uchicago.edu/identities/)
+- The portal's [Identities page](https://mcp-portal.example.org/identities/)
   — link the accounts your tool calls need credentials for.
 - [Phase 1 Acceptance Checklist](phase1-acceptance-checklist.md) — what's
   verified by automated tests vs. what still needs a live-deploy check with

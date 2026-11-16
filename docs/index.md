@@ -16,9 +16,8 @@ LLM clients never hold raw x509 or IAM credentials. Every method invocation
 before reaching any backend.
 
 The reference deployment is the [UChicago ATLAS Analysis Facility](https://af.uchicago.edu/)
-(`mcp.af.uchicago.edu`, ~800 physics users); the diagrams and examples below
-use its endpoint names and values as one concrete instance of the platform,
-not as universal facts.
+(~800 physics users); the diagrams and examples below use placeholder
+`example.org` endpoint names and values, not universal facts.
 
 ## Architecture at a glance
 
@@ -26,7 +25,7 @@ not as universal facts.
 Claude / Gemini / any MCP client         Browser (portal SPA)
         │  own Bearer (OIDC)                     │  own OIDC login (client-side)
         ▼                                         ▼
-mcp.af.uchicago.edu                     mcp-portal.af.uchicago.edu
+mcp.example.org                         mcp-portal.example.org
 (broker validates the                   (portal does its own OIDC;
  Bearer itself)                          /v1 + /mcp carry no gate)
         │                                         │

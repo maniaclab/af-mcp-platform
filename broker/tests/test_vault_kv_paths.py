@@ -9,16 +9,15 @@ from pydantic import ValidationError
 
 from af_mcp_broker.config import Settings, VaultKvPaths
 
-# The KV prefixes the two production brokers used before the root existed,
-# read from the live Deployments' env (`kubectl get deploy -n mcp
-# af-mcp-platform-broker af-mcp-ops-platform-broker`) on 2026-11-16. The
+# The KV prefixes brokers used when each store had its own prefix setting. The
 # derived paths must equal them so no Vault record migrates.
 #
-# Ops did not set the maintenance-mode, x509, krb5, servicex and credmon
-# prefixes: they ran on the broker defaults (mcp/...), but ops uses Postgres
-# for maintenance mode, has no x509/krb5/servicex identity provider and
-# credmon disabled, so those five stores are never built and nothing is
-# stored under them. They are asserted at the root's own subtree.
+# A second, narrower broker (condor only) never set the maintenance-mode,
+# x509, krb5, servicex and credmon prefixes: it ran on the broker defaults
+# (mcp/...), but used Postgres for maintenance mode and had no
+# x509/krb5/servicex identity provider and credmon disabled, so those five
+# stores are never built and nothing is stored under them. They are asserted
+# at the root's own subtree.
 _PRODUCTION_PLATFORM = {
     "tokens": "mcp/tokens",
     "token_registry": "mcp/token-registry",
@@ -29,10 +28,10 @@ _PRODUCTION_PLATFORM = {
     "servicex": "mcp/servicex",
     "credmon_state": "mcp/credmon",
 }
-_PRODUCTION_OPS_LIVE_STORES = {
-    "tokens": "mcp-ops/tokens",
-    "token_registry": "mcp-ops/token-registry",
-    "principal_cache": "mcp-ops/principal-cache",
+_NARROW_BROKER_LIVE_STORES = {
+    "tokens": "example-ops/tokens",
+    "token_registry": "example-ops/token-registry",
+    "principal_cache": "example-ops/principal-cache",
 }
 
 
@@ -45,14 +44,14 @@ def test_platform_root_derives_production_prefixes() -> None:
     assert _derived("mcp") == _PRODUCTION_PLATFORM
 
 
-def test_ops_root_derives_production_prefixes_of_its_live_stores() -> None:
-    derived = _derived("mcp-ops")
-    for name, prefix in _PRODUCTION_OPS_LIVE_STORES.items():
+def test_narrow_broker_root_derives_prefixes_of_its_live_stores() -> None:
+    derived = _derived("example-ops")
+    for name, prefix in _NARROW_BROKER_LIVE_STORES.items():
         assert derived[name] == prefix
 
 
-def test_ops_root_keeps_every_store_under_its_own_subtree() -> None:
-    assert all(p.startswith("mcp-ops/") for p in _derived("mcp-ops").values())
+def test_narrow_broker_root_keeps_every_store_under_its_own_subtree() -> None:
+    assert all(p.startswith("example-ops/") for p in _derived("example-ops").values())
 
 
 def test_derived_prefixes_are_distinct() -> None:
@@ -81,10 +80,10 @@ def test_settings_derive_paths_from_vault_kv_root() -> None:
     settings = Settings(
         _env_file=None,
         token_store_backend="vault",
-        vault_kv_root="mcp-ops",
+        vault_kv_root="example-ops",
         **_VAULT_CONNECTION,
     )
-    assert settings.vault_kv_paths.tokens == "mcp-ops/tokens"
+    assert settings.vault_kv_paths.tokens == "example-ops/tokens"
 
 
 @pytest.mark.parametrize(

@@ -52,7 +52,7 @@ def _token_response(
     expires_at = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
     return {
         "token": token,
-        "identity": "auser@af.uchicago.edu",
+        "identity": "auser@example.org",
         "expires_at": expires_at.isoformat(),
     }
 
