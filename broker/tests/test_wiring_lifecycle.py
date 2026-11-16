@@ -215,7 +215,7 @@ class TestStartCredmonSync:
                 credential_registry=CredentialRegistry(),
                 issuer=None,
                 link_stores=VaultLinkStores(),
-                vault_kv=None,
+                vaults=VaultConnections(httpx2.AsyncClient()),
                 principal_cache=None,
                 http_client=httpx2.AsyncClient(),
                 stack=stack,
