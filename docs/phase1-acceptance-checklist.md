@@ -9,7 +9,7 @@ broader live-test tracker for the `/v1` credential-brokering surface, which
 this page does not duplicate.
 
 **Do not check off a "pending live verification" row from reading code.**
-Run `scripts/verify-mcp-flow.py` against the actual deployment (see
+Run `pixi run test-e2e` against the actual deployment (see
 [Connecting a Client](connecting-a-client.md))
 and update the row with what you observed, or open a follow-up issue if it
 surfaces a defect.
@@ -43,18 +43,18 @@ JWTs — no mocked HTTP calls) and don't need a live check beyond the
 
 These require a real deployment, a real AF Keycloak token, and (for the
 credential-injection rows) a real linked identity — none of which a unit
-test can stand in for. Use `scripts/verify-mcp-flow.py` against
-`https://mcp.example.org` (via `--broker-url`) for each.
+test can stand in for. Use `pixi run test-e2e` against
+`https://mcp.example.org` (`E2E_BROKER_URL`) for each.
 
 - [ ] `verify-rucio-flow.py` steps 1-5 (the `/v1` surface this PR doesn't
       touch: identity, `is_linked`, catalog, authorize, credential) are
       still green after this PR lands — regression check, not new scope.
-- [ ] `scripts/verify-mcp-flow.py` (no `--call`) against the live broker
+- [ ] `pixi run test-e2e` against the live broker
       with a real bearer: connects, and `tools/list` shows the expected
       Rucio tools namespaced per `services.yaml` (`apply_namespace: false`
       for rucio, so `rucio_whoami`/`rucio_list_dids`/... not
       `rucio_rucio_*`).
-- [ ] `scripts/verify-mcp-flow.py --call rucio_whoami --args-json '{}'`
+- [ ] `E2E_TOOL=rucio_whoami pixi run test-e2e`
       against `rucio-mcp-escape` (the working OAuth 2.1 target per issue
       maniaclab/af-mcp-platform#70 — `rucio-mcp-atlas` is blocked upstream on an ATLAS-side x509
       issue, unrelated to this PR) succeeds end-to-end: the broker mints

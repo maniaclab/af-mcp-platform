@@ -10,7 +10,7 @@
  * dependency-free leaf module.
  *
  * The Python snippet's imports and Client/transport construction deliberately
- * mirror scripts/verify-mcp-flow.py's actual usage so the two can't drift out
+ * mirror broker/tests/e2e/test_mcp_flow.py's actual usage so the two can't drift out
  * of sync with each other or with a future fastmcp API change.
  */
 
@@ -56,7 +56,7 @@ resp.raise_for_status()
 token = resp.json()["token"]  # save this now -- it is never returned again
 
 # 2. Use the new token against the MCP aggregator (mirrors
-#    scripts/verify-mcp-flow.py's Client/transport usage).
+#    broker/tests/e2e/test_mcp_flow.py's Client/transport usage).
 transport = StreamableHttpTransport(
     "${origin}/mcp/",
     headers={"Authorization": f"Bearer {token}"},

@@ -843,9 +843,10 @@ see end-to-end, talk to the aggregator's MCP protocol surface directly:
 ```bash
 read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
-pixi run -e dev python scripts/verify-mcp-flow.py --broker-url https://mcp.example.org
+E2E_BROKER_URL=https://mcp.example.org pixi run test-e2e
 ```
 
-This is the same script [Connecting a Client](connecting-a-client.md)
-recommends for sanity-checking a token — it prints every tool visible to the
-caller, grouped by inferred service prefix.
+This is the same check [Connecting a Client](connecting-a-client.md)
+recommends for sanity-checking a token — it asserts the tools visible to the
+caller (`pytest -rA` with `-k tools_list` shows the failing list in full)
+and calls one of them.
