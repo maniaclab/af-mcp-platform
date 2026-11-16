@@ -46,6 +46,11 @@ ENV PYTHONPATH="/app/broker/src" \
     PYTHONUNBUFFERED=1 \
     TIKTOKEN_CACHE_DIR="/app/tiktoken-cache"
 
+# `kubectl exec` bypasses the entrypoint's activation, so put the environment's
+# interpreter on PATH here as well. Only PATH: the rest of the activation
+# stays in the entrypoint (see test_pixi_environments.py).
+ENV PATH="/app/.pixi/envs/broker/bin:$PATH"
+
 # Numeric uid/gid required: k8s runAsUser/runAsGroup can't resolve names.
 RUN groupadd -r -g 1000 af-mcp && useradd -r -u 1000 -g af-mcp af-mcp
 USER af-mcp

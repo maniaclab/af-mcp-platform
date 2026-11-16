@@ -303,11 +303,11 @@ Then prove each dependency is reachable from the broker pod, which is what the p
 
 ```bash
 kubectl -n af-mcp exec deploy/af-mcp-af-mcp-platform-broker -- \
-  /app/.pixi/envs/broker/bin/python -c \
+  python -c \
   "import socket; socket.create_connection(('auth.af.example.org', 443), 5); print('ok')"
 ```
 
-The interpreter path is spelled out because `kubectl exec` bypasses the image entrypoint, so `python` is not on `PATH`. Repeat for Keycloak (or `broker.oidc.internalUrl`), Vault, Postgres, Redis and each backend in `aggregator.services`.
+The image sets `PATH` itself, so `python` resolves to the broker environment even though `kubectl exec` bypasses the entrypoint. Repeat for Keycloak (or `broker.oidc.internalUrl`), Vault, Postgres, Redis and each backend in `aggregator.services`.
 
 ### First user
 
