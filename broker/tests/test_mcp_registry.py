@@ -34,7 +34,20 @@ def test_backend_spec_apply_namespace_defaults_true() -> None:
     assert spec.apply_namespace is True
 
 
-def test_load_defaults_apply_namespace_true_when_absent(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        pytest.param({"apply_namespace": True}, id="apply_namespace_true"),
+        pytest.param({"timeout_seconds": 30.0}, id="timeout_seconds"),
+        pytest.param({"trust_tier": None}, id="trust_tier_none"),
+        pytest.param({"agent_policy": None}, id="agent_policy_none"),
+        pytest.param(
+            {"audience": None, "effective_audience": "example"}, id="audience_none"
+        ),
+        pytest.param({"exclude_tools": frozenset()}, id="exclude_tools_empty"),
+    ],
+)
+def test_load_defaults_when_absent(tmp_path: Path, defaults: dict[str, object]) -> None:
     services_file = tmp_path / "services.yaml"
     services_file.write_text(
         """
@@ -49,7 +62,12 @@ services:
     registry.load(str(services_file))
     spec = registry.get("example")
     assert spec is not None
-    assert spec.apply_namespace is True
+    for attribute, expected in defaults.items():
+        actual = getattr(spec, attribute)
+        # The type check keeps True/None/frozenset() distinct from merely
+        # equal values (1, 0, set()).
+        assert actual == expected
+        assert type(actual) is type(expected)
 
 
 @pytest.mark.parametrize("transport", ["sse", "websocket"])
@@ -134,24 +152,6 @@ def test_backend_spec_timeout_seconds_defaults_to_30() -> None:
         transport="http",
         required_permission="__none__",
     )
-    assert spec.timeout_seconds == 30.0
-
-
-def test_load_defaults_timeout_seconds_when_absent(tmp_path: Path) -> None:
-    services_file = tmp_path / "services.yaml"
-    services_file.write_text(
-        """
-services:
-  - name: example
-    prefix: example
-    url: "http://example.invalid/mcp"
-    required_permission: __none__
-"""
-    )
-    registry = ServiceRegistry()
-    registry.load(str(services_file))
-    spec = registry.get("example")
-    assert spec is not None
     assert spec.timeout_seconds == 30.0
 
 
@@ -402,24 +402,6 @@ services:
     assert spec.trust_tier == "service-tier"
 
 
-def test_load_defaults_trust_tier_none_when_absent(tmp_path: Path) -> None:
-    services_file = tmp_path / "services.yaml"
-    services_file.write_text(
-        """
-services:
-  - name: example
-    prefix: example
-    url: "http://example.invalid/mcp"
-    required_permission: __none__
-"""
-    )
-    registry = ServiceRegistry()
-    registry.load(str(services_file))
-    spec = registry.get("example")
-    assert spec is not None
-    assert spec.trust_tier is None
-
-
 def test_spec_rejects_unknown_trust_tier() -> None:
     """A typo'd tier must fail loudly, not silently stick -- __post_init__
     validates against the closed Elwood vocabulary."""
@@ -523,24 +505,6 @@ services:
     spec = registry.get("example")
     assert spec is not None
     assert spec.agent_policy == "Read-only; safe to call without confirmation."
-
-
-def test_load_defaults_agent_policy_none_when_absent(tmp_path: Path) -> None:
-    services_file = tmp_path / "services.yaml"
-    services_file.write_text(
-        """
-services:
-  - name: example
-    prefix: example
-    url: "http://example.invalid/mcp"
-    required_permission: __none__
-"""
-    )
-    registry = ServiceRegistry()
-    registry.load(str(services_file))
-    spec = registry.get("example")
-    assert spec is not None
-    assert spec.agent_policy is None
 
 
 def test_builtin_gateway_service_declares_an_agent_policy() -> None:
@@ -647,25 +611,6 @@ services:
     assert spec is not None
     assert spec.audience == "ami-mcp"
     assert spec.effective_audience == "ami-mcp"
-
-
-def test_load_defaults_audience_none_when_absent(tmp_path: Path) -> None:
-    services_file = tmp_path / "services.yaml"
-    services_file.write_text(
-        """
-services:
-  - name: example
-    prefix: example
-    url: "http://example.invalid/mcp"
-    required_permission: __none__
-"""
-    )
-    registry = ServiceRegistry()
-    registry.load(str(services_file))
-    spec = registry.get("example")
-    assert spec is not None
-    assert spec.audience is None
-    assert spec.effective_audience == "example"
 
 
 # ---------------------------------------------------------------------------
@@ -971,24 +916,6 @@ services:
     spec = registry.get("condor_service")
     assert spec is not None
     assert spec.exclude_tools == frozenset({"advertise_to_collector"})
-
-
-def test_load_defaults_exclude_tools_empty_when_absent(tmp_path: Path) -> None:
-    services_file = tmp_path / "services.yaml"
-    services_file.write_text(
-        """
-services:
-  - name: example
-    prefix: example
-    url: "http://example.invalid/mcp"
-    required_permission: __none__
-"""
-    )
-    registry = ServiceRegistry()
-    registry.load(str(services_file))
-    spec = registry.get("example")
-    assert spec is not None
-    assert spec.exclude_tools == frozenset()
 
 
 def test_load_rejects_non_list_exclude_tools(tmp_path: Path) -> None:

@@ -390,24 +390,14 @@ class TestRenew:
         with pytest.raises(Krb5TokenRenewalWindowClosedError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
 
-    async def test_renew_401_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(401))
-        with pytest.raises(Krb5TokenMintError):
-            await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
-
-    async def test_renew_502_raises_generic_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(502))
-        with pytest.raises(Krb5TokenMintError):
-            await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
-
-    async def test_renew_unexpected_429_falls_through_to_generic_mint_error(
-        self, make_client
+    # The service never rate-limits ``/v1/renew`` -- there is no 429 branch, so
+    # an unexpected 429 must fall through to the generic failure branch rather
+    # than being silently ignored (or misread as ``Krb5TokenRateLimitedError``).
+    @pytest.mark.parametrize("status", [401, 502, 429])
+    async def test_renew_error_status_raises_generic_mint_error(
+        self, make_client, status: int
     ) -> None:
-        """The service never rate-limits ``/v1/renew`` -- there is no 429
-        branch, so an unexpected 429 must fall through to the generic
-        failure branch rather than being silently ignored (or misread as
-        ``Krb5TokenRateLimitedError``)."""
-        client, _ = make_client(httpx2.Response(429))
+        client, _ = make_client(httpx2.Response(status))
         with pytest.raises(Krb5TokenMintError):
             await client.renew(subject="user1", ccache_b64="ZmFrZQ==")
 

@@ -136,18 +136,14 @@ class TestRedeemFailures:
         assert "revoked or expired" not in message
         assert "new token" in message
 
-    async def test_redeem_401_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(401, json={"detail": "nope"}))
-        with pytest.raises(ServiceXServiceMintError):
-            await _redeem(client)
-
-    async def test_redeem_429_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(429, json={"detail": "rate limited"}))
-        with pytest.raises(ServiceXServiceMintError):
-            await _redeem(client)
-
-    async def test_redeem_502_raises_mint_error(self, make_client) -> None:
-        client, _ = make_client(httpx2.Response(502, json={"detail": "bad gateway"}))
+    @pytest.mark.parametrize(
+        ("status", "detail"),
+        [(401, "nope"), (429, "rate limited"), (502, "bad gateway")],
+    )
+    async def test_redeem_error_status_raises_mint_error(
+        self, make_client, status: int, detail: str
+    ) -> None:
+        client, _ = make_client(httpx2.Response(status, json={"detail": detail}))
         with pytest.raises(ServiceXServiceMintError):
             await _redeem(client)
 

@@ -315,124 +315,50 @@ def test_oauth21_direct_raises_when_two_confidential_aliases_share_env_var(
 
 
 # ---------------------------------------------------------------------------
-# Vault TokenStore backend config
+# Vault backend config. Every Vault-backed store (TokenStore, TokenRegistry
+# (issue #115), PrincipalCache (issue #144 step 2b), MaintenanceMode) shares
+# the same vault_addr/vault_auth_role validation.
 # ---------------------------------------------------------------------------
 
+_VAULT_BACKEND_SETTINGS = [
+    "token_store_backend",
+    "token_registry_backend",
+    "principal_cache_backend",
+    "maintenance_mode_backend",
+]
 
-def test_vault_config_ok_when_backend_is_in_memory():
-    Settings(token_store_backend="in_memory")  # must not raise
+
+@pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
+def test_vault_config_ok_when_backend_is_in_memory(backend_setting):
+    Settings(**{backend_setting: "in_memory"})  # must not raise
 
 
-def test_vault_config_ok_when_addr_and_role_set():
+@pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
+def test_vault_config_ok_when_backend_vault_and_addr_and_role_set(backend_setting):
     Settings(
-        token_store_backend="vault",
+        **{backend_setting: "vault"},
         vault_addr="https://vault.example",
         vault_kv_root="mcp",
         vault_auth_role="af-mcp-broker",
     )  # must not raise
 
 
-def test_vault_config_raises_when_addr_missing():
+@pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
+def test_vault_config_raises_when_backend_vault_and_addr_missing(backend_setting):
     with pytest.raises(ValueError, match="vault_addr"):
-        Settings(token_store_backend="vault", vault_auth_role="af-mcp-broker")
+        Settings(**{backend_setting: "vault"}, vault_auth_role="af-mcp-broker")
 
 
-def test_vault_config_raises_when_auth_role_missing():
+@pytest.mark.parametrize("backend_setting", _VAULT_BACKEND_SETTINGS)
+def test_vault_config_raises_when_backend_vault_and_auth_role_missing(
+    backend_setting,
+):
     with pytest.raises(ValueError, match="vault_auth_role"):
-        Settings(token_store_backend="vault", vault_addr="https://vault.example")
-
-
-# ---------------------------------------------------------------------------
-# Vault TokenRegistryBackend config (issue #115) — shares the same
-# vault_addr/vault_auth_role validation as the TokenStore backend above.
-# ---------------------------------------------------------------------------
-
-
-def test_vault_config_ok_when_registry_backend_is_in_memory():
-    Settings(token_registry_backend="in_memory")  # must not raise
-
-
-def test_vault_config_ok_when_registry_backend_vault_and_addr_and_role_set():
-    Settings(
-        token_registry_backend="vault",
-        vault_addr="https://vault.example",
-        vault_kv_root="mcp",
-        vault_auth_role="af-mcp-broker",
-    )  # must not raise
-
-
-def test_vault_config_raises_when_registry_backend_vault_and_addr_missing():
-    with pytest.raises(ValueError, match="vault_addr"):
-        Settings(token_registry_backend="vault", vault_auth_role="af-mcp-broker")
-
-
-def test_vault_config_raises_when_registry_backend_vault_and_auth_role_missing():
-    with pytest.raises(ValueError, match="vault_auth_role"):
-        Settings(token_registry_backend="vault", vault_addr="https://vault.example")
+        Settings(**{backend_setting: "vault"}, vault_addr="https://vault.example")
 
 
 def test_token_sweep_grace_seconds_defaults_to_seven_days():
     assert Settings().token_sweep_grace_seconds == 7 * 24 * 60 * 60
-
-
-# ---------------------------------------------------------------------------
-# Vault PrincipalCacheBackend config (issue #144 step 2b) — shares the same
-# vault_addr/vault_auth_role validation as the TokenStore/TokenRegistry
-# backends above.
-# ---------------------------------------------------------------------------
-
-
-def test_vault_config_ok_when_principal_cache_backend_is_in_memory():
-    Settings(principal_cache_backend="in_memory")  # must not raise
-
-
-def test_vault_config_ok_when_principal_cache_backend_vault_and_addr_and_role_set():
-    Settings(
-        principal_cache_backend="vault",
-        vault_addr="https://vault.example",
-        vault_kv_root="mcp",
-        vault_auth_role="af-mcp-broker",
-    )  # must not raise
-
-
-def test_vault_config_raises_when_principal_cache_backend_vault_and_addr_missing():
-    with pytest.raises(ValueError, match="vault_addr"):
-        Settings(principal_cache_backend="vault", vault_auth_role="af-mcp-broker")
-
-
-def test_vault_config_raises_when_principal_cache_backend_vault_and_auth_role_missing():
-    with pytest.raises(ValueError, match="vault_auth_role"):
-        Settings(principal_cache_backend="vault", vault_addr="https://vault.example")
-
-
-# ---------------------------------------------------------------------------
-# Vault MaintenanceModeStore backend config — shares the same
-# vault_addr/vault_auth_role validation as the TokenStore/TokenRegistry/
-# PrincipalCache backends above.
-# ---------------------------------------------------------------------------
-
-
-def test_vault_config_ok_when_maintenance_mode_backend_is_in_memory():
-    Settings(maintenance_mode_backend="in_memory")  # must not raise
-
-
-def test_vault_config_ok_when_maintenance_mode_backend_vault_and_addr_and_role_set():
-    Settings(
-        maintenance_mode_backend="vault",
-        vault_addr="https://vault.example",
-        vault_kv_root="mcp",
-        vault_auth_role="af-mcp-broker",
-    )  # must not raise
-
-
-def test_vault_config_raises_when_maintenance_mode_backend_vault_and_addr_missing():
-    with pytest.raises(ValueError, match="vault_addr"):
-        Settings(maintenance_mode_backend="vault", vault_auth_role="af-mcp-broker")
-
-
-def test_vault_config_raises_when_maintenance_mode_backend_vault_and_auth_role_missing():
-    with pytest.raises(ValueError, match="vault_auth_role"):
-        Settings(maintenance_mode_backend="vault", vault_addr="https://vault.example")
 
 
 # ---------------------------------------------------------------------------
