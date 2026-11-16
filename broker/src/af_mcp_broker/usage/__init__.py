@@ -22,7 +22,12 @@ from af_mcp_broker.usage.otel_events import (
     OtelUsageEventEmitter,
 )
 from af_mcp_broker.usage.postgres import PostgresUsageStore
-from af_mcp_broker.usage.store import InMemoryUsageStore, UsageAggregate, UsageStore
+from af_mcp_broker.usage.store import (
+    InMemoryUsageStore,
+    SubjectActivity,
+    UsageAggregate,
+    UsageStore,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit.logger import AuditRecord
@@ -33,6 +38,7 @@ __all__ = [
     "InMemoryUsageStore",
     "OtelUsageEventEmitter",
     "PostgresUsageStore",
+    "SubjectActivity",
     "UsageAggregate",
     "UsageBatcher",
     "UsageStore",

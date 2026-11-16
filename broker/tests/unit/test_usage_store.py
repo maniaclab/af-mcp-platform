@@ -198,6 +198,27 @@ async def test_list_subjects_excludes_outside_window() -> None:
     assert await store.list_subjects(days=30) == []
 
 
+async def test_list_subject_activity_orders_by_most_recent_call() -> None:
+    store = InMemoryUsageStore()
+    now = datetime.now(tz=UTC).timestamp()
+    await store.record(_record(subject="older", timestamp=now - 3600))
+    await store.record(_record(subject="newest", timestamp=now))
+    await store.record(_record(subject="older", timestamp=now - 7200))
+
+    activity = await store.list_subject_activity(days=30)
+
+    assert [a.subject for a in activity] == ["newest", "older"]
+    assert activity[1].last_seen == datetime.fromtimestamp(now - 3600, tz=UTC)
+
+
+async def test_list_subject_activity_excludes_outside_window() -> None:
+    store = InMemoryUsageStore()
+    old_ts = (datetime.now(tz=UTC) - timedelta(days=90)).timestamp()
+    await store.record(_record(subject="stale", timestamp=old_ts))
+
+    assert await store.list_subject_activity(days=30) == []
+
+
 # ---------------------------------------------------------------------------
 # record_usage/record_usage_batch account into the store they are handed.
 # ---------------------------------------------------------------------------
