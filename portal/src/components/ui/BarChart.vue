@@ -20,7 +20,7 @@
  * visually hidden table beside it (outside the `role="img"` element, whose children are hidden).
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { formatTokens } from '../../lib/usageFormat';
+import { formatCount } from '../../lib/usageFormat';
 
 const props = defineProps<{
   labels: string[];
@@ -47,7 +47,7 @@ let unmounted = false;
 let chartClass: typeof import('chart.js').Chart | null = null;
 
 function format(value: number): string {
-  return props.formatValue ? props.formatValue(value) : formatTokens(value);
+  return props.formatValue ? props.formatValue(value) : formatCount(value);
 }
 
 async function loadLibraries(): Promise<typeof import('chart.js').Chart> {

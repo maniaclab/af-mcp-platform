@@ -17,7 +17,7 @@ import type { UsageResponse } from '../lib/api';
 import { useLoadState } from '../lib/useLoadState';
 import { TOKEN_DOCS_URL } from '../lib/tokenExplainer';
 import { contentTypeRows, UNATTRIBUTED } from '../lib/usageContent';
-import { formatBytes, formatShare, formatTokens } from '../lib/usageFormat';
+import { formatBytes, formatShare, formatCount } from '../lib/usageFormat';
 import TokenEstimateTip from './TokenEstimateTip.vue';
 import AsyncState from './ui/AsyncState.vue';
 import BarChart from './ui/BarChart.vue';
@@ -121,7 +121,7 @@ const daySeries = computed(() => [
 
 const chartLabel = computed<string>(() => {
   const busiest = dayBars.value.reduce((a, b) => (b.calls > a.calls ? b : a), dayBars.value[0]);
-  return `Calls per day over the last ${dayBars.value.length} days; busiest day ${busiest.date} with ${formatTokens(busiest.calls)} calls`;
+  return `Calls per day over the last ${dayBars.value.length} days; busiest day ${busiest.date} with ${formatCount(busiest.calls)} calls`;
 });
 </script>
 
@@ -159,21 +159,21 @@ const chartLabel = computed<string>(() => {
         <div class="af-stats" role="list" aria-label="Window totals">
           <div class="af-stat" role="listitem">
             <span>Calls</span>
-            <b>{{ formatTokens(usage.totals.calls) }}</b>
+            <b>{{ formatCount(usage.totals.calls) }}</b>
             <small>Last {{ usage.window_days }} days</small>
           </div>
           <div class="af-stat" role="listitem">
             <span>Errors</span>
-            <b>{{ formatTokens(usage.totals.errors) }}</b>
+            <b>{{ formatCount(usage.totals.errors) }}</b>
             <small>
-              of {{ formatTokens(usage.totals.calls) }} calls<template v-if="errorRate">
+              of {{ formatCount(usage.totals.calls) }} calls<template v-if="errorRate">
                 ({{ errorRate }})</template
               >
             </small>
           </div>
           <div class="af-stat" role="listitem">
             <span>Tokens (estimated) <TokenEstimateTip id="up-token-tip" /></span>
-            <b>{{ formatTokens(usage.totals.result_tokens_est) }}</b>
+            <b>{{ formatCount(usage.totals.result_tokens_est) }}</b>
             <small>{{ formatBytes(usage.totals.result_bytes) }} of results</small>
           </div>
         </div>
@@ -184,7 +184,7 @@ const chartLabel = computed<string>(() => {
             :labels="dayLabels"
             :series="daySeries"
             :ariaLabel="chartLabel"
-            :format-value="formatTokens"
+            :format-value="formatCount"
           />
         </section>
 
@@ -222,10 +222,10 @@ const chartLabel = computed<string>(() => {
                     </span>
                   </td>
                   <td class="af-num af-sub">
-                    {{ row.blocks === null ? '—' : formatTokens(row.blocks) }}
+                    {{ row.blocks === null ? '—' : formatCount(row.blocks) }}
                   </td>
                   <td class="af-num af-sub">{{ formatBytes(row.bytes) }}</td>
-                  <td class="af-num">{{ formatTokens(row.tokens) }}</td>
+                  <td class="af-num">{{ formatCount(row.tokens) }}</td>
                   <td class="af-num af-sub">{{ formatShare(row.share) }}</td>
                 </tr>
               </tbody>
@@ -257,10 +257,10 @@ const chartLabel = computed<string>(() => {
                     <code class="af-sub up__id">{{ svc.service }}</code>
                   </td>
                   <td v-else>{{ svc.service }}</td>
-                  <td class="af-num">{{ formatTokens(svc.calls) }}</td>
-                  <td class="af-num af-sub">{{ formatTokens(svc.errors) }}</td>
+                  <td class="af-num">{{ formatCount(svc.calls) }}</td>
+                  <td class="af-num af-sub">{{ formatCount(svc.errors) }}</td>
                   <td class="af-num af-sub">{{ formatBytes(svc.result_bytes) }}</td>
-                  <td class="af-num">{{ formatTokens(svc.result_tokens_est) }}</td>
+                  <td class="af-num">{{ formatCount(svc.result_tokens_est) }}</td>
                 </tr>
               </tbody>
             </table>
