@@ -11,6 +11,8 @@ from conftest import configure_x509_service_env
 from pydantic import SecretStr
 
 from af_mcp_broker.credentials.oauth21 import (
+    InMemoryTokenStore,
+    OAuth21Provider,
     StoredOAuthCredential,
 )
 
@@ -86,3 +88,25 @@ def x509_service_env_fixture(
 ) -> None:
     """The shipped "ami" service (covered by every IDENTITY_PROVIDERS override here) needs the signing key and Vault connection to boot."""
     configure_x509_service_env(monkeypatch, broker_signing_key_file)
+
+
+def _make_provider(
+    store: InMemoryTokenStore,
+    revocation_endpoint: str | None = None,
+    client_id: str = CLIENT_ID,
+    client_secret: SecretStr | None = None,
+    http_client: Any = None,
+) -> OAuth21Provider:
+    return OAuth21Provider(
+        alias=ALIAS,
+        targets=frozenset({ALIAS}),
+        authorization_endpoint=AUTHORIZATION_ENDPOINT,
+        token_endpoint=TOKEN_ENDPOINT,
+        issuer=PROVIDER_ISSUER,
+        scope="openid profile",
+        store=store,
+        client_id=client_id,
+        client_secret=client_secret,
+        revocation_endpoint=revocation_endpoint,
+        http_client=http_client or httpx2.AsyncClient(),
+    )

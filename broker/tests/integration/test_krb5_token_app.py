@@ -17,8 +17,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from krb5_token_support import FakeKrb5VaultStore
 from pydantic import SecretStr
-from test_krb5_token import FakeKrb5VaultStore
 
 from af_mcp_broker.credentials import KrbTokenProvider
 from af_mcp_broker.credentials.krb5_vault import Krb5VaultStore

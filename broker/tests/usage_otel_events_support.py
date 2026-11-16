@@ -8,7 +8,7 @@ import pytest
 from opentelemetry.sdk._logs.export import (
     InMemoryLogRecordExporter,
 )
-from test_usage_postgres import _record
+from usage_postgres_support import _record
 
 from af_mcp_broker.usage import (
     OtelUsageEventEmitter,

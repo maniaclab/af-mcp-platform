@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import SecretStr
-from test_x509_redeem import _BACKENDS_YAML
 from x509_fakes import FakeVomsClient, FakeX509Store
+from x509_redeem_support import _BACKENDS_YAML
 
 from af_mcp_broker.credentials.cache import ProxyMeta
 from af_mcp_broker.credentials.errors import (

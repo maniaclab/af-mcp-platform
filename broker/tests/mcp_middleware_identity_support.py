@@ -47,3 +47,26 @@ async def _run(
 
     await middleware(scope, receive, send)
     return messages
+
+
+def _http_scope(headers: dict[str, str] | None = None) -> dict[str, Any]:
+    headers = headers or {}
+    return {
+        "type": "http",
+        "headers": [
+            (k.lower().encode("latin-1"), v.encode("latin-1"))
+            for k, v in headers.items()
+        ],
+    }
+
+
+def _status(messages: list[dict[str, Any]]) -> int:
+    return next(m["status"] for m in messages if m["type"] == "http.response.start")
+
+
+def _header(messages: list[dict[str, Any]], name: str) -> str | None:
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    for key, value in start["headers"]:
+        if key.decode("latin-1").lower() == name.lower():
+            return value.decode("latin-1")
+    return None

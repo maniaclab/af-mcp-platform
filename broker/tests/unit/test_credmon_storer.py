@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import jwt
 import pytest
-from test_broker_issued import ISSUER_URL
+from broker_issued_support import ISSUER_URL
 
 from af_mcp_broker.credentials.broker_issued import BrokerTokenIssuer
 from af_mcp_broker.credmon import storer as storer_module

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import SecretStr
-from test_servicex import FakeServiceXStore
+from servicex_support import FakeServiceXStore
 
 from af_mcp_broker.credentials import ServiceXProvider
 from af_mcp_broker.credentials.servicex_vault import VaultServiceXStore

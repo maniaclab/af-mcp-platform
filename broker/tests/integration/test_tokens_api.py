@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from rate_limited_helpers import assert_rate_limited_shape
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 
 from af_mcp_broker import identity
 from af_mcp_broker import retry_after as retry_after_module

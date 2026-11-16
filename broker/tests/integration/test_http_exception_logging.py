@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 import structlog
-from test_mcp_aggregator import _FakeProvider
+from mcp_aggregator_support import _FakeProvider
 
 from af_mcp_broker import app as app_module
 from af_mcp_broker.credentials.errors import (

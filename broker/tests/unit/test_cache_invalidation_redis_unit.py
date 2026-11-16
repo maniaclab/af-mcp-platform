@@ -11,7 +11,7 @@ from cache_invalidation_redis_support import (  # noqa: F401
     _Replica,
     alice_fixture,
 )
-from test_mcp_aggregator import (
+from mcp_aggregator_support import (
     _CountingListClient,
     _patch_context,
     _tool,

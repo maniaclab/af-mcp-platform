@@ -18,7 +18,11 @@ import structlog
 if TYPE_CHECKING:
     from pathlib import Path
 
-from vault_fakes import AUTH_ROLE, FakeVault, make_vault_kv
+from token_registry_support import (
+    KV_PATH_PREFIX,
+    _make_vault_backend,
+)
+from vault_fakes import AUTH_ROLE, FakeVault
 
 from af_mcp_broker.constants import MAX_CAS_RETRIES
 from af_mcp_broker.token_registry import (
@@ -32,8 +36,6 @@ from af_mcp_broker.token_registry import (
     _record_from_fields,
 )
 from af_mcp_broker.vault_kv import CasConflictError, VaultError
-
-KV_PATH_PREFIX = "mcp/token-registry"
 
 
 def _make_record(**overrides: Any) -> TokenRecord:
@@ -50,13 +52,6 @@ def _make_record(**overrides: Any) -> TokenRecord:
     }
     defaults.update(overrides)
     return TokenRecord(**defaults)
-
-
-def _make_vault_backend(
-    fake: FakeVault, sa_token_path: Path
-) -> VaultTokenRegistryBackend:
-    vault_kv = make_vault_kv(fake, sa_token_path)
-    return VaultTokenRegistryBackend(vault_kv=vault_kv, kv_path_prefix=KV_PATH_PREFIX)
 
 
 # ---------------------------------------------------------------------------

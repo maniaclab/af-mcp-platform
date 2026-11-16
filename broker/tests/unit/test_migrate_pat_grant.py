@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from test_token_registry import (
+from token_registry_support import (
     KV_PATH_PREFIX,
     _make_vault_backend,
 )

@@ -21,7 +21,7 @@ from cache_invalidation_redis_support import (  # noqa: F401
     alice_fixture,
 )
 from conftest import find_available_port, run_redis_server
-from test_mcp_aggregator import (
+from mcp_aggregator_support import (
     _CountingListClient,
     _patch_context,
     _tool,

@@ -6,10 +6,10 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from conftest import make_claims
+from mcp_middleware_identity_support import _http_scope, _InnerApp, _run, _status
 from request_logging_support import (
     _capturing_info,
 )
-from test_mcp_middleware_identity import _http_scope, _InnerApp, _run, _status
 
 if TYPE_CHECKING:
     import pytest

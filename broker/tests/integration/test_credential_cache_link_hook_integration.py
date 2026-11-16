@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from test_broker_issued_app import _find_service_provider
+from broker_issued_support import _find_service_provider
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.mcp import aggregator as aggregator_module

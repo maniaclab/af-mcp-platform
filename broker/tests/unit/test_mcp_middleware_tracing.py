@@ -5,12 +5,9 @@ spans opened by ``AuthorizationMiddleware`` (see its module docstring for why
 fastmcp's native span -- opened downstream of ``call_next`` -- cannot carry
 the identity/outcome enrichment or cover the denied/unmapped paths). All
 tests use a test-local ``TracerProvider`` injected through
-``tracing._tracer_provider`` (see ``test_tracing.local_exporter``) so the
+``tracing._tracer_provider`` (see ``tracing_support.local_exporter_fixture``) so the
 once-only OTel global is never touched.
 """
-# ruff: noqa: F811 -- test parameters deliberately reuse the names of the
-# fixtures re-exported from test_mcp_middleware_authorization/test_tracing;
-# pyflakes reads that shadowing as a redefinition.
 
 from __future__ import annotations
 
@@ -31,10 +28,10 @@ from mcp_middleware_authorization_support import (
     registry_fixture,  # noqa: F401  -- fixture import
 )
 from opentelemetry.trace import SpanKind, StatusCode
-from test_tracing import (
+from tracing_support import (
     _TRACE_ID_HEX,
     _TRACEPARENT,
-    local_exporter,  # noqa: F401  -- fixture re-export
+    local_exporter_fixture,  # noqa: F401  -- fixture import
 )
 
 
