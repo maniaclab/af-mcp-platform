@@ -72,4 +72,8 @@ missing variable, when a required one is unset:
 caller's groups) and one read-only `tools/call`. Linking an identity or
 unlocking a credential first is the operator's job: a call that fails with
 "not linked" or "Authorization denied" is the deployment telling you the
-caller's state, not a test bug.
+caller's state, not a test bug. A failing step ends with a `hint:` line saying
+what to fix for the known cases (unlinked identity, locked x509 credential,
+missing permission, no POSIX identity, unknown tool prefix, unreachable host,
+untrusted certificate, rejected token). The task runs with `-s`, so a passing
+`tools/list` also prints the visible tools grouped by service.
