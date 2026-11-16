@@ -202,7 +202,7 @@ class CredmonStorer:
         await write_audit(
             AuditRecord(
                 subject=subject,
-                principal_uid=uid,
+                uid=uid,
                 permission=None,
                 target=service,
                 action="credmon_top_token_store",

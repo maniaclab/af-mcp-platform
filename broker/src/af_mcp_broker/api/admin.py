@@ -207,7 +207,7 @@ async def set_maintenance_status(
     await write_audit(
         AuditRecord(
             subject=principal.subject,
-            principal_uid=principal.uid,
+            uid=principal.uid,
             permission=None,
             target="mcp-gateway",
             action=action,

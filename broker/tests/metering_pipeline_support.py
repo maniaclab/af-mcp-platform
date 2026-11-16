@@ -34,7 +34,7 @@ def _backend(
 def _record(**overrides: Any) -> AuditRecord:
     fields: dict[str, Any] = {
         "subject": "sub-abc",
-        "principal_uid": 1000,
+        "uid": 1000,
         "permission": "read_data",
         "target": "rucio",
         "action": "rucio_list_dids",

@@ -84,7 +84,7 @@ logger = structlog.get_logger(__name__)
 
 
 def _permission_grant_field(principal: Principal) -> list[str] | None:
-    """Sorted ``AuditRecord.principal_permission_grant`` value for *principal* -- see that field's docstring for why a denied call needs this to tell "lacks it entirely" apart from "PAT is scoped away from it" (issue #144 step 4)."""
+    """Sorted ``AuditRecord.permission_grant`` value for *principal* -- see that field's docstring for why a denied call needs this to tell "lacks it entirely" apart from "PAT is scoped away from it" (issue #144 step 4)."""
     if principal.permission_grant is None:
         return None
     return sorted(principal.permission_grant)
@@ -258,7 +258,7 @@ class AuthorizationMiddleware(Middleware):
                 await write_audit(
                     AuditRecord(
                         subject=principal.subject,
-                        principal_uid=principal.uid,
+                        uid=principal.uid,
                         permission="__unmapped__",
                         target=tool_name,
                         action=tool_name,
@@ -268,7 +268,7 @@ class AuthorizationMiddleware(Middleware):
                         request_id=request_id,
                         outcome="denied",
                         error=f"no service registered for tool '{tool_name}'",
-                        principal_permission_grant=_permission_grant_field(principal),
+                        permission_grant=_permission_grant_field(principal),
                         token_id=principal.token_id,
                         trace_id=current_trace_id(),
                     )
@@ -305,7 +305,7 @@ class AuthorizationMiddleware(Middleware):
                 await write_audit(
                     AuditRecord(
                         subject=principal.subject,
-                        principal_uid=principal.uid,
+                        uid=principal.uid,
                         permission=permission,
                         target=service.name,
                         action=tool_name,
@@ -316,7 +316,7 @@ class AuthorizationMiddleware(Middleware):
                         mcp_service=service.name,
                         outcome="denied",
                         error=reason,
-                        principal_permission_grant=_permission_grant_field(principal),
+                        permission_grant=_permission_grant_field(principal),
                         token_id=principal.token_id,
                         trace_id=current_trace_id(),
                     )
@@ -350,7 +350,7 @@ class AuthorizationMiddleware(Middleware):
                 await write_audit(
                     AuditRecord(
                         subject=principal.subject,
-                        principal_uid=principal.uid,
+                        uid=principal.uid,
                         permission=permission,
                         target=service.name,
                         action=tool_name,
@@ -361,7 +361,7 @@ class AuthorizationMiddleware(Middleware):
                         mcp_service=service.name,
                         outcome="rate_limited",
                         error=str(exc),
-                        principal_permission_grant=_permission_grant_field(principal),
+                        permission_grant=_permission_grant_field(principal),
                         token_id=principal.token_id,
                         trace_id=current_trace_id(),
                     )
@@ -452,7 +452,7 @@ class AuthorizationMiddleware(Middleware):
                 await self.metering.submit(
                     AuditRecord(
                         subject=principal.subject,
-                        principal_uid=principal.uid,
+                        uid=principal.uid,
                         permission=permission,
                         target=service.name,
                         action=tool_name,
@@ -463,7 +463,7 @@ class AuthorizationMiddleware(Middleware):
                         mcp_service=service.name,
                         outcome="error",
                         error=str(exc),
-                        principal_permission_grant=_permission_grant_field(principal),
+                        permission_grant=_permission_grant_field(principal),
                         token_id=principal.token_id,
                         duration_ms=duration * 1000.0,
                         trace_id=current_trace_id(),
@@ -505,7 +505,7 @@ class AuthorizationMiddleware(Middleware):
                 await self.metering.submit(
                     AuditRecord(
                         subject=principal.subject,
-                        principal_uid=principal.uid,
+                        uid=principal.uid,
                         permission=permission,
                         target=service.name,
                         action=tool_name,
@@ -516,7 +516,7 @@ class AuthorizationMiddleware(Middleware):
                         mcp_service=service.name,
                         outcome="error",
                         error=error_text,
-                        principal_permission_grant=_permission_grant_field(principal),
+                        permission_grant=_permission_grant_field(principal),
                         token_id=principal.token_id,
                         duration_ms=duration * 1000.0,
                         trace_id=current_trace_id(),
@@ -538,7 +538,7 @@ class AuthorizationMiddleware(Middleware):
             await self.metering.submit(
                 AuditRecord(
                     subject=principal.subject,
-                    principal_uid=principal.uid,
+                    uid=principal.uid,
                     permission=permission,
                     target=service.name,
                     action=tool_name,
@@ -548,7 +548,7 @@ class AuthorizationMiddleware(Middleware):
                     request_id=request_id,
                     mcp_service=service.name,
                     outcome="success",
-                    principal_permission_grant=_permission_grant_field(principal),
+                    permission_grant=_permission_grant_field(principal),
                     token_id=principal.token_id,
                     duration_ms=duration * 1000.0,
                     trace_id=current_trace_id(),
