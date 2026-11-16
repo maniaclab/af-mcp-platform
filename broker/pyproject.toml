@@ -257,7 +257,7 @@ layers = [
   "pat_auth",
   "identity",
   "broker_state",
-  "credmon | backend_client | service_status | lint_observations | maintenance",
+  "credmon | backend_client | service_status | lint_observations | maintenance | user_search",
   "credentials | service_registry",
   "metering",
   "otel_metrics",

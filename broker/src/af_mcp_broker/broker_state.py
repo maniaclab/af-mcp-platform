@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistry
     from af_mcp_broker.usage import UsageStore
+    from af_mcp_broker.user_search import UserSearch
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ class BrokerState:
     oauth21_state_cipher: Fernet | None
     token_registry: TokenRegistry
     principal_cache: PrincipalCache | None
+    user_search: UserSearch
     mcp_auth_code_store: McpAuthCodeStore | None
     broker_token_issuer: BrokerTokenIssuer | None
     usage_store: UsageStore

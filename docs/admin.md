@@ -52,7 +52,42 @@ FastAPI dependency):
   with 403 unless the caller is in the admin group, in which case it
   returns that subject's usage instead. Both only ever surface subjects
   with actual broker activity — never a full Keycloak user directory.
+- **Finding a user.** `GET /v1/admin/users?search=<text>&limit=<n>` (default
+  20, at most 50) searches the users the platform has seen: those with
+  recorded usage in the trailing 365 days, never the whole Keycloak realm. The
+  match is a server-side, case-insensitive substring over username (the POSIX
+  unix name when the user has one, else the Keycloak username), email, display
+  name and subject; rows come back most recently seen first with `subject`,
+  `username`, `email`, `display_name`, `last_seen` and `pat_count` (active
+  tokens), plus `more` (more users matched than `limit`) and `partial` (see
+  below). An empty `search` lists the most recently seen users. The portal's
+  user picker (the Admin page's usage view) calls it as you type and never loads
+  a user list.
 - **`POST /v1/admin/maintenance`** — see below.
+
+### How the user search scales
+
+The token registry is not a second source of users: it can only be enumerated
+by a Vault LIST of every principal and has no last-activity time, and a PAT only
+matters once it has been used, which creates a usage row.
+
+Matching on a name or email needs each seen user's Keycloak profile. The
+broker fetches profiles lazily with the same service account as the rest of the
+directory (`GET /users/{id}`, one call per user, no group listing) and caches
+them per replica for an hour. A search walks the seen users most recent first
+and stops once it has `limit + 1` matches, so it asks Keycloak only for as many
+users as it takes to fill a page. At most 200 profiles are fetched per
+search, 10 at a time; when that budget is spent before the search finishes the
+rest are matched on subject id alone and the response has `partial: true` (the
+portal says the directory is still warming up). Over ~1000 seen users the cost
+is one cold fill of that cache per replica per hour, spread over the first few
+searches, not a per-request fan-out. A user the directory no longer knows
+stays searchable by subject, with empty username, email and display name.
+
+The display name is built from the Keycloak user fields (or custom user
+attributes) in the chart value `broker.admin.userDisplayName.attributes`
+(`ADMIN_USER_DISPLAY_NAME_ATTRIBUTES`; default `[firstName, lastName]`, joined
+with spaces) and falls back to the username.
 
 ## Cutting off a user
 

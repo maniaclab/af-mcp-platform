@@ -79,6 +79,7 @@ from af_mcp_broker.wiring.identity import (
     build_mcp_auth_code_store,
     build_principal_cache,
     build_token_registry,
+    build_user_search,
     log_access_groups,
     require_oidc_issuer,
 )
@@ -298,6 +299,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             oauth21_state_cipher=oauth21_state_cipher,
             token_registry=token_registries.registry,
             principal_cache=principal_cache,
+            user_search=build_user_search(principal_cache),
             mcp_auth_code_store=mcp_auth_code_store,
             broker_token_issuer=broker_token_issuer,
             usage_store=usage_store,

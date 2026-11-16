@@ -23,6 +23,7 @@ from af_mcp_broker.service_registry import ServiceRegistry
 from af_mcp_broker.shared_state import InMemorySharedState
 from af_mcp_broker.token_registry import InMemoryTokenRegistryBackend, TokenRegistry
 from af_mcp_broker.usage.store import InMemoryUsageStore
+from af_mcp_broker.user_search import UserSearch
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -60,6 +61,7 @@ def make_broker_state(**overrides: Any) -> BrokerState:
         "oauth21_state_cipher": None,
         "token_registry": TokenRegistry(InMemoryTokenRegistryBackend(), shared_state),
         "principal_cache": None,
+        "user_search": UserSearch(None),
         "mcp_auth_code_store": None,
         "broker_token_issuer": None,
         "usage_store": InMemoryUsageStore(),

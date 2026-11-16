@@ -133,6 +133,23 @@
             "pattern": "^[^,\\s](?:[^,]*[^,\\s])?$"
           }
         },
+        "admin": {
+          "type": "object",
+          "properties": {
+            "userDisplayName": {
+              "type": "object",
+              "properties": {
+                "attributes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
         "mcpStatelessHttp": {
           "type": "boolean"
         },

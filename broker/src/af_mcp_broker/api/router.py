@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from af_mcp_broker.api import (
     admin,
     admin_tokens,
+    admin_users,
     catalog_tools,
     credentials,
     health,
@@ -72,3 +73,4 @@ router.include_router(usage.router, dependencies=_maintenance_gated)
 # router simply isn't wired with that dependency in the first place).
 router.include_router(admin.router)
 router.include_router(admin_tokens.router)
+router.include_router(admin_users.router)

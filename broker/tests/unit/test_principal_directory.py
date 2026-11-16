@@ -371,3 +371,80 @@ async def test_admin_token_refreshes_once_expired(
     await directory.resolve("user-123")
 
     assert len(fake_admin.token_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# profile(): the display details the admin user search shows.
+# ---------------------------------------------------------------------------
+
+
+async def test_profile_reads_one_user_without_group_lookup(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    fake_admin.users["user-123"] = {
+        "username": "ada@example.org",
+        "email": "ada@example.org",
+        "firstName": "Ada",
+        "lastName": "Lovelace",
+        "attributes": {"unixname": ["alovelace"]},
+    }
+
+    profile = await _directory(settings, fake_admin).profile("user-123")
+
+    assert profile.username == "ada@example.org"
+    assert profile.unixname == "alovelace"
+    assert profile.email == "ada@example.org"
+    assert profile.display_name == "Ada Lovelace"
+    assert fake_admin.get_calls == [
+        "https://keycloak.test/admin/realms/connect/users/user-123"
+    ]
+
+
+async def test_profile_display_name_attributes_are_configurable(
+    fake_admin: _FakeKeycloakAdmin,
+) -> None:
+    """Names are read from top-level user fields first, then from the user's
+    custom attributes, in the configured order."""
+    fake_admin.users["user-123"] = {
+        "username": "ada",
+        "firstName": "Ada",
+        "attributes": {"preferredName": ["Countess Ada"]},
+    }
+    settings = Settings(
+        oidc_issuer=ISSUER,
+        admin_user_display_name_attributes=["preferredName", "firstName"],
+    )
+
+    profile = await _directory(settings, fake_admin).profile("user-123")
+
+    assert profile.display_name == "Countess Ada Ada"
+
+
+async def test_profile_display_name_falls_back_to_username(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    fake_admin.users["user-123"] = {"username": "ada"}
+
+    profile = await _directory(settings, fake_admin).profile("user-123")
+
+    assert profile.display_name == "ada"
+    assert profile.unixname is None
+    assert profile.email == ""
+
+
+async def test_profile_of_disabled_user_is_still_returned(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    """An admin must be able to find (and revoke the tokens of) a disabled user."""
+    fake_admin.users["user-123"] = {"username": "ada", "enabled": False}
+
+    profile = await _directory(settings, fake_admin).profile("user-123")
+
+    assert profile.username == "ada"
+
+
+async def test_profile_of_unknown_user_raises_not_found(
+    settings: Settings, fake_admin: _FakeKeycloakAdmin
+) -> None:
+    with pytest.raises(PrincipalNotFoundError):
+        await _directory(settings, fake_admin).profile("no-such-user")

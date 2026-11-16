@@ -513,6 +513,14 @@ class Settings(BaseSettings):
     # env value.
     access_groups: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
+    # Keycloak user fields (top-level, e.g. `firstName`, or custom user
+    # attributes) joined with spaces into the display name the admin user
+    # search shows and matches on. A user with none of them set is shown by
+    # username.
+    admin_user_display_name_attributes: list[str] = Field(
+        default_factory=lambda: ["firstName", "lastName"]
+    )
+
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
 
