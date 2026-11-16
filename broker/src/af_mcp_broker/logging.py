@@ -308,7 +308,7 @@ def log_request_finished(
     router matched one, and never carries a query string.
 
     An unhandled exception (*exc_type* set) is the broker's own failure, so the
-    line logs at error, the same as a 5xx ``http_exception``. When it left no
+    line logs at error, the same as a 5xx ``http.exception``. When it left no
     response behind (*status_code* is None), the server answers 500 for it, so
     that is the status recorded.
     """

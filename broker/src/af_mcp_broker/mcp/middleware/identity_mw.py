@@ -322,7 +322,7 @@ class AsgiAuthMiddleware:
                 # exception's docstring. 503 with the actionable detail,
                 # not a vague 401, so a caller can tell the difference.
                 logger.exception(
-                    "mcp_principal_directory_unavailable", error=str(exc.detail)
+                    "mcp.principal_directory_unavailable", error=str(exc.detail)
                 )
                 await send_error(
                     scope,
@@ -333,7 +333,7 @@ class AsgiAuthMiddleware:
                 )
                 return
             except IdentityError as exc:
-                logger.warning("mcp_identity_validation_failed", error=str(exc.detail))
+                logger.warning("mcp.identity_validation_failed", error=str(exc.detail))
                 # Deliberately vague -- see the module docstring: never
                 # repeat which claim, issuer/audience, or JWKS detail failed
                 # to a client.

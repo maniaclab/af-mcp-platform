@@ -40,7 +40,7 @@ key is the MCP block's own `type` (`text`, `image`, `audio`, `resource`,
 It is an open set: a new MCP content type shows up as a new key, with no
 schema change anywhere. A block type the broker does not recognize is still
 measured under its own type string (bytes = its serialized JSON, tokens 0) and
-logged once per call as `unknown_content_type` — never dropped.
+logged once per call as `measure.unknown_content_type` — never dropped.
 
 - **Bytes** are wire size as sent: text is its UTF-8 length; base64 payloads
   (image and audio `data`, a blob resource's `blob`) are counted at their
@@ -60,7 +60,7 @@ logged once per call as `unknown_content_type` — never dropped.
     assumption: the high-resolution tier (2,576 px long edge, 4,784 visual
     tokens; Claude 4.7 and later), `audit/image_tokens.py`'s `ASSUMED_TIER`.
     Dimensions are read from the PNG/JPEG/GIF/WebP header; an unreadable image
-    is logged (`image_dimensions_unreadable`) and charged the tier maximum,
+    is logged (`measure.image_dimensions_unreadable`) and charged the tier maximum,
     never 0. Example: a 640×480 PNG is 23 × 18 = 414 tokens.
   - everything else (audio, blob `resource`, `resource_link`, unknown): 0 —
     the model does not consume it as tokens.
@@ -238,7 +238,7 @@ written before the record is buffered.
   written, so the audit log stays complete and the rows can be rebuilt
   from it.
 - **Failed batches.** A batch that fails to write is logged as
-  `usage_record_batch_failed` (with `batch_size` and the `audit_ids`) and
+  `usage.record_batch_failed` (with `batch_size` and the `audit_ids`) and
   counted on `af_mcp_metering_worker_errors_total` once per record, the
   same unit a failed single insert used. The Postgres batch is
   all-or-nothing, so one rejected row fails every row in its batch; the
@@ -710,14 +710,14 @@ Audit writes fail loudly. A failure to write a line raises to the code that
 produced the record: the denial path, the inline fallback (no pipeline
 running, or a full metering queue) and the credential and token endpoints
 all surface it to the request. The metering worker has no caller to raise
-to, so it logs `metering_audit_write_failed` at `error` level with the
+to, so it logs `metering.audit_write_failed` at `error` level with the
 traceback and the lost record's `audit_id`, `principal_sub`, `target`,
 `action` and `outcome`, increments `af_mcp_metering_worker_errors_total`, and
 keeps processing the queue.
 
 Admin state changes are audited like tool calls: toggling maintenance mode
 writes a `maintenance_enable` or `maintenance_disable` record (caller,
-enabled or disabled, the reason given) and logs `maintenance_mode_changed`
+enabled or disabled, the reason given) and logs `maintenance.mode_changed`
 at `info`. A toggle that loses the compare-and-set race changed nothing and
 writes neither.
 
@@ -742,9 +742,10 @@ fields; they change only with a release note.
 | `correlation_id` | The request's id (see [Following one call end to end](#following-one-call-end-to-end)). |
 | `audit_id`, `lookup_id` | The audit record's id; a personal access token's lookup id. |
 | `uid`, `unixname` | POSIX identity. |
+| `claimed_subject` | A `sub` read from a token whose signature was not verified (`jwt.expired`, `jwt.audience_mismatch`). Caller-controlled, so never in `subject`. |
 
 Tokens, passphrases, passwords, keytabs, proxies and request or response
-bodies are never logged.
+bodies are never logged. A certificate DN is logged only at `debug` (`x509.proxy_dn`).
 
 ## HTTP request lines
 
@@ -819,7 +820,7 @@ does the ServiceX link rejection (400); other 4xx bodies do not.
 
 ## `/v1` error responses in the log
 
-Each error response from `/v1` logs one `http_exception` line with
+Each error response from `/v1` logs one `http.exception` line with
 `status_code`, `detail` and `path`. A 5xx logs at `error`, so an alert on
 error-level lines sees a `/v1` outage; a 4xx (authentication, validation,
 rate limit, conflict) logs at `info`, because it is the caller's request being
@@ -827,9 +828,9 @@ refused as designed, not a broker failure.
 
 ## Finding rate-limit refusals
 
-Every 429, on `/v1` and on `/mcp`, also logs one `rate_limit_exceeded` line at
-`info`, so a single search (`event=rate_limit_exceeded`) lists every lockout
-and rate-limit refusal. On `/v1` it comes beside the generic `http_exception`
+Every 429, on `/v1` and on `/mcp`, also logs one `rate_limit.exceeded` line at
+`info`, so a single search (`event=rate_limit.exceeded`) lists every lockout
+and rate-limit refusal. On `/v1` it comes beside the generic `http.exception`
 line; on `/mcp` it is the only line for the refusal besides the audit record.
 
 | Field | Value |

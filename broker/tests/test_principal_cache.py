@@ -273,7 +273,7 @@ async def test_cached_principal_dropped_when_directory_rejects_it(
     )  # fail closed for every caller
     [entry] = [e for e in logs if e["event"] == "principal_cache.principal_rejected"]
     assert entry["log_level"] == "warning"
-    assert entry["principal_id"] == "p1"
+    assert entry["subject"] == "p1"
     assert entry["reason"] == reason
 
 

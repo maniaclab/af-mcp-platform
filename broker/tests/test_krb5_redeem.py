@@ -720,7 +720,7 @@ class TestRedeemHandsFreeRenewal:
         assert resp.json()["correlation_id"]
 
     def test_renewal_infra_failure_falls_through_to_keytab_remint(
-        self, krb5_redeem_env, app_client_factory
+        self, krb5_redeem_env, app_client_factory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """af-mcp-platform#286 part 2, at the redeem endpoint: a transient
         renew() infra failure must not shadow a perfectly good linked
@@ -748,6 +748,15 @@ class TestRedeemHandsFreeRenewal:
                 renew_error=Krb5TokenMintError("krb5-token-service unreachable"),
                 ticket=_minted_ticket(ccache_b64="cmVtaW50ZWQ="),
             )
+            provider = asyncio.run(
+                client.app.state.broker.credential_registry.resolve(_TARGET)
+            )
+            warnings: list[str] = []
+            monkeypatch.setattr(
+                provider._log,
+                "warning",
+                lambda event, **_kwargs: warnings.append(event),
+            )
             token = _mint(client)
             resp = client.post(
                 _REDEEM, json={}, headers={"Authorization": f"Bearer {token}"}
@@ -755,6 +764,9 @@ class TestRedeemHandsFreeRenewal:
         assert resp.status_code == 200, resp.text
         assert resp.json()["ccache_b64"] == "cmVtaW50ZWQ="
         assert fake_client.calls[0]["keytab_b64"] == "a2V5dGFi"
+        # A dependency failure the broker worked around is degraded service,
+        # so it logs at warning.
+        assert warnings == ["krb5_token.issue.renew_infra_failure_falling_through"]
 
     def test_renewal_infra_failure_audit_on_final_failure(
         self, krb5_redeem_env, app_client_factory, captured_audits

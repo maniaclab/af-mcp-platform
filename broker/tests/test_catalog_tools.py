@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
+import structlog
+import structlog.testing
 from broker_state_helpers import make_broker_state, set_broker_state
 from conftest import (
     HungBackend,
@@ -650,6 +652,73 @@ async def test_unauthorized_when_injected_credential_is_rejected(
     resp = await _get_tools(app, "secure")
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "unauthorized"
+
+
+async def test_unlinked_caller_logs_skipped_at_info(
+    policy: EntitlementPolicy,
+    make_principal: Callable[..., Any],
+    secure_backend_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller who has not linked is an expected outcome: ``skipped`` at info, not a ``failed`` line."""
+    monkeypatch.setattr(catalog_tools, "logger", structlog.get_logger("test"))
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "secure",
+            secure_backend_url,
+            required_permission="read_data",
+            auth_type="bearer",
+        )
+    )
+    credential_registry = CredentialRegistry()
+    credential_registry.register(
+        "secure", _FakeProvider(unlinked_subjects=frozenset({"sub-abc"}))
+    )
+    app, state = _make_app(registry, policy, credential_registry)
+    state["principal"] = make_principal(groups=["atlas"])
+
+    with structlog.testing.capture_logs() as logs:
+        resp = await _get_tools(app, "secure")
+
+    assert resp.status_code == 200, resp.text
+    [entry] = [e for e in logs if e["event"].startswith("catalog.tools_list_")]
+    assert entry["event"] == "catalog.tools_list_skipped"
+    assert entry["log_level"] == "info"
+    assert entry["status"] == "not_linked"
+    assert entry["target"] == "secure"
+
+
+async def test_unavailable_backend_logs_failed_at_warning(
+    policy: EntitlementPolicy,
+    make_principal: Callable[..., Any],
+    dead_backend_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backend that cannot be listed is a failure: ``failed`` at warning."""
+    monkeypatch.setattr(catalog_tools, "logger", structlog.get_logger("test"))
+    registry = ServiceRegistry()
+    registry.register(
+        _spec(
+            "dead",
+            dead_backend_url,
+            required_permission="read_data",
+            auth_type="bearer",
+        )
+    )
+    credential_registry = CredentialRegistry()
+    credential_registry.register("dead", _FakeProvider())
+    app, state = _make_app(registry, policy, credential_registry)
+    state["principal"] = make_principal(groups=["atlas"])
+
+    with structlog.testing.capture_logs() as logs:
+        resp = await _get_tools(app, "dead")
+
+    assert resp.status_code == 200, resp.text
+    [entry] = [e for e in logs if e["event"].startswith("catalog.tools_list_")]
+    assert entry["event"] == "catalog.tools_list_failed"
+    assert entry["log_level"] == "warning"
+    assert entry["status"] == "unavailable"
 
 
 async def test_unavailable_when_backend_is_down(

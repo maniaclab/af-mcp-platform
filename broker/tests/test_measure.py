@@ -154,7 +154,7 @@ def test_unreadable_image_costs_the_tier_maximum_and_warns() -> None:
 
     assert m.content["image"].tokens_est == 4784
     assert m.content["image"].bytes == len(block.data)
-    assert [e["event"] for e in logs] == ["image_dimensions_unreadable"]
+    assert [e["event"] for e in logs] == ["measure.image_dimensions_unreadable"]
     assert logs[0]["log_level"] == "warning"
 
 
@@ -218,7 +218,7 @@ def test_unknown_block_type_is_measured_under_its_own_type_and_warns() -> None:
         blocks=1, bytes=len(b'{"type":"hologram","data":"xyz"}'), tokens_est=0
     )
     assert [(e["event"], e["content_type"]) for e in logs] == [
-        ("unknown_content_type", "hologram")
+        ("measure.unknown_content_type", "hologram")
     ]
 
 

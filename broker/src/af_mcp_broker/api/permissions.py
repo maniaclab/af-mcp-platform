@@ -319,7 +319,7 @@ async def authorize(
     if service is None:
         reason = f"target '{body.target}' is not a registered service"
         logger.info(
-            "authorize_decision",
+            "authorization.decision",
             subject=principal.subject,
             target=body.target,
             action=body.action,
@@ -334,7 +334,7 @@ async def authorize(
     allow, reason = check_entitlement(principal, permission, service.name, policy)
     action_type = get_action_type(service.name, body.action, permission, policy)
     logger.info(
-        "authorize_decision",
+        "authorization.decision",
         subject=principal.subject,
         permission=permission,
         target=body.target,

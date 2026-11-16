@@ -1267,6 +1267,6 @@ async def test_registry_revoke_logs_only_when_a_record_was_revoked() -> None:
 
     assert revoked is not None
     assert revoked.revoked_at is not None
-    assert [(e["event"], e["lookup_id"], e["principal_id"]) for e in logs] == [
+    assert [(e["event"], e["lookup_id"], e["subject"]) for e in logs] == [
         ("token_registry.revoked", "a", "p1")
     ]

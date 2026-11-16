@@ -101,7 +101,7 @@ async def test_wrong_audience_raises_token_audience_error_with_correlation_id(
 async def test_wrong_audience_logs_actual_and_expected_audience(
     settings, sig_key, prime_jwks, static_principal_cache, monkeypatch
 ):
-    """The jwt_audience_mismatch log line must carry the token's actual `aud`
+    """The jwt.audience_mismatch log line must carry the token's actual `aud`
     and the broker's expected one directly -- an operator (or Claude)
     grepping pod logs for this event should see immediately which audience
     the token had without needing to decode it separately, and without
@@ -135,11 +135,15 @@ async def test_wrong_audience_logs_actual_and_expected_audience(
         await get_principal(token, settings, cache, _NO_NETWORK)
 
     mismatch_entries = [
-        kwargs for event, kwargs in events if event == "jwt_audience_mismatch"
+        kwargs for event, kwargs in events if event == "jwt.audience_mismatch"
     ]
     assert len(mismatch_entries) == 1
     assert mismatch_entries[0]["actual_audience"] == "some-other-service"
     assert mismatch_entries[0]["expected_audience"] == AUDIENCE
+    # The sub is read without verifying the signature, so it is logged as a
+    # claim, never under the trusted ``subject`` field.
+    assert "subject" not in mismatch_entries[0]
+    assert mismatch_entries[0]["claimed_subject"]
 
 
 async def test_no_matching_kid_raises_401(

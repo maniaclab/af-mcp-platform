@@ -235,5 +235,5 @@ async def resolve_cimd_client(
     await assert_safe_url(client_id, resolver=resolver)
     doc = await fetch_client_document(client_id, client=client, timeout=timeout)
     resolved = build_client_from_document(doc, client_id)
-    log.info("cimd_client_resolved", client_id=client_id)
+    log.info("cimd.client_resolved", client_id=client_id)
     return resolved

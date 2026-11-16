@@ -138,7 +138,7 @@ async def get_maintenance_status(request: Request) -> MaintenanceStatusResponse:
         # exist is staying reachable precisely when everything else is
         # refusing traffic, so surfacing the outage as a 500 here would be
         # exactly backwards.
-        logger.exception("maintenance_store_unavailable", error=str(exc))
+        logger.exception("maintenance.store_unavailable", error=str(exc))
         metrics.maintenance_store_unavailable_total.inc()
         state = _DISABLED_DEFAULT
     unixname, email = await _resolve_enabled_by(request, state.enabled_by)
@@ -218,7 +218,7 @@ async def set_maintenance_status(
         )
     )
     logger.info(
-        "maintenance_mode_changed",
+        "maintenance.mode_changed",
         subject=principal.subject,
         enabled=body.enabled,
         reason=body.reason,

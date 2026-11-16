@@ -109,7 +109,7 @@ def start_metrics_server(settings: Settings, stack: AsyncExitStack) -> int | Non
     metrics_server, _ = start_http_server(settings.metrics_port)
     stack.callback(metrics_server.shutdown)
     stack.callback(metrics_server.server_close)
-    logger.info("metrics_server_started", port=metrics_server.server_port)
+    logger.info("metrics.server_started", port=metrics_server.server_port)
     return int(metrics_server.server_port)
 
 
@@ -161,7 +161,7 @@ async def prime_jwks_cache(settings: Settings, http_client: httpx2.AsyncClient) 
     """Prime the JWKS cache so the first request does not pay the latency cost of a remote fetch."""
     try:
         keys = await get_jwks(settings, http_client)
-        logger.info("jwks_cache_primed", key_count=len(keys))
+        logger.info("jwks.cache_primed", key_count=len(keys))
     except Exception as exc:  # noqa: BLE001  # non-fatal prime; broad catch intentional
         # Non-fatal at startup — the cache will be retried on the first request.
-        logger.warning("jwks_cache_prime_failed", error=str(exc))
+        logger.warning("jwks.cache_prime_failed", error=str(exc))

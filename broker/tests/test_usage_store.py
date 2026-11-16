@@ -287,6 +287,6 @@ async def test_record_usage_batch_failure_is_logged_and_counts_every_row(
     await record_usage_batch(_ExplodingStore(), batch)  # must not raise
 
     assert _sample("af_mcp_metering_worker_errors_total") == before + 3
-    assert "usage_record_batch_failed" in caplog.text
+    assert "usage.record_batch_failed" in caplog.text
     assert "usage store down" in caplog.text
     assert "'audit_ids': ['a', 'b', 'c']" in caplog.text

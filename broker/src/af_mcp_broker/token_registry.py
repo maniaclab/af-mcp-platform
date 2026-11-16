@@ -723,7 +723,7 @@ class VaultTokenRegistryBackend(TokenRegistryBackend):
         # turn a successful auth into a 500.
         log.warning(
             "token_registry.touch_last_used_retry_budget_exceeded",
-            principal_id=principal_id,
+            subject=principal_id,
             lookup_id=lookup_id,
         )
 
@@ -933,7 +933,7 @@ class TokenRegistry:
         self._log.info(
             "token_registry.minted",
             lookup_id=record.lookup_id,
-            principal_id=record.principal_id,
+            subject=record.principal_id,
             expires_at=record.expires_at,
         )
 
@@ -953,7 +953,7 @@ class TokenRegistry:
             self._log.info(
                 "token_registry.revoked",
                 lookup_id=record.lookup_id,
-                principal_id=principal_id,
+                subject=principal_id,
             )
         return records
 
@@ -966,7 +966,7 @@ class TokenRegistry:
         )
         for lookup_id in deleted:
             self._log.info(
-                "token_registry.deleted", lookup_id=lookup_id, principal_id=principal_id
+                "token_registry.deleted", lookup_id=lookup_id, subject=principal_id
             )
         return deleted
 
@@ -976,6 +976,6 @@ class TokenRegistry:
         )
         if record is not None:
             self._log.info(
-                "token_registry.revoked", lookup_id=lookup_id, principal_id=principal_id
+                "token_registry.revoked", lookup_id=lookup_id, subject=principal_id
             )
         return record

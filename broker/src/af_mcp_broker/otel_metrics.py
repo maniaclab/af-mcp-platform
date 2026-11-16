@@ -147,7 +147,7 @@ def init_otel_metrics(settings: Settings, reader: MetricReader | None = None) ->
         ),
     )
     _provider = provider
-    logger.info("otel_metrics_initialized")
+    logger.info("otel_metrics.initialized")
 
 
 def shutdown_otel_metrics() -> None:
@@ -164,7 +164,7 @@ def shutdown_otel_metrics() -> None:
     try:
         provider.shutdown()
     except Exception as exc:  # noqa: BLE001 -- an exporter problem is not the broker's
-        logger.warning("otel_metrics_shutdown_failed", error=str(exc))
+        logger.warning("otel_metrics.shutdown_failed", error=str(exc))
 
 
 def record_tool_call(record: AuditRecord) -> None:
@@ -204,4 +204,4 @@ def record_tool_call(record: AuditRecord) -> None:
             if record.result_tokens_est is not None:
                 instruments.result_tokens_est.add(size_tokens, sized)
     except Exception as exc:  # noqa: BLE001 -- metrics must never affect a call
-        logger.warning("otel_metrics_record_failed", error=str(exc))
+        logger.warning("otel_metrics.record_failed", error=str(exc))

@@ -57,7 +57,7 @@ async def keycloak_dependency(
         # Emit an audit-visible line on every bypassed request so the trail
         # captures every call that skipped real authentication.
         logger.info(
-            "dev_auth_bypass_used",
+            "dev_bypass.used",
             path=request.url.path,
             unixname=dev_principal.unixname,
             uid=dev_principal.uid,

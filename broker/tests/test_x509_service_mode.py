@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 import json
 
 import pytest
+import structlog.testing
 from prometheus_client import REGISTRY
 from pydantic import SecretBytes, SecretStr
 from x509_fakes import DN, PEM, VOMS_ATTRS, FakeVomsClient, FakeX509Store, minted
@@ -166,6 +167,20 @@ class TestLinkFlow:
         assert cred.payload["delivery"] == "redeem"
         assert "proxy_path" not in cred.payload
         assert cred.source == "voms_token_service"
+
+    async def test_certificate_dn_is_logged_at_debug_only(self) -> None:
+        provider, _, _, _ = _make_provider()
+
+        with structlog.testing.capture_logs() as logs:
+            await provider.issue(
+                _principal("auser"), "ami", passphrase=SecretBytes(b"hunter2")
+            )
+
+        by_event = {e["event"]: e for e in logs}
+        assert "dn" not in by_event["x509.linked"]
+        assert "dn" not in by_event["x509.proxy_minted"]
+        assert by_event["x509.proxy_dn"]["dn"] == DN
+        assert by_event["x509.proxy_dn"]["log_level"] == "debug"
 
     async def test_stores_the_nickname_from_the_minted_proxy(self) -> None:
         """voms-token-service's nickname (issue #191 — the user's CERN/Rucio

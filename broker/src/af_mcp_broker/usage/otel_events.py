@@ -127,7 +127,7 @@ class OtelUsageEventEmitter:
             )
         except Exception as exc:  # noqa: BLE001 -- emission must never affect a call
             logger.warning(
-                "usage_event_emit_failed", audit_id=record.audit_id, error=str(exc)
+                "usage.event_emit_failed", audit_id=record.audit_id, error=str(exc)
             )
 
     def shutdown(self) -> None:
@@ -138,7 +138,7 @@ class OtelUsageEventEmitter:
         try:
             self._provider.shutdown()
         except Exception as exc:  # noqa: BLE001 -- an exporter problem is not the broker's
-            logger.warning("usage_event_shutdown_failed", error=str(exc))
+            logger.warning("usage.event_shutdown_failed", error=str(exc))
 
 
 class EventEmittingUsageStore(UsageStore):

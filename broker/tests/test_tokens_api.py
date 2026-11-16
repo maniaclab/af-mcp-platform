@@ -309,7 +309,7 @@ def test_mint_rate_limit_logs_the_dedicated_event(
 
     resp = _mint(client, name="eleventh")
 
-    [event] = [e for e in events if e["event"] == "rate_limit_exceeded"]
+    [event] = [e for e in events if e["event"] == "rate_limit.exceeded"]
     assert event["limiter"] == "pat_mint"
     assert event["retry_after_seconds"] == resp.json()["retry_after_seconds"]
 

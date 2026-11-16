@@ -317,7 +317,7 @@ async def _mint_bootstrap_pat(
             note=record.note,
         )
         await registry.put(record)
-    log.info("mcp_oauth.pat_minted", lookup_id=lookup_id, principal_id=principal_id)
+    log.info("mcp_oauth.pat_minted", lookup_id=lookup_id, subject=principal_id)
     return plaintext
 
 
@@ -519,7 +519,7 @@ async def keycloak_login_callback(
         )
     )
 
-    log.info("mcp_oauth.keycloak_login_succeeded", principal_id=principal_id)
+    log.info("mcp_oauth.keycloak_login_succeeded", subject=principal_id)
     query = urlencode({"code": mcp_code, "state": payload.mcp_state})
     response = RedirectResponse(
         url=f"{payload.mcp_redirect_uri}?{query}", status_code=status.HTTP_302_FOUND
