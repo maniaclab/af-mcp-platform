@@ -853,7 +853,7 @@ Structured log (structlog + JSON) of every tool invocation, including:
 - resolved VOMS nickname (`nickname`): on x509 proxy-release records, the
   CERN/Rucio account the released proxy authenticates as — the grid identity
   the credential is usable as, distinct from the AF principal in
-  `subject`/`principal_uid`; `null` on every non-x509 record and for a
+  `subject`/`uid`; `null` on every non-x509 record and for a
   proxy whose VOMS attributes carry no nickname (issue maniaclab/af-mcp-platform#199)
 
 Every tool invocation means every one: calls to the gateway's own `af_*`

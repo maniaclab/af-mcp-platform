@@ -278,7 +278,7 @@ class ServiceProvider(CredentialProvider):
         """
         record = AuditRecord(
             subject=principal.subject,
-            principal_uid=principal.uid,
+            uid=principal.uid,
             permission=self.cred_class,
             target=target,
             action="credential.issued",

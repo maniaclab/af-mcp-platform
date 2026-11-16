@@ -242,7 +242,7 @@ async def audit_token_action(
     await write_audit(
         AuditRecord(
             subject=principal.subject,
-            principal_uid=principal.uid,
+            uid=principal.uid,
             permission="tokens",
             target="mcp-gateway",
             action=action,

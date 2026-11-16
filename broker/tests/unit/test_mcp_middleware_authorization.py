@@ -193,7 +193,7 @@ async def test_entitled_call_proceeds_and_audits_success(
     assert record.action == "rucio_list_dids"
     assert record.action_type == "read"
     assert record.mcp_service == "rucio"
-    assert record.principal_uid == principal.uid
+    assert record.uid == principal.uid
     assert record.subject == principal.subject
     # The client_factory (aggregator.py) reads this to distinguish a genuine
     # tools/call from a tools/list schema-cache refresh sharing the same
@@ -284,7 +284,7 @@ async def test_unentitled_call_denied_audit_carries_no_permission_grant_when_not
     with pytest.raises(AuthorizationError):
         await mw.on_call_tool(context, call_next)
 
-    assert captured_audits[0].principal_permission_grant is None
+    assert captured_audits[0].permission_grant is None
 
 
 async def test_denied_call_audit_carries_the_scoped_pats_permission_grant(
@@ -294,7 +294,7 @@ async def test_denied_call_audit_carries_the_scoped_pats_permission_grant(
     that PAT's effective permission_grant in the audit line, so an admin can
     tell "the principal doesn't hold read_data at all" apart from "the
     principal holds it, but this PAT is scoped away from it" -- the whole
-    point of this field (see AuditRecord.principal_permission_grant's
+    point of this field (see AuditRecord.permission_grant's
     docstring)."""
     mw = authorization_middleware(registry, policy)
     # In the "atlas" group (which read_data below would normally grant), but
@@ -310,7 +310,7 @@ async def test_denied_call_audit_carries_the_scoped_pats_permission_grant(
         await mw.on_call_tool(context, call_next)
 
     assert captured_audits[0].outcome == "denied"
-    assert captured_audits[0].principal_permission_grant == ["submit_jobs"]
+    assert captured_audits[0].permission_grant == ["submit_jobs"]
 
 
 async def test_audit_token_id_copied_on_all_four_outcome_paths(
@@ -935,7 +935,7 @@ async def test_success_audit_flows_through_metering_pipeline(
     assert line["action_type"] == "read"
     assert line["mcp_service"] == "rucio"
     assert line["subject"] == principal.subject
-    assert line["principal_uid"] == principal.uid
+    assert line["uid"] == principal.uid
     assert line["duration_ms"] >= 0.0
     assert line["result_bytes"] == len(b"hellohello")
     # conftest's stub tiktoken encoder: one token per 4 characters.

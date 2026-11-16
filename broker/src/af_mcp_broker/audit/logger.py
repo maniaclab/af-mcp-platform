@@ -22,7 +22,7 @@ class AuditRecord:
     # principal, but audit records still carry it when present -- operators
     # want it, and `subject` alone is a stable substitute when it's
     # absent, not a gap in the record.
-    principal_uid: int | None
+    uid: int | None
     permission: str | None
     target: str
     action: str
@@ -49,7 +49,7 @@ class AuditRecord:
     # from the effective set that denied the call) -- see
     # authorization.get_principal_permissions for the intersection this
     # reflects.
-    principal_permission_grant: list[str] | None = None
+    permission_grant: list[str] | None = None
     # Per-token attribution (issue #247): the calling PAT's public,
     # non-secret lookup_id, null for a session JWT (not a distinct
     # long-lived credential). ``subject`` identifies the user across
@@ -91,7 +91,7 @@ class AuditRecord:
     trace_id: str | None = None
     # The resolved VOMS nickname -- the CERN/Rucio account the x509 proxy
     # authenticates as -- on x509 proxy-release records (issue #199). Distinct
-    # from subject/principal_uid, which identify the AF principal, not
+    # from subject/uid, which identify the AF principal, not
     # the grid identity the credential is actually usable as; an operator
     # grepping the audit trail during an incident (nickname-resolution bug,
     # VOMS AC parsing regression, a user who changed their Globus identity)
