@@ -706,6 +706,19 @@ JWT claim:
 - `ServiceProvider` always reports linked — the broker's own service account
   is the credential source, so there is no user-side linkage to check.
 
+The service tier's shared token comes from `AF_SERVICE_TOKEN`,
+`AF_SERVICE_TOKEN_FILE`, or a `client_credentials` grant (in that order of
+precedence). `ServiceProvider.issue()` honours `min_remaining_seconds` like
+the per-user providers: a cached token with less than the requested lifetime
+left is refreshed, and a refreshed token that is still shorter is returned
+as is. A `client_credentials` token expires per `expires_in`. A static token
+that is a JWT expires at its `exp` claim (read without verifying the
+signature, since the broker is not its audience); once past it, issuance
+fails with a "has expired" error until the Secret or file is replaced. A
+static token with no readable `exp` (opaque, or a JWT lacking the claim) is
+treated as non-expiring, and the broker logs `service.token.static_no_expiry`
+once at warning level, because it cannot tell when the token stops working.
+
 An unlinked provider surfaces as `404` before `issue()` is ever called, rather
 than as an opaque failure from inside the provider. `GET /v1/identities`'s
 `providers[].linked` is built the same way — by probing `is_linked()` — so it
