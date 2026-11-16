@@ -1,0 +1,2 @@
+broker:
+  accessGroups: ["/example/a,/example/b"]

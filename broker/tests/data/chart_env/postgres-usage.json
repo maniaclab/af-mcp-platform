@@ -27,6 +27,7 @@
     "USAGE_STORE_BACKEND": "postgres"
   },
   "settings": {
+    "access_groups": [],
     "admin_group": "",
     "allow_per_replica_state": true,
     "audit_log_file": "-",

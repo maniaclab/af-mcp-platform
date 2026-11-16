@@ -54,6 +54,9 @@ def _helm_template(
     [
         ("typo-key", ["keycloakAdmn"]),
         ("wrong-type", ["replicaCount"]),
+        ("access-groups-empty-entry", ["accessGroups"]),
+        ("access-groups-comma-entry", ["accessGroups"]),
+        ("access-groups-not-a-list", ["accessGroups"]),
         ("bad-backend", ["tokenRegistry", "backend"]),
         ("empty-services", ["aggregator", "services"]),
         ("empty-policy", ["entitlements", "group_permissions"]),

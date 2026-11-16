@@ -17,6 +17,9 @@ portal:
 # Secret for template rendering — it doesn't need to exist for `helm
 # lint`/`helm template` to succeed.
 broker:
+  accessGroups:
+    - /example/af
+    - /example/ops
   vault:
     kvRoot: "mcp"
   # Exercises the shared-state store render path: SHARED_STATE_URL via a

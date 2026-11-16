@@ -30,6 +30,7 @@
     "USAGE_STORE_BACKEND": "in_memory"
   },
   "settings": {
+    "access_groups": [],
     "admin_group": "",
     "allow_per_replica_state": true,
     "audit_log_file": "-",
