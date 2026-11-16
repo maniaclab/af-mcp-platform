@@ -166,7 +166,7 @@ const status = computed(() => {
         spellcheck="false"
         aria-autocomplete="list"
         :aria-expanded="open ? 'true' : 'false'"
-        :aria-controls="listboxId"
+        :aria-controls="users.length > 0 ? listboxId : undefined"
         :aria-activedescendant="activeDescendant"
         @focus="open = true"
         @blur="open = false"
@@ -175,7 +175,13 @@ const status = computed(() => {
       <div data-popover :aria-hidden="open ? 'false' : 'true'" @mousedown.prevent>
         <!-- Preventing the default of mousedown keeps focus in the input, whose
              blur would otherwise close the popover before a click lands. -->
-        <div :id="listboxId" role="listbox" :aria-label="label">
+        <div
+          v-if="users.length > 0"
+          :id="listboxId"
+          class="up__list"
+          role="listbox"
+          :aria-label="label"
+        >
           <div
             v-for="(u, index) in users"
             :id="optionId(index)"
@@ -209,6 +215,12 @@ const status = computed(() => {
 </template>
 
 <style scoped>
+/* Basecoat caps the list at 18rem, which leaves the sixth row of two-line
+   options cut off with nothing to say it scrolls. A little more height shows
+   a half-row of the next option, which does. */
+.combobox .up__list[role='listbox'] {
+  max-height: 21.5rem;
+}
 .up__option {
   display: flex;
   flex-direction: column;

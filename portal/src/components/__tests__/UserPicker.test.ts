@@ -223,4 +223,29 @@ describe('UserPicker', () => {
     expect(wrapper.get('label').text()).toBe('Find a user');
     expect(wrapper.get('label').attributes('for')).toBe(input.attributes('id'));
   });
+
+  // Basecoat paints "No results found" over any empty [role=listbox] with CSS,
+  // which would contradict the picker's own status line, so no empty listbox is
+  // rendered at all.
+  it('renders no listbox while there is nothing to list', async () => {
+    vi.mocked(searchAdminUsers).mockResolvedValue(response([]));
+    const wrapper = mount(UserPicker, { props: { label: 'User', modelValue: null } });
+
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false); // type to search
+    await type(wrapper, 'zzz');
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false); // searching
+    await settle();
+    expect(wrapper.text()).toContain('No users found');
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false); // no match
+  });
+
+  it('renders the listbox, and points the input at it, once there are matches', async () => {
+    vi.mocked(searchAdminUsers).mockResolvedValue(response([user(1)]));
+    const wrapper = mount(UserPicker, { props: { label: 'User', modelValue: null } });
+    await type(wrapper, 'user');
+    await settle();
+
+    const listbox = wrapper.get('[role="listbox"]');
+    expect(wrapper.get('input').attributes('aria-controls')).toBe(listbox.attributes('id'));
+  });
 });
