@@ -522,15 +522,21 @@ rate_limits:
       rest of `/v1`) returns `rate_limits`, one entry per rule with
       `action_type`, `tool`, `limit`, `window_seconds`, and the caller's
       `used` (calls counted in the open window, refused attempts included, so
-      it can exceed `limit`) and `resets_in_seconds` (null while no window is
-      open), plus `usage_available`. It is separate from
-      `GET /v1/entitlements`, which is static policy identical for every
-      caller; this response reads live per-caller counters. The counters are
-      read with `SharedState.get_window` under the same
+      it can exceed `limit`), `resets_in_seconds` (null while no window is
+      open) and `tools` (the caller's tools the rule covers, sorted, matched
+      with `RateLimitRule.matches`, the matcher the limiter counts calls
+      with), plus `usage_available` and `unlisted_services`. It is separate
+      from `GET /v1/entitlements`, which is static policy identical for
+      every caller; this response reads live per-caller counters. The
+      counters are read with `SharedState.get_window` under the same
       `tool_rate_limit_key` the limiter writes, for the authenticated
-      subject only. The response does not say which tools a rule covers,
-      because that needs every backend's tool list; the portal computes it
-      from each rule's selectors and `GET /v1/catalog/{service}/tools`.
+      subject only. `tools` needs every service's tool list, so with at
+      least one rule the route lists each registered service the way
+      `GET /v1/catalog/{service}/tools` does (same credentials, same
+      per-service cache); with no rules it contacts no backend.
+      `unlisted_services` names the services missing from every `tools`:
+      the caller lacks the permission to see any of them, or listing failed
+      (logged as `rate_limits.service_tools_failed` when it raised).
     - *Gateway tool.* `af_rate_limits` returns the same rules and usage and
       also lists, per rule, up to 20 of the caller's entitled tools it
       covers (`tools`, with `tool_count` for the full number), after a

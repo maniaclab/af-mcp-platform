@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from af_mcp_broker.authorization import get_action_type, get_principal_permissions
 from af_mcp_broker.authorization.rate_limit import (
     RateLimitStatus,
+    covered_tool_names,
     rate_limit_statuses,
     read_rate_limit_usage,
 )
@@ -663,11 +664,7 @@ def register_diagnostic_tools(
             rate_limit_statuses(policy.rate_limits, usage),
             strict=True,
         ):
-            covered = sorted(
-                name
-                for name, action_type in entitled_actions
-                if rule.matches(name, action_type)
-            )
+            covered = covered_tool_names(rule, entitled_actions)
             rules.append(
                 ToolRateLimitStatus(
                     **status.model_dump(),
