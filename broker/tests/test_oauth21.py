@@ -1376,6 +1376,9 @@ def test_authorize_404_for_unknown_alias(
         resp = client.get("/v1/oauth/authorize/does-not-exist")
 
     assert resp.status_code == 404
+    assert resp.json()["detail"] == (
+        "Unknown OAuth 2.1 provider alias 'does-not-exist'"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1392,6 +1395,8 @@ def test_authorize_400_for_unsafe_return_url(
         resp = client.get(f"/v1/oauth/authorize/{ALIAS}", params={"return": bad_return})
 
     assert resp.status_code == 400
+    assert resp.json()["detail"].startswith("return_url must ")
+    assert repr(bad_return) in resp.json()["detail"]
 
 
 @pytest.fixture(autouse=True)
@@ -1437,6 +1442,7 @@ def test_authorize_401_without_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
         resp = client.get(f"/v1/oauth/authorize/{ALIAS}")
 
     assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"] == "Not authenticated"
 
 
 def test_callback_completes_flow_and_stores_credential(
@@ -1788,6 +1794,7 @@ def test_callback_400_when_nonce_cookie_missing(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "Missing OAuth state nonce cookie"
 
 
 def test_callback_400_when_nonce_mismatches_cookie(
@@ -1811,6 +1818,7 @@ def test_callback_400_when_nonce_mismatches_cookie(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "OAuth state nonce does not match cookie"
 
 
 def test_callback_400_when_alias_mismatches_state(
@@ -1838,6 +1846,7 @@ def test_callback_400_when_alias_mismatches_state(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "OAuth state alias does not match callback URL"
 
 
 def test_callback_400_when_state_malformed(
@@ -1854,6 +1863,7 @@ def test_callback_400_when_state_malformed(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "state token is invalid or expired"
 
 
 def test_callback_400_when_state_expired(
@@ -1887,6 +1897,7 @@ def test_callback_400_when_state_expired(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "state token is invalid or expired"
 
 
 def test_callback_returns_400_when_neither_code_nor_error(
@@ -2007,6 +2018,7 @@ def test_callback_state_still_validated_on_error_path(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "state token is invalid or expired"
 
 
 def test_callback_missing_state_cookie_on_error_path(
@@ -2022,6 +2034,7 @@ def test_callback_missing_state_cookie_on_error_path(
         )
 
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "Missing OAuth state nonce cookie"
 
 
 def test_config_raises_when_state_key_missing_but_providers_configured(
