@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.api.credentials import notify_identity_linked
 from af_mcp_broker.broker_state import get_broker_state, get_state_settings
 from af_mcp_broker.config import (
@@ -19,7 +20,6 @@ from af_mcp_broker.credentials.oauth21 import (
     TokenStore,
     normalize_token_response,
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.oauth_state import (
     NONCE_COOKIE_NAME,
     NONCE_COOKIE_PATH,

@@ -203,7 +203,10 @@ values. All four are consolidated into `broker.identityProviders` above:
 
 Edit the HelmRelease for the platform (typically
 `clusters/<cluster>/af-mcp-platform/helmrelease.yaml`) and add one entry under
-`values.aggregator.services`:
+`values.aggregator.services`. The chart's `values.schema.json` requires at
+least one entry and rejects keys outside the `ServiceSpec` fields (the broker
+would otherwise drop a misspelt key silently), so `helm lint` and
+`helm template` catch a typo before Flux applies it:
 
 ```yaml
 values:

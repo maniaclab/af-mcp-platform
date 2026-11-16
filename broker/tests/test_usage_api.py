@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from broker_state_helpers import set_broker_state
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
 from af_mcp_broker.audit import AuditRecord
-from af_mcp_broker.identity import keycloak_dependency
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -32,6 +32,11 @@ export function formatDateTime(date: Date, { year = false }: { year?: boolean } 
   });
 }
 
+/** Exact local time, with year, for a unix-seconds timestamp; shown on hover next to a relative one. */
+export function formatEpochSeconds(epochSeconds: number): string {
+  return formatDateTime(new Date(epochSeconds * 1000), { year: true });
+}
+
 /** Time left until *date* as "3h 25m remaining" / "45m remaining", or "expired" once it has passed. */
 export function formatRemaining(date: Date, now: Date = new Date()): string {
   const seconds = Math.floor((date.getTime() - now.getTime()) / 1000);

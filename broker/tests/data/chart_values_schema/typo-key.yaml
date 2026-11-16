@@ -1,0 +1,4 @@
+# A misspelt key under a chart-owned block.
+broker:
+  keycloakAdmn:
+    clientId: typo

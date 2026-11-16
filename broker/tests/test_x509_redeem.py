@@ -25,7 +25,7 @@ from test_request_logging import _capturing_info
 from x509_fakes import FakeVomsClient, FakeX509Store
 
 import af_mcp_broker.app as app_module
-from af_mcp_broker.identity import keycloak_dependency
+from af_mcp_broker.api.auth import keycloak_dependency
 
 if TYPE_CHECKING:
     from collections.abc import Callable

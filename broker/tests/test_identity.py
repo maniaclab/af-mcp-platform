@@ -12,6 +12,7 @@ from broker_state_helpers import make_broker_state
 from conftest import AUDIENCE, RaisingTokenRegistryBackend, make_claims
 
 from af_mcp_broker import identity as identity_module
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import get_principal_permissions
 from af_mcp_broker.identity import (
     InvalidTokenError,
@@ -210,7 +211,7 @@ async def test_keycloak_dependency_dev_bypass_binds_subject_to_structlog_context
     )
     structlog.contextvars.clear_contextvars()
 
-    principal = await identity_module.keycloak_dependency(fake_request, None, settings)
+    principal = await keycloak_dependency(fake_request, None, settings)
 
     assert principal is dev_principal
     assert structlog.contextvars.get_contextvars()["subject"] == "dev-insecure:devuser"
@@ -543,7 +544,7 @@ async def test_valid_jwt_accepted_with_a_token_registry_that_raises_on_every_cal
         url=SimpleNamespace(path="/v1/identities"),
     )
 
-    principal = await identity_module.keycloak_dependency(
+    principal = await keycloak_dependency(
         fake_request, SimpleNamespace(credentials=token), settings
     )
 

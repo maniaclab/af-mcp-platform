@@ -221,7 +221,8 @@ root_package = "af_mcp_broker"
 #   3. edges         api (/v1 routers) and mcp (aggregator + ASGI/FastMCP
 #                    middleware). Independent: anything both need lives below.
 #   4. credentials   pat_auth resolves a broker PAT to a Principal; identity
-#                    validates a Keycloak JWT and is the FastAPI auth dependency.
+#                    validates a Keycloak JWT (the /v1 auth dependencies live in
+#                    api/auth.py).
 #   5. broker_state  the typed BrokerState stored on ``app.state.broker`` and its
 #                    accessors. Below identity, which reads the principal cache
 #                    and dev-bypass principal from it, and above every

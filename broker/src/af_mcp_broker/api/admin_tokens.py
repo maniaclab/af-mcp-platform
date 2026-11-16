@@ -24,6 +24,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.auth import require_admin
 from af_mcp_broker.api.tokens import (
     RevokeTokenResponse,
     TokenSummary,
@@ -31,7 +32,6 @@ from af_mcp_broker.api.tokens import (
     get_token_registry,
     to_summary,
 )
-from af_mcp_broker.identity import require_admin
 from af_mcp_broker.principal import Principal
 
 router = APIRouter(prefix="/admin/tokens", tags=["admin"])
