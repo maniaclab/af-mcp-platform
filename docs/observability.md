@@ -731,7 +731,7 @@ neither logs the other's requests.
 | Field | On | Meaning |
 |---|---|---|
 | `method`, `path` | `received`, `finished` | HTTP method and path. Never the query string, which may carry secrets. On `finished` each matched path parameter is shown as `{name}` (`/v1/admin/tokens/{lookup_id}`) so lines group by endpoint. |
-| `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`null` when the request raised or the client disconnected first), wall time since `received`, and the exception class if one escaped. |
+| `status_code`, `duration_ms`, `exc_type` | `finished` | Response status (`500` when an exception escaped before any response was sent; `null` when the client disconnected first), wall time since `received`, and the exception class if one escaped. A request that raised logs `finished` at `error`; every other request logs it at `info`. |
 | `subject` | `finished` | The caller, once known. `received` never has it: it logs before identity resolves. Backend credential redeems (`/v1/credentials/*/redeem`) authenticate with a broker-issued token, and their `subject` is that token's `sub`. |
 | `parent_request_id` | `finished` | Only on a backend credential redeem whose token was minted for a tool call: that call's `correlation_id`, so the redeem's request lines join to the call. The redeem's own id stays in `correlation_id`. Absent on every other request. |
 
