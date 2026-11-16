@@ -226,10 +226,15 @@ class TestStartCredmonSync:
 
 
 class TestPrimeJwksCache:
-    @pytest.mark.usefixtures("unpinned_loggers")
     async def test_a_failed_fetch_is_not_fatal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # A booted app pins module loggers to its processor list, which hides
+        # their events from capture_logs (see conftest's ``unpinned_loggers``).
+        monkeypatch.setattr(
+            lifecycle, "logger", structlog.get_logger(lifecycle.__name__)
+        )
+
         async def _get_jwks(
             settings: Settings, http_client: httpx2.AsyncClient
         ) -> list[Any]:
