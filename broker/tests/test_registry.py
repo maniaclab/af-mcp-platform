@@ -4,7 +4,9 @@ that both /v1/catalog and the /mcp aggregator's routing read from.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+from conftest import TEST_SERVICES
 
 from af_mcp_broker.service_registry import (
     _MAX_CALLER_LIST_FAILURES,
@@ -12,13 +14,8 @@ from af_mcp_broker.service_registry import (
     ServiceSpec,
 )
 
-SHIPPED_SERVICES = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "af_mcp_broker"
-    / "mcp"
-    / "services.yaml"
-)
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_backend_spec_description_and_display_name_default_to_empty() -> None:
@@ -58,7 +55,7 @@ def test_shipped_backends_carry_display_name_and_description() -> None:
     """The shipped services.yaml must not ship description-less entries
     forever — every entry gets a real display_name/description."""
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     for spec in registry.all_services():
         assert spec.display_name, f"{spec.name} is missing display_name"
         assert spec.description, f"{spec.name} is missing description"

@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx2
 import pytest
+from conftest import TEST_SERVICES
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -386,7 +387,6 @@ async def test_delete_raises_vault_error_on_5xx(sa_token_path: Path) -> None:
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 STATE_ISSUER = "https://keycloak.invalid/realms/connect"
 CIMD_CLIENT_ID = "https://mcp.example.org/.well-known/cimd"
 
@@ -395,7 +395,7 @@ def _bootstrap_oauth21_vault_env(
     monkeypatch: pytest.MonkeyPatch, sa_token_path: Path
 ) -> None:
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
+    monkeypatch.setenv("SERVICES_FILE", str(TEST_SERVICES))
     monkeypatch.setenv("METRICS_PORT", "0")
     monkeypatch.setenv("OIDC_ISSUER", STATE_ISSUER)
     monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())

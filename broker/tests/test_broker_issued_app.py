@@ -336,7 +336,7 @@ def test_lifespan_threads_issuer_into_x509_client_factory(
         # A list-time credential is only minted for a caller who has linked
         # their x509 identity.
         seed_x509_link(client.app.state.broker.x509_provider.vault_store)
-        # SHIPPED_SERVICES' "ami" is its auth_type: x509 entry.
+        # TEST_SERVICES' "ami" is its auth_type: x509 entry.
         ami_provider = _find_service_provider(app_module.app.state, "ami")
         # A list-time invocation (no authorized_call_target) by an entitled
         # principal: the factory attaches the identity header best-effort --

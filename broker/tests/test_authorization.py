@@ -358,7 +358,7 @@ def test_startup_refuses_to_start_when_group_permissions_empty(
 def test_startup_quiet_when_permissions_are_all_reachable(
     app_client_factory: Callable[..., Any],
 ) -> None:
-    """The shipped policy.yaml grants every permission SHIPPED_SERVICES
+    """The shipped policy.yaml grants every permission TEST_SERVICES
     requires (to at least one group), so startup must succeed for the
     default local-dev configuration."""
     with app_client_factory() as (client, _):

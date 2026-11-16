@@ -7,7 +7,11 @@
 # service that acts only with per-user credentials on the caller's own
 # resources; infrastructure-tier for anything holding platform-wide secrets.
 # It is a declaration only — the authoritative per-deployment assignment lives
-# alongside each app's manifests in the GitOps repo.
+# alongside each app's manifests in the GitOps repo.#
+# This file is also the registry of the pixi `dev` and `bypass` environments
+# (SERVICES_FILE), so it holds only entries a laptop can satisfy: an
+# `auth_type: x509` entry would need the voms-token-service, the broker signing
+# key and Vault at boot (docs/local-development.md).
 services:
   - name: rucio
     prefix: rucio
@@ -39,23 +43,6 @@ services:
     # rucio-mcp serves each site's FastMCP app under /site/{site}, not a flat
     # /mcp path. Deployments override name/prefix/url per site via Helm
     # values — e.g. a second entry pointed at /site/escape for the ESCAPE VO.
-
-  - name: ami
-    prefix: ami
-    url: "https://ami.cern.ch/mcp"
-    transport: http
-    required_permission: read_metadata
-    # Acts only with the caller's own forwarded per-user x509/VOMS proxy, so
-    # the proxied authority is exactly the user's — user-tier per the Elwood
-    # definition.
-    trust_tier: user-tier
-    display_name: AMI
-    description: ATLAS Metadata Interface — dataset provenance and metadata catalogs.
-    agent_policy: >-
-      Metadata and provenance lookups are read-only and safe to call without
-      confirmation.
-    # X509Provider mints a voms-proxy via the user's home-dir cert.
-    auth_type: x509
 
   - name: atlasopenmagic
     prefix: openmagic

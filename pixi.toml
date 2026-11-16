@@ -74,8 +74,8 @@ kubernetes-helm = ">=4.2,<5"
 # feature of the `broker` environment would override production config
 # (broker/tests/test_pixi_environments.py guards this).
 [feature.localdev.activation.env]
-POLICY_FILE = "${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/authorization/policy.yaml"
-SERVICES_FILE = "${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/mcp/services.yaml"
+POLICY_FILE = "${POLICY_FILE:-${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/authorization/policy.yaml}"
+SERVICES_FILE = "${SERVICES_FILE:-${PIXI_PROJECT_ROOT}/broker/src/af_mcp_broker/mcp/services.yaml}"
 
 [feature.broker.tasks]
 broker = { cmd = "uvicorn af_mcp_broker.app:app --host 0.0.0.0 --port 8080 --reload", description = "Run broker dev server" }
@@ -142,7 +142,7 @@ check-all = { depends-on = ["lint-all", "test-all"], description = "Full check: 
 # ---------------------------------------------------------------------------
 [feature.bypass.activation.env]
 BROKER_DEV_INSECURE_PRINCIPAL = '{"uid":1000,"gid":1000,"unixname":"devuser","email":"dev@localhost","groups":["atlas"]}'
-OIDC_ISSUER = "http://localhost:8081/realms/dev"
+OIDC_ISSUER = "${OIDC_ISSUER:-http://localhost:8081/realms/dev}"
 
 [environments]
 broker = {features = ["broker"], solve-group = "default"}

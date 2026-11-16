@@ -8,6 +8,7 @@ import shutil
 import socket
 import socketserver
 import subprocess
+import tempfile
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
@@ -82,14 +83,25 @@ AUDIENCE = "mcp-gateway"
 # entitlement decisions exercised here match production config.
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
 SHIPPED_POLICY = _SRC / "authorization" / "policy.yaml"
-SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
+# The shipped registry has no x509 entry (the documented local modes cannot
+# satisfy one), so tests that need the `ami` x509 service get a registry made of
+# the shipped entries plus tests/data/x509-ami-service.yaml, written once per
+# process.
+_TEST_DATA = Path(__file__).resolve().parent / "data"
+_TEST_SERVICES_DIR = tempfile.TemporaryDirectory(prefix="af-mcp-test-services-")
+TEST_SERVICES = Path(_TEST_SERVICES_DIR.name) / "services.yaml"
+TEST_SERVICES.write_text(
+    (_SRC / "mcp" / "services.yaml").read_text()
+    + "\n"
+    + (_TEST_DATA / "x509-ami-service.yaml").read_text()
+)
 
 # Default `identity_providers` entry `app_client_factory` configures below —
 # one keycloak-brokered provider bound to the historic default OIDCProvider
-# targets, so `bearer`-auth backends (e.g. "rucio" in SHIPPED_SERVICES) still
+# targets, so `bearer`-auth backends (e.g. "rucio" in TEST_SERVICES) still
 # resolve to an OIDCProvider instance the way they did before issue #66 PR4
 # replaced the single `oidc_idp_alias`-derived singleton with per-entry
-# `identity_providers` config; plus an x509 entry covering SHIPPED_SERVICES'
+# `identity_providers` config; plus an x509 entry covering TEST_SERVICES'
 # "ami" — every `auth_type: x509` backend must be covered by an explicit
 # entry or the broker refuses to start (wiring/checks.py's
 # `validate_x509_provider_targets`), so this fixture supplies the minimal
@@ -791,7 +803,7 @@ def app_client_factory(
     ``state["principal"]`` to change who the caller is for a given request.
     """
     monkeypatch.setenv("POLICY_FILE", str(SHIPPED_POLICY))
-    monkeypatch.setenv("SERVICES_FILE", str(SHIPPED_SERVICES))
+    monkeypatch.setenv("SERVICES_FILE", str(TEST_SERVICES))
     # An unreachable issuer keeps startup JWKS priming a no-op (non-fatal).
     monkeypatch.setenv("OIDC_ISSUER", "https://keycloak.invalid/realms/connect")
     # Ephemeral metrics port so test runs never collide on 9090.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from conftest import TEST_SERVICES
 
 from af_mcp_broker.config import Settings
 from af_mcp_broker.constants import BUILTIN_SERVICE_NAME
@@ -20,7 +21,6 @@ from af_mcp_broker.service_registry import (
 # The shipped services.yaml is the authoritative source for the apply_namespace
 # behavior this file tests (rucio is self-prefixed; everything else is not).
 _SRC = Path(__file__).resolve().parents[1] / "src" / "af_mcp_broker"
-SHIPPED_SERVICES = _SRC / "mcp" / "services.yaml"
 
 
 def test_backend_spec_apply_namespace_defaults_true() -> None:
@@ -99,7 +99,7 @@ def test_shipped_backends_rucio_apply_namespace_false() -> None:
     """rucio-mcp's tools are already self-prefixed (rucio_list_dids, ...);
     namespacing again would produce rucio_rucio_*."""
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     rucio = registry.get("rucio")
     assert rucio is not None
     assert rucio.apply_namespace is False
@@ -110,7 +110,7 @@ def test_shipped_backends_rucio_apply_namespace_false() -> None:
 )
 def test_shipped_backends_others_apply_namespace_true(name: str) -> None:
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     spec = registry.get(name)
     assert spec is not None
     assert spec.apply_namespace is True
@@ -120,7 +120,7 @@ def test_shipped_backends_af_filesystem_mcp_apply_namespace_false() -> None:
     """af-filesystem-mcp's tools are already self-prefixed (fs_list, fs_stat,
     fs_read, fs_grep, ...); namespacing again would produce fs_fs_*."""
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     fs = registry.get("af-filesystem-mcp")
     assert fs is not None
     assert fs.apply_namespace is False
@@ -480,7 +480,7 @@ def test_shipped_services_declare_trust_tier(name: str, tier: str) -> None:
     per-user own-resource read (filesystem) and __none__ read-only (docs) are
     user-tier."""
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     spec = registry.get(name)
     assert spec is not None
     assert spec.trust_tier == tier
@@ -561,7 +561,7 @@ def test_shipped_services_declare_agent_policy(name: str) -> None:
     """The reference services.yaml carries model-facing guidance for each
     service the agent should reason over before calling its tools."""
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     spec = registry.get(name)
     assert spec is not None
     assert spec.agent_policy is not None
@@ -713,7 +713,7 @@ def test_shipped_posix_backends_require_posix(name: str) -> None:
     (filesystem reads home dirs; jupyterlab launches as the user) declare
     requires_posix; a metadata backend must not, to avoid leaking uid/gid."""
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     spec = registry.get(name)
     assert spec is not None
     assert spec.requires_posix is True
@@ -721,7 +721,7 @@ def test_shipped_posix_backends_require_posix(name: str) -> None:
 
 def test_shipped_metadata_backend_does_not_require_posix() -> None:
     registry = ServiceRegistry()
-    registry.load(str(SHIPPED_SERVICES))
+    registry.load(str(TEST_SERVICES))
     spec = registry.get("ami")
     assert spec is not None
     assert spec.requires_posix is False
