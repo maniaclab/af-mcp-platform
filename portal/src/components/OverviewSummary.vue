@@ -141,7 +141,7 @@ const usageStatus = computed(() => {
   }
   return {
     tone: 'ok',
-    state: `${u.totals.calls.toLocaleString('en-US')} calls in ${u.window_days} days`,
+    state: `${formatTokens(u.totals.calls)} calls in ${u.window_days} days`,
   } as const;
 });
 
@@ -228,8 +228,8 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
     <div class="af-stats">
       <div class="af-stat">
         <span>Tool calls</span>
-        <b>{{ usage.totals.calls.toLocaleString('en-US') }}</b>
-        <small>{{ usage.totals.errors.toLocaleString('en-US') }} errors</small>
+        <b>{{ formatTokens(usage.totals.calls) }}</b>
+        <small>{{ formatTokens(usage.totals.errors) }} errors</small>
       </div>
       <div class="af-stat">
         <span>Tokens (estimated) <TokenEstimateTip id="ov-token-tip" /></span>

@@ -42,7 +42,7 @@ import {
   x509LinkModeLabel,
   x509PreflightErrorMessage,
 } from '../lib/x509Identity';
-import { formatDateTime, formatRemaining } from '../lib/relativeTime';
+import { formatIsoDateTime, formatRemaining } from '../lib/relativeTime';
 import { useFetchOnExpand } from '../lib/useFetchOnExpand';
 import IdentityCardShell from './IdentityCardShell.vue';
 import ArmedConfirmButton from './ui/ArmedConfirmButton.vue';
@@ -298,11 +298,7 @@ function remainingText(seconds?: number | null): string {
               </dd>
               <dt>Expires</dt>
               <dd>
-                {{
-                  proxyStatus.expires_at
-                    ? formatDateTime(new Date(proxyStatus.expires_at), { year: true })
-                    : 'unknown'
-                }}
+                {{ proxyStatus.expires_at ? formatIsoDateTime(proxyStatus.expires_at) : 'unknown' }}
                 ({{ remainingText(proxyStatus.remaining_seconds) }})
               </dd>
               <template v-if="proxyStatus.nickname">

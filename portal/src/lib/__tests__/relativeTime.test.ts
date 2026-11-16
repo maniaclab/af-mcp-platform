@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatDateTime,
   formatEpochSeconds,
+  formatIsoDateTime,
   formatRelative,
   formatRemaining,
 } from '../relativeTime';
@@ -27,6 +28,13 @@ describe('formatEpochSeconds', () => {
     expect(formatEpochSeconds(seconds)).toBe(
       formatDateTime(new Date(seconds * 1000), { year: true }),
     );
+  });
+});
+
+describe('formatIsoDateTime', () => {
+  it('is formatDateTime with the year, for an ISO-8601 string', () => {
+    const iso = new Date(NOW).toISOString();
+    expect(formatIsoDateTime(iso)).toBe(formatDateTime(new Date(NOW), { year: true }));
   });
 });
 

@@ -18,7 +18,7 @@ import {
   truncateNote,
 } from '../lib/tokenDisplay';
 import { copyText } from '../lib/clipboard';
-import { formatDateTime, formatRelative } from '../lib/relativeTime';
+import { formatIsoDateTime, formatRelative } from '../lib/relativeTime';
 import InfoTip from './ui/InfoTip.vue';
 import StatusMark from './ui/StatusMark.vue';
 
@@ -54,10 +54,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 // ── Formatting ───────────────────────────────────────────────────────────
 function formatRelativeIso(iso: string): string {
   return formatRelative(Date.parse(iso));
-}
-
-function formatExact(iso: string): string {
-  return formatDateTime(new Date(iso), { year: true });
 }
 
 const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
@@ -96,7 +92,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
                  token, so they sit under its name rather than in columns
                  of their own, which kept the table wider than the page. -->
             <div class="af-sub tp__meta">
-              <span :title="formatExact(row.created_at)">
+              <span :title="formatIsoDateTime(row.created_at)">
                 Created {{ formatRelativeIso(row.created_at) }}
               </span>
               <span class="tp__idbox" :title="row.lookup_id">
@@ -137,13 +133,13 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
           </td>
           <td
             class="af-sub"
-            :title="row.expires_at ? formatExact(row.expires_at) : 'Never expires'"
+            :title="row.expires_at ? formatIsoDateTime(row.expires_at) : 'Never expires'"
           >
             {{ row.expires_at ? formatRelativeIso(row.expires_at) : 'Never' }}
           </td>
           <td
             class="af-sub"
-            :title="row.last_used_at ? formatExact(row.last_used_at) : 'Never used'"
+            :title="row.last_used_at ? formatIsoDateTime(row.last_used_at) : 'Never used'"
           >
             {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
           </td>

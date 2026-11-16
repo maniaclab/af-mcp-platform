@@ -9,7 +9,7 @@
 import { computed } from 'vue';
 
 import type { LintServiceStatus } from '../../lib/api';
-import { formatDateTime, formatRelative } from '../../lib/relativeTime';
+import { formatEpochSeconds, formatRelative } from '../../lib/relativeTime';
 import StatusMark from './StatusMark.vue';
 
 const props = defineProps<{
@@ -24,14 +24,10 @@ const props = defineProps<{
   noun: string;
 }>();
 
-function exactTime(epochSeconds: number): string {
-  return formatDateTime(new Date(epochSeconds * 1000), { year: true });
-}
-
 const unobserved = computed(() => props.services.filter((s) => s.last_observed === null));
 
 /** Start of the window with no observation on record. */
-const since = computed(() => exactTime(Date.now() / 1000 - props.retentionSeconds));
+const since = computed(() => formatEpochSeconds(Date.now() / 1000 - props.retentionSeconds));
 </script>
 
 <template>
@@ -53,7 +49,7 @@ const since = computed(() => exactTime(Date.now() / 1000 - props.retentionSecond
       >:
       <template v-if="s.last_observed !== null">
         observed
-        <span :title="exactTime(s.last_observed)">{{
+        <span :title="formatEpochSeconds(s.last_observed)">{{
           formatRelative(s.last_observed * 1000)
         }}</span>
       </template>

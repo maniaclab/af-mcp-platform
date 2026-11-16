@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatShare } from '../usageFormat';
+import { formatShare, formatTokens } from '../usageFormat';
 
 describe('formatShare', () => {
   it.each([
@@ -10,5 +10,16 @@ describe('formatShare', () => {
     [0.012, '1%'],
   ])('formats %s as %s', (fraction, text) => {
     expect(formatShare(fraction)).toBe(text);
+  });
+});
+
+describe('formatTokens', () => {
+  it.each([
+    [0, '0'],
+    [999, '999'],
+    [12345, '12,345'],
+    [1234567, '1,234,567'],
+  ])('formats %s as %s', (n, text) => {
+    expect(formatTokens(n)).toBe(text);
   });
 });
