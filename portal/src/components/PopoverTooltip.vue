@@ -56,8 +56,10 @@ function updateVisibility(): void {
   // hover affordance.
   if (!el || typeof el.showPopover !== 'function') return;
   if (hovering || focused) {
-    position();
+    // Shown first: a closed popover is display:none, so it has no size to
+    // measure until it is open. Moving it afterwards happens before paint.
     el.showPopover();
+    position();
   } else {
     el.hidePopover();
   }

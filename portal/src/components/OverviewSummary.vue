@@ -20,6 +20,8 @@ import { overviewMessage } from '../lib/overviewBanner';
 import { proxyExpiryState } from '../lib/x509Identity';
 import { expiresIn, expiresSoon } from '../lib/tokenDisplay';
 import { formatTokens } from '../lib/usageFormat';
+import { contentTypeRows } from '../lib/usageContent';
+import TokenEstimateTip from './TokenEstimateTip.vue';
 import ConnectClient from './ConnectClient.vue';
 import PageMessage from './ui/PageMessage.vue';
 import StatusMark from './ui/StatusMark.vue';
@@ -143,6 +145,15 @@ const usageStatus = computed(() => {
   } as const;
 });
 
+/** "Text 13,000 · Images 1,000" over the types that carry tokens; null when none do. */
+const tokenBreakdown = computed<string | null>(() => {
+  if (!usage.value) return null;
+  const parts = contentTypeRows(usage.value.totals, usage.value.by_content_type)
+    .filter((r) => r.tokens > 0)
+    .map((r) => `${r.label} ${formatTokens(r.tokens)}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+});
+
 const rows = computed<Row[]>(() => [
   {
     key: 'services',
@@ -221,9 +232,9 @@ const showStats = computed(() => usage.value !== null && usage.value.totals.call
         <small>{{ usage.totals.errors.toLocaleString('en-US') }} errors</small>
       </div>
       <div class="af-stat">
-        <span>Tokens (estimated)</span>
+        <span>Tokens (estimated) <TokenEstimateTip id="ov-token-tip" /></span>
         <b>{{ formatTokens(usage.totals.result_tokens_est) }}</b>
-        <small>In tool results</small>
+        <small>{{ tokenBreakdown ?? 'In tool results' }}</small>
       </div>
     </div>
   </section>

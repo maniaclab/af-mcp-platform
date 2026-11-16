@@ -64,6 +64,10 @@ const USAGE: UsageResponse = {
     },
   ],
   by_day: [{ date: '2026-08-25', calls: 42, result_tokens_est: 15000 }],
+  by_content_type: [
+    { content_type: 'text', blocks: 38, bytes: 90000, tokens_est: 13000 },
+    { content_type: 'image', blocks: 2, bytes: 6000, tokens_est: 1000 },
+  ],
 };
 
 const EMPTY: UsageResponse = {
@@ -78,6 +82,7 @@ const EMPTY: UsageResponse = {
   },
   by_service: [],
   by_day: [],
+  by_content_type: [],
 };
 
 beforeEach(() => {
@@ -104,6 +109,23 @@ describe('OverviewSummary usage', () => {
     expect(text.toLowerCase()).not.toContain('priced');
     // Everything shown is an estimate and must say so.
     expect(text.toLowerCase()).toContain('estimated');
+  });
+
+  it('splits the estimated tokens by content type, with the unattributed remainder', async () => {
+    const wrapper = await mountSummary();
+
+    const stat = wrapper.findAll('.af-stat').find((s) => s.text().includes('Tokens (estimated)'));
+    expect(stat?.text()).toContain('Text 13,000');
+    expect(stat?.text()).toContain('Images 1,000');
+    expect(stat?.text()).toContain('Unattributed 1,000');
+  });
+
+  it('explains the token estimate with an info tip', async () => {
+    const wrapper = await mountSummary();
+
+    const tip = wrapper.find('button[aria-label="How token counts are estimated"]');
+    const describedBy = tip.attributes('aria-describedby') as string;
+    expect(wrapper.find(`#${describedBy}`).text()).toContain('o200k_base');
   });
 
   it('renders a friendly no-usage state when the window is empty', async () => {

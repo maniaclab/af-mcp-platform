@@ -15,7 +15,10 @@ import { ref, computed, onMounted } from 'vue';
 import { fetchCatalog, fetchUsage } from '../lib/api';
 import type { UsageResponse } from '../lib/api';
 import { useLoadState } from '../lib/useLoadState';
-import { formatBytes, formatTokens } from '../lib/usageFormat';
+import { TOKEN_DOCS_URL } from '../lib/tokenExplainer';
+import { contentTypeRows, UNATTRIBUTED } from '../lib/usageContent';
+import { formatBytes, formatShare, formatTokens } from '../lib/usageFormat';
+import TokenEstimateTip from './TokenEstimateTip.vue';
 import AsyncState from './ui/AsyncState.vue';
 import BarChart from './ui/BarChart.vue';
 import SegmentedControl from './ui/SegmentedControl.vue';
@@ -75,6 +78,11 @@ function selectWindow(value: string): void {
 }
 
 const isEmpty = computed<boolean>(() => usage.value !== null && usage.value.totals.calls === 0);
+
+/** One row per content type, plus the unattributed remainder (see contentTypeRows). */
+const contentRows = computed(() =>
+  usage.value ? contentTypeRows(usage.value.totals, usage.value.by_content_type) : [],
+);
 
 /** Share of calls that failed, e.g. "7.1%"; null when there were no calls. */
 const errorRate = computed<string | null>(() => {
@@ -164,7 +172,7 @@ const chartLabel = computed<string>(() => {
             </small>
           </div>
           <div class="af-stat" role="listitem">
-            <span>Tokens (estimated)</span>
+            <span>Tokens (estimated) <TokenEstimateTip id="up-token-tip" /></span>
             <b>{{ formatTokens(usage.totals.result_tokens_est) }}</b>
             <small>{{ formatBytes(usage.totals.result_bytes) }} of results</small>
           </div>
@@ -178,6 +186,51 @@ const chartLabel = computed<string>(() => {
             :ariaLabel="chartLabel"
             :format-value="formatTokens"
           />
+        </section>
+
+        <section
+          v-if="contentRows.length > 0"
+          id="up-content"
+          class="af-sect"
+          aria-labelledby="up-content-h"
+        >
+          <h2 id="up-content-h">By content type</h2>
+          <p class="af-help">
+            Estimated tokens split by what a tool result contained.
+            <TokenEstimateTip id="up-content-tip" />
+            <a :href="TOKEN_DOCS_URL" target="_blank" rel="noopener"
+              >How token counts are estimated</a
+            >.
+          </p>
+          <div class="table-container af-box">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th scope="col">Content type</th>
+                  <th scope="col" class="af-num">Blocks</th>
+                  <th scope="col" class="af-num">Result size</th>
+                  <th scope="col" class="af-num">Tokens (est.)</th>
+                  <th scope="col" class="af-num">Share</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in contentRows" :key="row.contentType">
+                  <td>
+                    {{ row.label }}
+                    <span v-if="row.contentType === UNATTRIBUTED" class="af-sub up__note">
+                      calls recorded without a breakdown
+                    </span>
+                  </td>
+                  <td class="af-num af-sub">
+                    {{ row.blocks === null ? '—' : formatTokens(row.blocks) }}
+                  </td>
+                  <td class="af-num af-sub">{{ formatBytes(row.bytes) }}</td>
+                  <td class="af-num">{{ formatTokens(row.tokens) }}</td>
+                  <td class="af-num af-sub">{{ formatShare(row.share) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="af-sect" aria-labelledby="up-service">
@@ -228,6 +281,11 @@ const chartLabel = computed<string>(() => {
 
 .up__id {
   font-family: var(--font-mono);
+}
+
+.up__note {
+  margin-left: var(--space-8);
+  font-size: var(--text-13);
 }
 
 .up__id {

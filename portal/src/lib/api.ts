@@ -999,12 +999,25 @@ export interface UsageByDay {
   result_tokens_est: number;
 }
 
+/**
+ * One MCP content type's share of the window (`text`, `image`, `structured`,
+ * `audio`, ...: an open set). Calls recorded without a breakdown are in
+ * `totals` but in no entry, so entries can sum to less than the totals.
+ */
+export interface UsageByContentType {
+  content_type: string;
+  blocks: number;
+  bytes: number;
+  tokens_est: number;
+}
+
 export interface UsageResponse {
   subject: string;
   window_days: number;
   totals: UsageTotals;
   by_service: UsageByService[];
   by_day: UsageByDay[];
+  by_content_type: UsageByContentType[];
 }
 
 /**
