@@ -13,6 +13,7 @@ import pytest
 
 from af_mcp_broker.audit import image_tokens
 from af_mcp_broker.config import Settings
+from af_mcp_broker.usage.summary import TOKEN_ESTIMATE_CAVEAT
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HEADING = "## How token counts are estimated"
@@ -67,3 +68,22 @@ def test_tooltip_states_the_assumed_tier_limits() -> None:
 
 def test_the_tier_is_still_the_documented_high_resolution_one() -> None:
     assert image_tokens.ASSUMED_TIER is image_tokens.HIGH_RES_TIER
+
+
+def test_usage_caveat_states_the_rules_the_docs_state() -> None:
+    encoding = Settings.model_fields["token_estimate_encoding"].default
+    tier = image_tokens.ASSUMED_TIER
+    for expected in (
+        "ESTIMATE",
+        "not provider-reported",
+        encoding,
+        "28x28",
+        str(tier.max_edge),
+        str(tier.max_tokens),
+        "by_content_type",
+    ):
+        assert expected in TOKEN_ESTIMATE_CAVEAT
+
+
+def test_usage_caveat_says_the_breakdown_can_sum_to_less_than_the_totals() -> None:
+    assert "less than" in TOKEN_ESTIMATE_CAVEAT

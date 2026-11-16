@@ -171,11 +171,13 @@ Trimmed response:
 }
 ```
 
-**Honesty caveats** (verbatim from the endpoint's own description): token
-counts are an ESTIMATE of the tool-result content injected into the LLM
-client's context (text by a tiktoken o200k count, images by Claude's
-vision-token rule) — not provider-reported usage, and not the user's full
-token volume.
+**Honesty caveats**: token counts are ESTIMATES of what tool results add to
+the LLM client's context, not provider-reported usage and not the user's full
+token volume. Text is counted with tiktoken `o200k_base`; images by Claude's
+vision rule (28x28 px patches on the high-resolution tier). The full rules
+are in [How token counts are estimated](#how-token-counts-are-estimated); the
+endpoint's own description and the `af_usage` tool description state the same
+rules.
 
 `by_content_type` is the same sums split per content type. Calls recorded
 without a breakdown (unmeasured, or written by a replica older than the

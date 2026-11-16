@@ -7,10 +7,10 @@ subject's usage is returned (see ``is_admin()``) -- aggregated by the
 UsageStore (``usage/``).
 
 Honesty caveats (also in the route's OpenAPI description): the token
-numbers are a tiktoken (o200k) ESTIMATE of what each tool result would
-inject into an LLM client's context -- not provider-reported usage, and not
-the user's full token volume (their prompts, the model's own output, and
-every non-tool token are invisible to the broker).
+numbers are an ESTIMATE of what each tool result would inject into an LLM
+client's context (``TOKEN_ESTIMATE_CAVEAT``) -- not provider-reported
+usage, and not the user's full token volume (their prompts, the model's own
+output, and every non-tool token are invisible to the broker).
 
 The response models and the whole assembly (store query and aggregation
 shaping) live in ``usage/summary.py``, shared with the
@@ -30,6 +30,7 @@ from af_mcp_broker.broker_state import get_broker_state
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.principal_cache import PrincipalUnavailableError
 from af_mcp_broker.usage.summary import (
+    TOKEN_ESTIMATE_CAVEAT,
     UsageResponse,
     build_usage_summary,
 )
@@ -48,11 +49,8 @@ router = APIRouter(prefix="/usage", tags=["usage"])
     summary="Get the caller's own usage, or (admins) another subject's",
     description=(
         "Per-service, per-day and per-content-type aggregates of the caller's "
-        "tool calls over a trailing window. Honesty caveats: token "
-        "counts are an ESTIMATE of the tool-result content injected into the "
-        "LLM client's context (text by a tiktoken o200k count, images by "
-        "Claude's vision-token rule) -- not provider-reported "
-        "usage, and not the user's full token volume. A caller "
+        "tool calls over a trailing window. "
+        f"{TOKEN_ESTIMATE_CAVEAT} A caller "
         "in the configured admin group may pass ``subject`` to view another "
         "subject's usage instead of their own; anyone else passing it is "
         "rejected."
@@ -77,8 +75,8 @@ async def get_usage(
     Scoped strictly to ``principal.subject`` unless an admin passes
     ``subject=`` to view another user's usage (see ``is_admin()``).
 
-    Token counts are a tiktoken (o200k) ESTIMATE of tool-result context
-    injection only (see the module docstring's honesty caveats).
+    Token counts are ESTIMATES of tool-result context injection only (see
+    the module docstring's honesty caveats).
     """
     settings = get_broker_state(request).settings
 

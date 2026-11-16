@@ -978,9 +978,9 @@ export interface UsageTotals {
   errors: number;
   duration_ms: number;
   result_bytes: number;
-  // A tiktoken (o200k) ESTIMATE of the tool-result text injected into the
-  // LLM client's context — not provider-reported usage, and not the user's
-  // full token volume. Label it as an estimate wherever it renders.
+  // An ESTIMATE of the tool-result content (text and images) injected into
+  // the LLM client's context — not provider-reported usage, and not the
+  // user's full token volume. Label it as an estimate wherever it renders.
   result_tokens_est: number;
 }
 
