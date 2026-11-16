@@ -1,37 +1,53 @@
 # Default values for af-mcp-platform.
 # This is a YAML-formatted file. Declare variables to be passed into your templates.
 
+# Helm's reserved key for values shared with subcharts. This chart has no
+# subcharts and reads nothing from it.
+global: {}
+
 image:
+  # Container registry (with any organisation path) both images are pulled from.
   registry: ghcr.io/maniaclab
   broker:
+    # Name of the broker image within the registry.
     repository: af-mcp-platform-broker
-    # Defaults to .Chart.AppVersion when empty
+    # Tag of the broker image; defaults to .Chart.AppVersion when empty.
     tag: ""
+    # Kubernetes imagePullPolicy of the broker container.
     pullPolicy: IfNotPresent
   portal:
+    # Name of the portal image within the registry.
     repository: af-mcp-platform-portal
-    # Defaults to .Chart.AppVersion when empty
+    # Tag of the portal image; defaults to .Chart.AppVersion when empty.
     tag: ""
+    # Kubernetes imagePullPolicy of the portal container.
     pullPolicy: IfNotPresent
 
 # List of imagePullSecrets to add to all pods (name references only)
 imagePullSecrets: []
 # - name: my-registry-secret
 
+# Replaces the chart name in the names of the resources the chart renders.
 nameOverride: ""
+# Replaces the whole generated resource name (release name plus chart name).
 fullnameOverride: ""
 
+# The ServiceAccount the broker, portal and token-sweep pods run as.
 serviceAccount:
+  # Whether the chart renders the ServiceAccount; false uses an existing one.
   create: true
-  # If not set and create is true, a name is generated using the fullname template
+  # Name of the ServiceAccount; if empty and create is true, a name is
+  # generated using the fullname template.
   name: ""
+  # Annotations added to the rendered ServiceAccount.
   annotations: {}
 
 # ---------------------------------------------------------------------------
 # OIDC issuer — single source of truth shared by the broker and the portal
 # ---------------------------------------------------------------------------
 oidc:
-  # e.g. "https://keycloak.example.com/realms/your-realm". Both the broker
+  # Realm URL of the OIDC issuer that both the broker and the portal trust, e.g.
+  # "https://keycloak.example.com/realms/your-realm". Both the broker
   # (OIDC_ISSUER, JWKS + iss/aud/exp validation) and the portal
   # (config.json's oidc.issuer, Authorization Code + PKCE) validate/present
   # against this one realm — it must be the same realm for both, so it is
@@ -54,6 +70,8 @@ oidc:
 # "Trust tiers".
 # ---------------------------------------------------------------------------
 broker:
+  # Number of broker pods. More than one needs broker.sharedState (or
+  # sharedState.allowPerReplicaState) so the replicas agree on shared state.
   replicaCount: 2
 
   # Name of the builtin gateway service (issue #240) -- the entry the registry
@@ -71,7 +89,8 @@ broker:
   # mode). Empty means no admin surface is reachable by anyone.
   adminGroup: ""
 
-  # /mcp aggregator transport mode (issue #128). Streamable-HTTP sessions
+  # Whether the /mcp aggregator runs Streamable HTTP statelessly (issue #128).
+  # Streamable-HTTP sessions
   # are in-process state, so a stateful session (false) only survives an
   # unpinned load balancer routing its later requests to a *different*
   # replica if something in front of the broker provides session affinity
@@ -83,6 +102,7 @@ broker:
   # outside an active tools/call).
   mcpStatelessHttp: true
 
+  # CPU and memory requests and limits of the broker container.
   resources:
     requests:
       cpu: 100m
@@ -106,6 +126,7 @@ broker:
   # broker.tokenMint.clientId (see the comment on portal.oidc.clientId
   # below).
   oidc:
+    # Resource-server audience (`aud`) the broker requires in every token it validates.
     audience: "mcp-gateway"
     # Realm URL for the broker's server-to-server (back-channel) Keycloak
     # calls — JWKS, token endpoint, Admin REST API, brokered-token fetch —
@@ -134,11 +155,10 @@ broker:
   # `/v1/oauth/authorize` redirects the browser to Keycloak using this
   # client, then exchanges the resulting code at Keycloak's token endpoint to
   # learn who logged in, before minting a PAT for the MCP client. The
-  # `tokenMint` name comes from the RFC 8693 token-exchange design that issue
-  # #144 step 2a replaced with broker-issued identity PATs; the same
-  # "confidential client + sealed secret" shape serves a different grant type
-  # here (authorization_code instead of token-exchange) and needs no Standard
-  # Token Exchange permission.
+  # authorization_code grant needs no Standard Token Exchange permission; the
+  # `tokenMint` name is a legacy label that does not mean token exchange (see
+  # docs/auth.md, "Operator setup: the MCP OAuth discovery bootstrap login
+  # client").
   tokenMint:
     # Client id of the confidential client. Not a secret -- a plain value,
     # like portal.oidc.clientId above. Deliberately a separate client from
@@ -186,8 +206,11 @@ broker:
   # whatever the underlying attribute is named into that shape) -- see
   # docs/auth.md.
   posixAttributes:
+    # Keycloak user-profile attribute holding the POSIX uid.
     uid: "uid"
+    # Keycloak user-profile attribute holding the POSIX gid.
     gid: "gid"
+    # Keycloak user-profile attribute holding the POSIX unix account name.
     unixname: "unixname"
 
   # Whether the PAT path (KeycloakPrincipalDirectory) matches a Keycloak
@@ -208,6 +231,8 @@ broker:
   # entries in identityProviders below — no separate alias list to keep in
   # sync.
   cimd:
+    # Human-readable `client_name` published in the CIMD document; empty
+    # publishes none.
     clientName: ""
 
   # Canonical origin (scheme + host, no trailing slash, e.g.
@@ -375,8 +400,9 @@ broker:
   # deployments have no HTCondor. Requires identityToken.existingSigningKeySecret
   # and a Vault-backed identity store (the broker refuses to boot otherwise).
   credmon:
+    # Whether the broker syncs per-user credmon top tokens into the facility's credd.
     enabled: false
-    # htcondor-api base URL, e.g. http://condor-mcp.mcp.svc.cluster.local:8080
+    # Base URL of htcondor-api, e.g. http://condor-mcp.mcp.svc.cluster.local:8080
     htcondorApiUrl: ""
     # The pool's user domain (HTCondor UID_DOMAIN, e.g. "af.example.org"):
     # credd only accepts the user a credential is stored for as
@@ -387,15 +413,17 @@ broker:
     # credd's CRED_SUPER_USERS (it stores on behalf of other users).
     # Create via SealedSecret externally; the chart does NOT create it.
     existingHtcondorApiTokenSecret: ""
-    # credd service name prefix: jobs request `use_oauth_services =
+    # Prefix of the credd service names: jobs request `use_oauth_services =
     # af_krb5, af_x509`. Empty means the broker default ("af_").
     servicePrefix: ""
     # Kinds to sync (subset of x509, krb5, servicex). Empty means all three;
     # kinds without a configured identity provider are skipped either way.
     kinds: []
-    # Empty means broker defaults: 86400s top-token TTL, 14400s interval.
-    # The TTL must exceed the interval.
+    # Lifetime of each top token in seconds. Empty means broker defaults:
+    # 86400s top-token TTL, 14400s interval. The TTL must exceed the interval.
     topTokenTtlSeconds: ""
+    # Seconds between syncs of every user's top tokens; empty means the broker
+    # default (14400).
     syncIntervalSeconds: ""
     # Alert when no replica has finished a sync for 2x the interval.
     # Requires the Prometheus Operator (PrometheusRule CRD).
@@ -437,6 +465,7 @@ broker:
     # Vault's Kubernetes auth method. Vault/OpenBao itself is BYO — this
     # chart only consumes an existing instance, it does not deploy one.
     tokenStore:
+      # Where OAuth 2.1 credentials are stored: "in-memory" or "vault".
       backend: "in-memory"  # or "vault"
       vault:
         # Vault HTTP API base URL, e.g. https://vault.example.com. Required
@@ -458,6 +487,7 @@ broker:
   # under {broker.vault.kvRoot}/token-registry, so the Vault-backed stores
   # never collide under the same kvMount.
   tokenRegistry:
+    # Where the token registry is stored: "in-memory" or "vault".
     backend: "in-memory"  # or "vault"
 
   # Persists the principal cache (issue #144 step 2b) -- last-known
@@ -472,6 +502,7 @@ broker:
   # docs/auth.md's "Authorization is an attribute of the principal, not the
   # token" section.
   principalCache:
+    # Where the principal cache is stored: "in-memory" or "vault".
     backend: "in-memory"  # or "vault"
 
   # Transport carrying success/error audit records from the tool-call hot
@@ -492,6 +523,7 @@ broker:
   # asyncpg. Postgres itself is BYO -- this chart only consumes an existing
   # instance, it does not deploy one.
   usage:
+    # Where usage records are stored: "in-memory" or "postgres".
     backend: "in-memory"  # or "postgres"
     # The metering worker buffers usage records and writes them to the store
     # as one batch (one round trip, not one per tool call) once batchMax
@@ -501,8 +533,11 @@ broker:
     # lines were already written. Both must be >= 1. Rendered as
     # USAGE_BATCH_MAX / USAGE_BATCH_INTERVAL_MS.
     batchMax: 100
+    # Longest time in milliseconds a usage record waits in the buffer before
+    # its batch is written.
     batchIntervalMs: 1000
-    # Postgres backend only. Raw usage rows older than retentionDays UTC days
+    # Days of raw usage rows kept in the events table (Postgres backend only).
+    # Raw usage rows older than retentionDays UTC days
     # are folded into a daily rollup table (per day, user, service, method,
     # outcome) and deleted, so the events table stops growing without bound;
     # /v1/usage and af_usage read raw rows inside the window and the rollup
@@ -511,6 +546,7 @@ broker:
     # lock lets one run. Rendered as USAGE_RETENTION_DAYS /
     # USAGE_ROLLUP_INTERVAL_SECONDS.
     retentionDays: 365
+    # Seconds between attempts of the retention rollup job.
     rollupIntervalSeconds: 3600
     postgres:
       # Secret carrying the asyncpg DSN, rendered as USAGE_POSTGRES_DSN via
@@ -532,7 +568,9 @@ broker:
       #                  postgres-operator.crunchydata.com/data: postgres
       #   port:        the pods' port
       networkPolicy:
+        # Namespace of the postgres pods; empty means the release namespace.
         namespace: ""
+        # Port of the postgres pods.
         port: 5432
 
   # State that must agree across broker replicas (unlock brute-force limiter;
@@ -544,7 +582,7 @@ broker:
   # exactly one replica: the chart refuses to render with replicaCount > 1
   # unless `allowPerReplicaState` is set.
   sharedState:
-    # redis:// or rediss:// URL, rendered as SHARED_STATE_URL. A URL with a
+    # URL of the shared store (redis:// or rediss://), rendered as SHARED_STATE_URL. A URL with a
     # password belongs in `existingSecret`, not here.
     url: ""
     # Secret carrying the URL, rendered as SHARED_STATE_URL via secretKeyRef.
@@ -578,8 +616,11 @@ broker:
     # `cidr`, when set, replaces namespace and podSelector, for a managed
     # instance outside the cluster.
     networkPolicy:
+      # CIDR of an instance outside the cluster; replaces namespace and podSelector.
       cidr: ""
+      # Namespace of the store's pods; empty means the release namespace.
       namespace: ""
+      # Port of the store.
       port: 6379
 
   # Broker-wide maintenance mode: only admins get through /v1 and /mcp while
@@ -588,6 +629,7 @@ broker:
   # broker warns loudly at startup if this is selected alongside
   # replicaCount > 1); "vault" and "postgres" propagate to every replica.
   maintenanceMode:
+    # Where the maintenance flag is stored: "in-memory", "vault" or "postgres".
     backend: "in-memory"  # or "vault" or "postgres"
     # Seconds each replica caches the flag in-process (rendered as
     # MAINTENANCE_MODE_CACHE_TTL_SECONDS). A toggle reaches the other replicas
@@ -691,7 +733,8 @@ tokenSweep:
   # broker.tokenRegistry.backend="vault" — the CronJob's container refuses
   # to run otherwise (see token_sweep.py).
   enabled: false
-  # Standard cron syntax, evaluated in the cluster's local time zone.
+  # Cron schedule of the sweep, in standard cron syntax evaluated in the
+  # cluster's local time zone.
   schedule: "17 3 * * *"
   # Grace window (seconds) a record is kept after its expires_at passes,
   # before the sweep removes it — see broker's TOKEN_SWEEP_GRACE_SECONDS
@@ -702,9 +745,10 @@ tokenSweep:
 # Aggregator: FastMCP service registry
 # ---------------------------------------------------------------------------
 aggregator:
-  # Required, at least one entry (values.schema.json). The schema also rejects
-  # keys that are not ServiceSpec fields.
-  # List of ServiceSpec objects passed verbatim into services.yaml.
+  # The backend MCP services the aggregator serves, one ServiceSpec object per
+  # service, passed verbatim into services.yaml. Required, at least one entry
+  # (values.schema.json). The schema also rejects keys that are not ServiceSpec
+  # fields.
   # Each entry should follow the FastMCP ServiceSpec schema, e.g.:
   #   - name: my-tool
   #     transport: http
@@ -757,8 +801,8 @@ aggregator:
 # Entitlements / policy
 # ---------------------------------------------------------------------------
 entitlements:
-  # The rendered policy.yaml is mounted at /etc/af-mcp/policy.yaml.
-  # group_permissions is required and must have at least one entry
+  # Maps each Keycloak group to the permissions its members get, rendered into
+  # policy.yaml (mounted at /etc/af-mcp/policy.yaml). group_permissions is required and must have at least one entry
   # (values.schema.json): a chart that renders no grants cannot admit anyone.
   # There is no default mapping: group names are inherently site-specific
   # (they come from the deployer's own Keycloak realm), so a same-named
@@ -812,8 +856,10 @@ entitlements:
 # Portal: static Astro site
 # ---------------------------------------------------------------------------
 portal:
+  # Number of portal pods.
   replicaCount: 2
 
+  # CPU and memory requests and limits of the portal container.
   resources:
     requests:
       cpu: 50m
@@ -828,8 +874,8 @@ portal:
   # (configmap-portal-config.yaml) rather than baked into the image at build
   # time, so one built image works against any realm/client/institution.
   oidc:
-    # e.g. "your-portal-client" — a public client, Client Authentication OFF,
-    # Standard flow ON, PKCE S256 required. REQUIRED — set in your deploying
+    # Client id of the portal's public OIDC client, e.g. "your-portal-client":
+    # Client Authentication OFF, Standard flow ON, PKCE S256 required. REQUIRED — set in your deploying
     # values overlay (e.g. a HelmRelease), there is no safe cross-institution
     # default.
     #
@@ -846,7 +892,7 @@ portal:
     # a browser access token mint tokens directly against Keycloak, bypassing
     # the broker's registry, rate limiting, and revocation entirely.
     clientId: ""
-    # openid/profile/email are OIDC-standard; append your audience-mapping
+    # OAuth scopes the portal requests at login. openid/profile/email are OIDC-standard; append your audience-mapping
     # client scope so the access token carries the broker's expected `aud`
     # (must match broker.oidc.audience above).
     scope: "openid profile email"
@@ -890,7 +936,9 @@ portal:
 # Ingress
 # ---------------------------------------------------------------------------
 ingress:
+  # Whether the chart renders the Ingress objects for the broker and portal hosts.
   enabled: true
+  # IngressClass the Ingress objects use.
   className: nginx
   # FQDN for the broker (REST + MCP) endpoints. REQUIRED while
   # ingress.enabled is true (values.schema.json): there is no default host.
@@ -903,6 +951,7 @@ ingress:
   # The issuer name is a fact about your cluster, so none is set here.
   annotations: {}
   tls:
+    # Whether the Ingress terminates TLS with the secrets named below.
     enabled: true
     # Secret name for the broker TLS certificate (e.g. managed by
     # cert-manager); empty derives "<fullname>-mcp-tls".
@@ -1065,6 +1114,7 @@ networkPolicy:
             matchLabels:
               app.kubernetes.io/name: ingress-nginx
           ports: [8081]
+      # NetworkPolicy ingress rules appended verbatim.
       extraIngress: []
 
 # ---------------------------------------------------------------------------
@@ -1073,7 +1123,9 @@ networkPolicy:
 # Requires the Prometheus Operator (ServiceMonitor CRD); off by default so the
 # chart installs on clusters without it.
 serviceMonitor:
+  # Whether the chart renders the ServiceMonitor.
   enabled: false
+  # Prometheus scrape interval.
   interval: 30s
   # Namespace for the ServiceMonitor resource; defaults to the release namespace.
   namespace: ""
@@ -1096,6 +1148,7 @@ prometheusRule:
 # Grafana Dashboard ConfigMap
 # ---------------------------------------------------------------------------
 grafanaDashboard:
+  # Whether the chart renders the Grafana dashboard ConfigMap.
   enabled: false
   # Namespace where the ConfigMap is deployed; empty uses the release
   # namespace. The Grafana sidecar (label grafana_dashboard: "1") watches
