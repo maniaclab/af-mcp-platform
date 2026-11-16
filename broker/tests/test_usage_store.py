@@ -18,6 +18,7 @@ import pytest
 from prometheus_client import REGISTRY
 
 from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.usage import (
     InMemoryUsageStore,
     UsageStore,
@@ -78,6 +79,33 @@ async def test_record_and_query_round_trip() -> None:
     assert agg.result_bytes == 150
     assert agg.result_tokens_est == 30
     await store.aclose()
+
+
+async def test_content_breakdown_accumulates_per_content_type() -> None:
+    store = InMemoryUsageStore()
+    await store.record(
+        _record(
+            result_content={
+                "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
+                "image": ContentMeasure(blocks=1, bytes=100, tokens_est=414),
+            }
+        )
+    )
+    await store.record(
+        _record(
+            result_content={"image": ContentMeasure(blocks=2, bytes=50, tokens_est=86)}
+        )
+    )
+    # No breakdown (unmeasured, or a record that predates the breakdown).
+    await store.record(_record(result_content=None))
+
+    (agg,) = await store.query("sub-abc", days=30)
+
+    assert agg.calls == 3
+    assert agg.content == {
+        "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
+        "image": ContentMeasure(blocks=3, bytes=150, tokens_est=500),
+    }
 
 
 async def test_unmeasured_records_count_calls_but_contribute_zero_sums() -> None:

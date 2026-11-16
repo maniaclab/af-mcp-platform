@@ -17,9 +17,11 @@ pipeline's own shape.
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+
+from af_mcp_broker.audit.measure import ContentMeasure
 
 if TYPE_CHECKING:
     from datetime import date
@@ -35,6 +37,12 @@ class UsageAggregate:
     aggregated calls; a record whose corresponding ``AuditRecord`` field was
     None (nothing was measured) contributes 0 to the sum but still counts in
     ``calls``.
+
+    ``content`` is the same sums split per MCP content type (an open set: see
+    ``audit/measure.py``). A call recorded without a breakdown (unmeasured, or
+    written by a replica that predates the breakdown) is in the totals but in
+    no ``content`` entry, so the entries can sum to less than the totals;
+    they never sum to more.
     """
 
     day: date
@@ -47,6 +55,7 @@ class UsageAggregate:
     duration_ms: float
     result_bytes: int
     result_tokens_est: int
+    content: dict[str, ContentMeasure] = field(default_factory=dict)
 
 
 class UsageStore(abc.ABC):
@@ -94,6 +103,19 @@ class UsageStore(abc.ABC):
         """
 
 
+def add_content(
+    total: ContentMeasure | None, measure: ContentMeasure
+) -> ContentMeasure:
+    """*total* (None for a first sight of the type) plus *measure*."""
+    if total is None:
+        return measure
+    return ContentMeasure(
+        blocks=total.blocks + measure.blocks,
+        bytes=total.bytes + measure.bytes,
+        tokens_est=total.tokens_est + measure.tokens_est,
+    )
+
+
 def window_start(days: int) -> date:
     """First UTC calendar day inside a trailing *days*-day window.
 
@@ -112,6 +134,7 @@ class _Counters:
     duration_ms: float = 0.0
     result_bytes: int = 0
     result_tokens_est: int = 0
+    content: dict[str, ContentMeasure] = field(default_factory=dict)
 
 
 class InMemoryUsageStore(UsageStore):
@@ -154,6 +177,10 @@ class InMemoryUsageStore(UsageStore):
         counters.duration_ms += record.duration_ms or 0.0
         counters.result_bytes += record.result_bytes or 0
         counters.result_tokens_est += record.result_tokens_est or 0
+        for content_type, measure in (record.result_content or {}).items():
+            counters.content[content_type] = add_content(
+                counters.content.get(content_type), measure
+            )
 
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
         start = window_start(days)
@@ -167,6 +194,7 @@ class InMemoryUsageStore(UsageStore):
                 duration_ms=c.duration_ms,
                 result_bytes=c.result_bytes,
                 result_tokens_est=c.result_tokens_est,
+                content=dict(c.content),
             )
             for (sub, day, service, method, outcome), c in sorted(
                 self._counters.items()

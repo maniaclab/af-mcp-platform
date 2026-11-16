@@ -7,11 +7,23 @@ one over more than once) is safe by construction. Aggregation happens in
 SQL at query time (``GROUP BY day, service, method, outcome``), keeping the
 stored data raw enough to re-slice later without a schema change.
 
+Each event row also has one child row per MCP content type in
+``af_mcp_usage_event_content`` (``audit_id, content_type, blocks, bytes,
+tokens_est``), written in the same transaction. ``content_type`` is an open
+set (see ``audit/measure.py``), so a new content type is new rows, never a
+schema change; the parent's ``result_bytes`` / ``result_tokens_est`` are the
+totals over its children. A parent with no children (unmeasured, or written by
+a replica that predates the breakdown) means "breakdown unknown", never an
+error.
+
 Raw rows are bounded by retention: ``rollup_and_prune`` folds rows older than
 the window into the ``af_mcp_usage_daily`` rollup (keyed ``(day,
 principal_sub, service, method, outcome)``, the shape every read uses) and
-deletes them in one statement. Reads sum raw rows and rollup rows, so a
-window answers identically before and after a row moves.
+deletes them in one statement; their child rows are folded into
+``af_mcp_usage_daily_content`` (keyed like the daily rollup plus
+``content_type``) in that same statement, before the delete cascades them away.
+Reads sum raw rows and rollup rows, so a window answers identically before and
+after a row moves.
 
 The DSN is ``settings.usage_postgres_dsn`` -- with Crunchy PGO, typically
 the ``uri`` key of the operator-generated ``<cluster>-pguser-<user>``
@@ -28,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 import asyncpg
 import structlog
 
+from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.constants import POOL_MAX_SIZE, POOL_MIN_SIZE
 from af_mcp_broker.usage.store import UsageAggregate, UsageStore, window_start
 
@@ -50,6 +63,20 @@ logger = structlog.get_logger(__name__)
 # replicas briefly fail their inserts against the renamed column; usage is
 # best-effort by contract (audit records are authoritative), so that window
 # loses nothing that matters.
+#
+# The content tables are the second migration (the per-content-type
+# breakdown): created IF NOT EXISTS, then backfilled. The backfill gives every
+# measured event row (result_bytes > 0) that has no child rows one `text`
+# child, and every daily row without content rows one `text` content row.
+# Before the breakdown existed only text was measured, so `text` is what those
+# totals were; `blocks` is NOT NULL and the backfill cannot know the real
+# block count, so it is an approximation (1 per event row, `calls` per daily
+# row). NOT EXISTS makes the backfill run exactly once per row however many
+# times (or from however many replicas) the DDL runs, and ON CONFLICT DO
+# NOTHING makes two replicas backfilling concurrently safe. It also adopts
+# childless rows a not-yet-updated replica inserts during a rolling deploy --
+# correctly, since that replica measures text only. Parents with
+# result_bytes NULL or 0 are left childless: there is nothing to attribute.
 _DDL = """
 DO $$
 BEGIN
@@ -99,6 +126,53 @@ CREATE TABLE IF NOT EXISTS af_mcp_usage_daily (
 );
 CREATE INDEX IF NOT EXISTS af_mcp_usage_daily_principal_day
     ON af_mcp_usage_daily (principal_sub, day);
+CREATE TABLE IF NOT EXISTS af_mcp_usage_event_content (
+    audit_id TEXT NOT NULL REFERENCES af_mcp_usage_events (audit_id) ON DELETE CASCADE,
+    content_type TEXT NOT NULL,
+    blocks BIGINT NOT NULL,
+    bytes BIGINT NOT NULL,
+    tokens_est BIGINT NOT NULL,
+    PRIMARY KEY (audit_id, content_type)
+);
+CREATE TABLE IF NOT EXISTS af_mcp_usage_daily_content (
+    day DATE NOT NULL,
+    principal_sub TEXT NOT NULL,
+    service TEXT NOT NULL,
+    method TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    blocks BIGINT NOT NULL,
+    bytes BIGINT NOT NULL,
+    tokens_est BIGINT NOT NULL,
+    PRIMARY KEY (day, principal_sub, service, method, outcome, content_type)
+);
+CREATE INDEX IF NOT EXISTS af_mcp_usage_daily_content_principal_day
+    ON af_mcp_usage_daily_content (principal_sub, day);
+INSERT INTO af_mcp_usage_event_content (
+    audit_id, content_type, blocks, bytes, tokens_est
+)
+SELECT e.audit_id, 'text', 1, e.result_bytes, coalesce(e.result_tokens_est, 0)
+FROM af_mcp_usage_events e
+WHERE e.result_bytes > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM af_mcp_usage_event_content c WHERE c.audit_id = e.audit_id
+  )
+ON CONFLICT DO NOTHING;
+INSERT INTO af_mcp_usage_daily_content (
+    day, principal_sub, service, method, outcome,
+    content_type, blocks, bytes, tokens_est
+)
+SELECT d.day, d.principal_sub, d.service, d.method, d.outcome,
+       'text', d.calls, d.result_bytes, d.result_tokens_est
+FROM af_mcp_usage_daily d
+WHERE d.result_bytes > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM af_mcp_usage_daily_content c
+      WHERE c.day = d.day AND c.principal_sub = d.principal_sub
+        AND c.service = d.service AND c.method = d.method
+        AND c.outcome = d.outcome
+  )
+ON CONFLICT DO NOTHING;
 """
 
 _INSERT = """
@@ -108,6 +182,13 @@ INSERT INTO af_mcp_usage_events (
     token_id, trace_id
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (audit_id) DO NOTHING
+"""
+
+_INSERT_CONTENT = """
+INSERT INTO af_mcp_usage_event_content (
+    audit_id, content_type, blocks, bytes, tokens_est
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (audit_id, content_type) DO NOTHING
 """
 
 # Advisory lock key serializing the rollup job across replicas (see
@@ -152,6 +233,36 @@ GROUP BY day, service, method, outcome
 ORDER BY day, service, method, outcome
 """  # noqa: S608 -- interpolates only the module-level constant _RAW_QUERY; request values are bound parameters ($1..$3)
 
+# The per-content-type counterpart of _QUERY. Only rows that have children
+# appear; parents without children are "breakdown unknown" and contribute
+# nothing here (their totals are in _QUERY).
+_CONTENT_RAW_QUERY = """
+SELECT (e.ts AT TIME ZONE 'UTC')::date AS day,
+       e.service, e.method, e.outcome, c.content_type,
+       sum(c.blocks)::bigint AS blocks,
+       sum(c.bytes)::bigint AS bytes,
+       sum(c.tokens_est)::bigint AS tokens_est
+FROM af_mcp_usage_events e
+JOIN af_mcp_usage_event_content c ON c.audit_id = e.audit_id
+WHERE e.principal_sub = $1 AND e.ts >= $2
+GROUP BY day, e.service, e.method, e.outcome, c.content_type
+"""
+
+_CONTENT_QUERY = f"""
+SELECT day, service, method, outcome, content_type,
+       sum(blocks)::bigint AS blocks,
+       sum(bytes)::bigint AS bytes,
+       sum(tokens_est)::bigint AS tokens_est
+FROM (
+    {_CONTENT_RAW_QUERY}
+    UNION ALL
+    SELECT day, service, method, outcome, content_type, blocks, bytes, tokens_est
+    FROM af_mcp_usage_daily_content
+    WHERE principal_sub = $1 AND day >= $3
+) AS merged
+GROUP BY day, service, method, outcome, content_type
+"""  # noqa: S608 -- interpolates only the module-level constant _CONTENT_RAW_QUERY; request values are bound parameters ($1..$3)
+
 _RAW_SUBJECTS_QUERY = """
 SELECT DISTINCT principal_sub
 FROM af_mcp_usage_events
@@ -167,6 +278,8 @@ SELECT principal_sub FROM af_mcp_usage_daily WHERE day >= $2
 # Folds every raw row older than $1 into the daily rollup and deletes it in
 # ONE statement: the rows the DELETE returns are exactly the rows summed, so
 # nothing is counted twice or lost even if a row is inserted concurrently.
+# The CTE chain does the same for the child rows: they are summed into the
+# daily content rollup in the very statement that deletes their parents.
 # ON CONFLICT adds to an existing daily row (a late-arriving old row lands in
 # a day that was already rolled up), which is correct because each raw row
 # is summed exactly once, in the statement that deletes it.
@@ -174,8 +287,27 @@ _ROLLUP = """
 WITH moved AS (
     DELETE FROM af_mcp_usage_events
     WHERE ts < $1
-    RETURNING principal_sub, service, method, outcome, ts,
+    RETURNING audit_id, principal_sub, service, method, outcome, ts,
               duration_ms, result_bytes, result_tokens_est
+),
+folded_content AS (
+    -- Reads the children from the statement's own snapshot, so they are
+    -- still visible although the DELETE above cascades them away.
+    INSERT INTO af_mcp_usage_daily_content AS dc (
+        day, principal_sub, service, method, outcome,
+        content_type, blocks, bytes, tokens_est
+    )
+    SELECT (m.ts AT TIME ZONE 'UTC')::date, m.principal_sub, m.service,
+           m.method, m.outcome, c.content_type,
+           sum(c.blocks)::bigint, sum(c.bytes)::bigint, sum(c.tokens_est)::bigint
+    FROM moved m
+    JOIN af_mcp_usage_event_content c ON c.audit_id = m.audit_id
+    GROUP BY 1, 2, 3, 4, 5, 6
+    ON CONFLICT (day, principal_sub, service, method, outcome, content_type)
+    DO UPDATE SET
+        blocks = dc.blocks + EXCLUDED.blocks,
+        bytes = dc.bytes + EXCLUDED.bytes,
+        tokens_est = dc.tokens_est + EXCLUDED.tokens_est
 )
 INSERT INTO af_mcp_usage_daily AS d (
     day, principal_sub, service, method, outcome,
@@ -261,36 +393,57 @@ class PostgresUsageStore(UsageStore):
             record.trace_id,
         )
 
+    @staticmethod
+    def _content_args(record: AuditRecord) -> list[tuple[Any, ...]]:
+        return [
+            (record.audit_id, content_type, m.blocks, m.bytes, m.tokens_est)
+            for content_type, m in (record.result_content or {}).items()
+        ]
+
     async def record(self, record: AuditRecord) -> None:
         if record.mcp_service is None:
             # Defensive: only tool-call records are usage (the pipeline-side
             # helper already filters these out before they get here).
             return
-        await self._require_pool().execute(_INSERT, *self._insert_args(record))
+        # Parent and children in one transaction: a reader never sees a
+        # measured parent without its breakdown.
+        async with self._require_pool().acquire() as conn, conn.transaction():
+            await conn.execute(_INSERT, *self._insert_args(record))
+            content_args = self._content_args(record)
+            if content_args:
+                await conn.executemany(_INSERT_CONTENT, content_args)
 
     async def record_many(self, records: list[AuditRecord]) -> None:
-        # executemany over one multi-row INSERT: asyncpg prepares the
+        # executemany over one multi-row INSERT (per table): asyncpg prepares the
         # statement once and pipelines every argument tuple in a single
         # round trip, with no SQL to build and no 32767-bind-parameter
         # ceiling to size USAGE_BATCH_MAX against. ON CONFLICT DO NOTHING
         # also dedups a repeated audit_id inside the batch. The batch runs in
-        # one implicit transaction, so it is all-or-nothing: one rejected row
+        # one explicit transaction, so it is all-or-nothing: one rejected row
         # rolls back its siblings, and the caller (usage.record_usage_batch)
         # counts every row of a failed batch as failed.
-        args = [
-            self._insert_args(record)
-            for record in records
-            if record.mcp_service is not None
-        ]
-        if not args:
+        usage = [record for record in records if record.mcp_service is not None]
+        if not usage:
             return
-        await self._require_pool().executemany(_INSERT, args)
+        content_args = [args for record in usage for args in self._content_args(record)]
+        async with self._require_pool().acquire() as conn, conn.transaction():
+            await conn.executemany(_INSERT, [self._insert_args(r) for r in usage])
+            if content_args:
+                await conn.executemany(_INSERT_CONTENT, content_args)
 
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
         start = window_start(days)
-        rows = await self._require_pool().fetch(
-            _QUERY, subject, _utc_midnight(start), start
+        pool = self._require_pool()
+        rows = await pool.fetch(_QUERY, subject, _utc_midnight(start), start)
+        content_rows = await pool.fetch(
+            _CONTENT_QUERY, subject, _utc_midnight(start), start
         )
+        content: dict[tuple[date, str, str, str], dict[str, ContentMeasure]] = {}
+        for row in content_rows:
+            key = (row["day"], row["service"], row["method"], row["outcome"])
+            content.setdefault(key, {})[row["content_type"]] = ContentMeasure(
+                blocks=row["blocks"], bytes=row["bytes"], tokens_est=row["tokens_est"]
+            )
         return [
             UsageAggregate(
                 day=row["day"],
@@ -301,6 +454,9 @@ class PostgresUsageStore(UsageStore):
                 duration_ms=row["duration_ms"],
                 result_bytes=row["result_bytes"],
                 result_tokens_est=row["result_tokens_est"],
+                content=content.get(
+                    (row["day"], row["service"], row["method"], row["outcome"]), {}
+                ),
             )
             for row in rows
         ]
