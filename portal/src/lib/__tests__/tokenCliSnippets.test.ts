@@ -64,14 +64,14 @@ describe('claudeMcpAddSnippet', () => {
   it('builds the exact claude mcp add command with the token substituted', () => {
     const snippet = claudeMcpAddSnippet('https://mcp.example.org', 'mcp_pat_abc123');
     expect(snippet).toBe(
-      'claude mcp add --transport http atlas-af https://mcp.example.org/mcp/ ' +
+      'claude mcp add --transport http af-mcp https://mcp.example.org/mcp/ ' +
         '--header "Authorization: Bearer mcp_pat_abc123"',
     );
   });
 
   it('strips a trailing slash from brokerOrigin before building the URL', () => {
     const snippet = claudeMcpAddSnippet('https://mcp.example.org/', 'mcp_pat_abc123');
-    expect(snippet).toContain('atlas-af https://mcp.example.org/mcp/ ');
+    expect(snippet).toContain('af-mcp https://mcp.example.org/mcp/ ');
     expect(snippet).not.toContain('.org//mcp/');
   });
 

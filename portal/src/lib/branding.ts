@@ -7,7 +7,7 @@
  * mount — the same runtime-config pattern OIDC settings and brokerOrigin
  * already use. DEFAULT_BRANDING is what every page shows before that
  * patch runs (and what a deployment with no `portal.branding.*` values set
- * keeps showing, unchanged from before this existed).
+ * keeps showing). The defaults name no facility.
  */
 
 export interface BrandingConfig {
@@ -26,7 +26,7 @@ export interface BrandingConfig {
 export const DEFAULT_BRANDING: BrandingConfig = {
   shortName: 'AF / MCP',
   fullName: 'AF MCP Platform',
-  facilityName: 'ATLAS Analysis Facility',
+  facilityName: 'Analysis Facility',
 };
 
 /**

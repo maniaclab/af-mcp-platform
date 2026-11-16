@@ -13,6 +13,15 @@ function domWithBrandTags(): Document {
   return document;
 }
 
+describe('DEFAULT_BRANDING', () => {
+  it('names no facility, so a deployment that sets nothing shows a neutral identity', () => {
+    for (const value of Object.values(DEFAULT_BRANDING)) {
+      expect(value).not.toMatch(/ATLAS|CERN/i);
+    }
+    expect(DEFAULT_BRANDING.facilityName).toBe('Analysis Facility');
+  });
+});
+
 describe('applyBranding', () => {
   it('patches textContent for a plain [data-af-brand] element', () => {
     const doc = domWithBrandTags();

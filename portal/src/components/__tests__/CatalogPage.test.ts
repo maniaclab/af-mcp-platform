@@ -255,4 +255,13 @@ describe('load errors', () => {
     expect(alert.text()).toContain('boom');
     expect(alert.find('a').attributes('href')).toBe('/identities/');
   });
+
+  it('names no facility or identity provider in the pointer', async () => {
+    vi.mocked(fetchCatalog).mockRejectedValueOnce(new Error('boom'));
+    vi.mocked(fetchIdentities).mockResolvedValueOnce({ providers: [] } as never);
+    const wrapper = mount(CatalogPage);
+    await flushPromises();
+    const hint = wrapper.get('[role="alert"] .cp__hint').text();
+    expect(hint).toBe('Make sure your external identities are linked on the Identities page.');
+  });
 });
