@@ -1,0 +1,5 @@
+# The broker refuses to start without its Keycloak admin service account.
+broker:
+  keycloakAdmin:
+    clientId: ""
+    existingClientSecretSecret: ""

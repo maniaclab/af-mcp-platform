@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.principal_cache import PrincipalCache
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.usage import UsageStore
-    from af_mcp_broker.vault_kv import VaultKV
+    from af_mcp_broker.vault_kv import VaultConnections
     from af_mcp_broker.wiring.services import IdentityTargets
 
 logger = structlog.get_logger(__name__)
@@ -53,7 +53,7 @@ def open_shared_state(settings: Settings, stack: AsyncExitStack) -> SharedState:
 
 
 async def start_maintenance_store(
-    settings: Settings, vault_kv: VaultKV | None, stack: AsyncExitStack
+    settings: Settings, vaults: VaultConnections, stack: AsyncExitStack
 ) -> MaintenanceModeStore:
     """Build and start the process-wide maintenance-mode store (maintenance.py) and register its close on *stack*.
 
@@ -62,7 +62,7 @@ async def start_maintenance_store(
     from the /v1 and /mcp request-gate checks (both already stopped serving
     new requests by the time shutdown reaches it) and the admin API.
     """
-    store = build_maintenance_store(settings, vault_kv)
+    store = build_maintenance_store(settings, vaults)
     await store.start()
     stack.push_async_callback(store.aclose)
     return store
@@ -120,7 +120,7 @@ async def start_credmon_sync(
     credential_registry: CredentialRegistry,
     issuer: BrokerTokenIssuer | None,
     link_stores: VaultLinkStores,
-    vault_kv: VaultKV | None,
+    vaults: VaultConnections,
     principal_cache: PrincipalCache | None,
     http_client: httpx2.AsyncClient,
     stack: AsyncExitStack,
@@ -148,7 +148,7 @@ async def start_credmon_sync(
             )
             if store is not None
         },
-        vault_kv=vault_kv,
+        vaults=vaults,
         principal_cache=principal_cache,
         http_client=http_client,
     )

@@ -133,6 +133,7 @@ def test_mint_duplicate_name_is_case_insensitive(
 
     second = _mint(client, name="claude-desktop")
     assert second.status_code == 409, second.text
+    assert second.json()["detail"] == "Token name 'claude-desktop' is already in use."
 
 
 def test_mint_duplicate_name_allowed_after_first_token_revoked(
@@ -149,6 +150,8 @@ def test_mint_duplicate_name_allowed_after_first_token_revoked(
 
     second = _mint(client, name="claude-desktop")
     assert second.status_code == 200, second.text
+    assert second.json()["name"] == "claude-desktop"
+    assert second.json()["lookup_id"] != lookup_id
 
 
 def test_mint_default_expiry_is_90_days(app_client: tuple[TestClient, dict]) -> None:
@@ -589,6 +592,7 @@ def test_pat_is_rejected_on_v1(app_client: tuple[TestClient, dict]) -> None:
         identity._jwks_cache.pop(settings.oidc_jwks_uri, None)
 
     assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"] == "Invalid or expired token"
 
 
 def test_missing_bearer_still_401_on_v1(app_client: tuple[TestClient, dict]) -> None:
@@ -604,6 +608,7 @@ def test_missing_bearer_still_401_on_v1(app_client: tuple[TestClient, dict]) -> 
             app.dependency_overrides[keycloak_dependency] = saved
 
     assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"] == "Not authenticated"
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +725,7 @@ def test_delete_record_unknown_lookup_id_404(
     client, _ = app_client
     resp = client.delete("/v1/tokens/does-not-exist/record", headers=_AUTH)
     assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "Unknown token"
 
 
 def test_clear_inactive_deletes_only_the_callers_revoked_and_expired_rows(

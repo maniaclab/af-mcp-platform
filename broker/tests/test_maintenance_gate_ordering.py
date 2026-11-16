@@ -86,6 +86,7 @@ class TestV1GateOrdering:
             resp = client.get("/v1/identities")
 
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Not authenticated"
 
     def test_invalid_bearer_gets_401_not_503(
         self, app_client_factory, sig_key, monkeypatch
@@ -108,6 +109,7 @@ class TestV1GateOrdering:
             )
 
         assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid or expired token"
 
     def test_authenticated_non_admin_gets_503_naming_the_reason(
         self, app_client_factory, monkeypatch
@@ -269,6 +271,8 @@ async def test_mcp_admin_is_not_blocked_during_maintenance(
         resp = await _post_initialize(server, {"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200
+    # The initialize result arrives as a server-sent event.
+    assert "serverInfo" in resp.text
 
 
 async def test_mcp_non_admin_not_blocked_when_store_unavailable(
@@ -284,3 +288,5 @@ async def test_mcp_non_admin_not_blocked_when_store_unavailable(
         resp = await _post_initialize(server, {"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200
+    # The initialize result arrives as a server-sent event.
+    assert "serverInfo" in resp.text

@@ -119,8 +119,8 @@ def test_omitted_permission_with_credential_provider_starts_cleanly(
 
     with app_client_factory() as (client, _):
         resp = client.get("/v1/healthz")
-
     assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "ok"}
 
 
 def test_omitted_permission_without_credential_provider_refuses_to_start(

@@ -178,7 +178,7 @@ jobs:
       # Content assertions for the shared OTLP transport (broker.otlp.*): what
       # renders with tracing only, metrics only, both (headers from a Secret)
       # and neither, and that the removed broker.tracing.endpoint /
-      # networkPolicy keys fail with a message naming the new ones.
+      # networkPolicy keys are rejected as unknown by the schema.
       - name: Verify OTLP transport rendering
         run: bash charts/af-mcp-platform/ci/check-otlp-rendering.sh
 

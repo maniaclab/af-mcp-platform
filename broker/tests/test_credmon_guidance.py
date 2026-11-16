@@ -99,6 +99,10 @@ def test_wired_kinds_keeps_requested_kinds_that_have_targets(tmp_path) -> None:
         credmon_htcondor_api_token_file=str(token),
         credmon_user_domain="af.example.org",
         credmon_kinds=["x509", "krb5"],
+        token_store_backend="vault",
+        vault_addr="https://vault.example",
+        vault_auth_role="broker",
+        vault_kv_root="mcp",
     )
 
     kinds = wired_kinds(

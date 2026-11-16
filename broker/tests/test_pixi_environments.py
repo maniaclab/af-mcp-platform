@@ -62,3 +62,10 @@ def test_local_environments_point_at_the_dev_policy_and_services(
     # caller's own export wins.
     assert "broker/src/af_mcp_broker/authorization/policy.yaml" in env["POLICY_FILE"]
     assert "broker/src/af_mcp_broker/mcp/services.yaml" in env["SERVICES_FILE"]
+
+
+def test_image_puts_the_broker_environment_on_path() -> None:
+    """``kubectl exec`` bypasses the entrypoint, so PATH must come from the image's own ENV."""
+    containerfile = _PIXI_TOML.with_name("Containerfile.broker").read_text()
+
+    assert 'ENV PATH="/app/.pixi/envs/broker/bin:$PATH"' in containerfile
