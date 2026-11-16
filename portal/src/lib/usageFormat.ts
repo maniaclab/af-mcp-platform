@@ -4,7 +4,8 @@
  * figure never renders two different ways.
  */
 
-export function formatTokens(n: number): string {
+/** A count (calls, errors, tokens) with thousands separators. */
+export function formatCount(n: number): string {
   return n.toLocaleString('en-US');
 }
 

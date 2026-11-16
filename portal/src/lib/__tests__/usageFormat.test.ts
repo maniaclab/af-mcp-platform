@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatShare, formatTokens } from '../usageFormat';
+import { formatShare, formatCount } from '../usageFormat';
 
 describe('formatShare', () => {
   it.each([
@@ -13,13 +13,13 @@ describe('formatShare', () => {
   });
 });
 
-describe('formatTokens', () => {
+describe('formatCount', () => {
   it.each([
     [0, '0'],
     [999, '999'],
     [12345, '12,345'],
     [1234567, '1,234,567'],
   ])('formats %s as %s', (n, text) => {
-    expect(formatTokens(n)).toBe(text);
+    expect(formatCount(n)).toBe(text);
   });
 });
