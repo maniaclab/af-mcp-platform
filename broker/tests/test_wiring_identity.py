@@ -82,6 +82,29 @@ class TestBuildDevBypassPrincipal:
         with pytest.raises(RuntimeError, match="does not look like a local"):
             build_dev_bypass_principal(settings)
 
+    @pytest.mark.parametrize(
+        "issuer",
+        [
+            "http://[::1/realms/dev",  # urlparse raises ValueError
+            "http:///realms/dev",  # no hostname
+            "not-a-url",
+            "https://localhost.example.org/realms/dev",
+        ],
+    )
+    def test_refuses_an_issuer_it_cannot_prove_local(self, issuer: str) -> None:
+        settings = _settings(
+            oidc_issuer=issuer, BROKER_DEV_INSECURE_PRINCIPAL=_DEV_PRINCIPAL
+        )
+
+        with pytest.raises(RuntimeError, match="Refusing to start"):
+            build_dev_bypass_principal(settings)
+
+    def test_does_not_parse_the_payload_before_the_issuer_check(self) -> None:
+        settings = _settings(BROKER_DEV_INSECURE_PRINCIPAL="{not json")
+
+        with pytest.raises(RuntimeError, match="does not look like a local"):
+            build_dev_bypass_principal(settings)
+
 
 class TestBuildPrincipalCache:
     def test_builds_a_cache_when_the_admin_account_is_configured(self) -> None:
