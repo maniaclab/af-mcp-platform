@@ -55,7 +55,7 @@ logger = structlog.get_logger(__name__)
 # another) safe against a schema that already exists. Revisit if a
 # non-idempotent change ever shows up.
 #
-# The DO block is the one migration so far (Elwood vocabulary: the public
+# The DO block is one migration (Elwood vocabulary: the public
 # name for what a service exposes is a *method*): tables created before the
 # rename carry a `tool` column, and renaming it here -- guarded, so it is
 # idempotent and a no-op on fresh or already-migrated tables -- lets deploys
@@ -68,7 +68,7 @@ logger = structlog.get_logger(__name__)
 # breakdown): created IF NOT EXISTS, then backfilled. The backfill gives every
 # measured event row (result_bytes > 0) that has no child rows one `text`
 # child, and every daily row without content rows one `text` content row.
-# Before the breakdown existed only text was measured, so `text` is what those
+# Rows recorded without a breakdown measured only text, so `text` is what those
 # totals were; `blocks` is NOT NULL and the backfill cannot know the real
 # block count, so it is an approximation (1 per event row, `calls` per daily
 # row). NOT EXISTS makes the backfill run exactly once per row however many

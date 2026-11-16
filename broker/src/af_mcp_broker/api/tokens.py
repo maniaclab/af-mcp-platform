@@ -1,17 +1,16 @@
 """Broker-issued identity PAT bootstrap — POST/GET/DELETE /v1/tokens (issue #144 step 2a).
 
-Replaces the RFC 8693 token-exchange design (issue #24/#115/#116, PR #28
-and successors): instead of exchanging the caller's Keycloak JWT for another
-JWT via Standard Token Exchange, ``POST /v1/tokens`` now mints a broker-
-issued PAT directly (``pat.mint_pat`` -- 256-bit random secret, SHA-256
-hashed for storage, plaintext returned exactly once). No Keycloak round trip
-is needed to mint one, so the old 503 ("minting not configured")/502
-("Keycloak rejected the exchange") failure modes are gone entirely -- mint
-either succeeds for any authenticated principal or fails on something this
+Not an RFC 8693 token exchange (the design of issues #24/#115/#116 and
+PR #28): instead of exchanging the caller's Keycloak JWT for another JWT via
+Standard Token Exchange, ``POST /v1/tokens`` mints a broker-issued PAT
+directly (``pat.mint_pat`` -- 256-bit random secret, SHA-256 hashed for
+storage, plaintext returned exactly once). No Keycloak round trip is needed
+to mint one, so there is no "minting not configured" (503) or "Keycloak
+rejected the exchange" (502) failure mode -- mint either succeeds for any authenticated principal or fails on something this
 endpoint itself controls (rate limit, duplicate name, validation).
 
-**This endpoint's own authentication is UNCHANGED.** It still requires a
-Keycloak JWT via ``keycloak_dependency`` -- only what it *returns* changed.
+**This endpoint's own authentication is a Keycloak JWT** via
+``keycloak_dependency``; only what it *returns* is a PAT.
 This is deliberate and security-load-bearing, not an oversight: ``/v1`` stays
 Keycloak-JWT-only precisely so a PAT can never authenticate here. If a PAT
 could mint further PATs, a single leaked credential would become
@@ -46,8 +45,8 @@ writeup — these are real gaps, not oversights):
   carried forward): minting a second token whose name matches an existing
   *live* one for the same principal (case-insensitive) is rejected with 409.
   "Live" excludes revoked and expired tokens -- a name freed up by
-  revocation or natural expiry can be reused, since the dead token can no
-  longer be mistaken for the new one. The uniqueness enforcement lives in
+  revocation or natural expiry can be reused, since the dead token cannot
+  be mistaken for the new one. The uniqueness enforcement lives in
   ``token_registry.TokenRegistryBackend.add()`` (see that module's
   docstring), not here, so it stays correct under concurrent mints from
   multiple broker replicas.
@@ -176,8 +175,8 @@ class TokenSummary(BaseModel):
     created_at: str
     expires_at: str | None
     # None until revoked; once set, the portal shows a "revoked" status
-    # instead of removing the row (see docs/auth.md and issue #115 -- PR #28
-    # used to drop the row entirely on revoke, which no longer happens).
+    # instead of removing the row (see docs/auth.md and issue #115): the row
+    # stays until the token sweep deletes it.
     revoked_at: str | None
     last_used_at: str | None
     # See MintTokenResponse.permission_grant -- same meaning, read back from

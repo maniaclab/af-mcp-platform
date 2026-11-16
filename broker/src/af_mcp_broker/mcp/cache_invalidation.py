@@ -2,7 +2,7 @@
 
 Linking or revoking a credential drops the handling replica's cached
 tools/list entries for that (subject, service) -- a stale "no tools" entry or
-a tool list from the old credential would otherwise be served until its TTL
+a tool list from the previous credential would otherwise be served until its TTL
 ran out. ``ListCacheInvalidator`` carries that drop to every other replica
 over ``SharedState`` publish/subscribe.
 

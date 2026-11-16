@@ -213,8 +213,8 @@ def _action_type_for_service(
 
     Real enforcement (``get_action_type`` in authorization/base.py) resolves
     ``policy.target_action_types[target]`` glob overrides per tool. The
-    catalog has no per-tool enumeration yet (issue #58; per-tool `permission`
-    now does exist at GET /v1/catalog/{service}/tools -- see
+    catalog has no per-tool enumeration (issue #58; per-tool `permission`
+    does exist at GET /v1/catalog/{service}/tools -- see
     api/catalog_tools.py -- but not a per-tool action_type rollup here), so
     this reports the safe rollup: "state_change" if *any* permission the
     service can require (across every tool, dict-form included) defaults to

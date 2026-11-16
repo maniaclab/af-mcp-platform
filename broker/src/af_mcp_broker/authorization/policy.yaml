@@ -16,9 +16,9 @@ group_permissions:
 
 # Which permission is required to use each service target is declared by
 # `required_permission` in services.yaml, not here -- services.yaml is the
-# sole source of truth for that mapping (see issue #60; this file used to
-# carry a parallel `target_permissions` section that could silently drift
-# out of sync with services.yaml).
+# sole source of truth for that mapping (see issue #60; a parallel
+# per-target section here could silently drift out of sync with
+# services.yaml).
 
 # Action type overrides per service (tool glob pattern -> action type).
 # Anything not listed defaults to "read".

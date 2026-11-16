@@ -1,4 +1,4 @@
-"""Kerberos tickets via krb5-token-service (issue #274; keytab auto-bootstrap replaced by user-provided upload).
+"""Kerberos tickets via krb5-token-service (issue #274; the keytab is user-provided, never auto-bootstrapped).
 
 Unlike ``CondorTokenProvider`` (broker-authoritative, no external secret),
 krb5-token-service needs a live CERN username+password to mint a ticket from
@@ -19,7 +19,7 @@ unless a keytab has already been linked (see ``link_keytab()`` below).
    falls through to the next tier; any other failure is a genuine infra
    problem and propagates uncaught, rather than being silently downgraded to
    demanding a password from the user.
-4. **Keytab remint** -- a keytab was previously linked via ``link_keytab()``:
+4. **Keytab remint** -- a keytab has been linked via ``link_keytab()``:
    ``client.mint(keytab_b64=...)`` mints a fresh ticket with no live
    password. A rejected keytab (``Krb5TokenBadCredentialError`` -- e.g. the
    CERN password backing it was rotated) proactively unlinks the identity
@@ -437,7 +437,7 @@ class KrbTokenProvider(CredentialProvider):
                 # 2: this must NOT block tier 4, which needs no credential
                 # either and may well still work. Only re-raised below if
                 # tier 4 turns out to be unavailable/also fails -- surfacing
-                # it immediately (the old behavior) would incorrectly treat
+                # it immediately would incorrectly treat
                 # "renew() timed out" as "give up entirely" when a perfectly
                 # good keytab remint was one call away.
                 self._log.info(
@@ -448,7 +448,7 @@ class KrbTokenProvider(CredentialProvider):
                 )
                 renew_infra_error = exc
 
-        # Tier 4: remint from a previously-bootstrapped, stored keytab.
+        # Tier 4: remint from a stored, user-linked keytab.
         link = await self._vault_store.get_link(subject)
         if link is not None:
             link_username = link.username
@@ -630,8 +630,8 @@ class KrbTokenProvider(CredentialProvider):
         -- that route falls back to ``renew_or_remint()`` (tiers 3-4, both
         credential-free) when this returns ``None``, mirroring
         ``redeem_x509_proxy``'s own fallback to ``renew_from_stored_link``
-        (af-mcp-platform#286: this used to be the end of the line here,
-        which is why a linked keytab didn't actually redeem hands-free).
+        (af-mcp-platform#286: without that fallback a linked keytab would
+        not redeem hands-free).
         """
         # Tier 1: in-process cache.
         cached = await self._cache.get(

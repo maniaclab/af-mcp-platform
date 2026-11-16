@@ -1,10 +1,10 @@
 """The broker as an OAuth-facing authorization server for MCP clients (issue #140).
 
-``/mcp`` accepts a broker-issued PAT (``pat.py``/``pat_auth.py``), but until
-now the only way to obtain one was the portal's ``POST /v1/tokens`` -- which
-requires an already-authenticated Keycloak session, i.e. a human copy-pasting
-a token into a client config. This module is the missing bootstrap: an MCP
-client with *no* credential at all can point at ``/v1/oauth/authorize``, get
+``/mcp`` accepts a broker-issued PAT (``pat.py``/``pat_auth.py``). The other
+way to obtain one is the portal's ``POST /v1/tokens`` -- which requires an
+already-authenticated Keycloak session, i.e. a human copy-pasting a token
+into a client config. This module is the bootstrap for clients with no
+credential: an MCP client can point at ``/v1/oauth/authorize``, get
 redirected through a real Keycloak login, and come back with a working PAT.
 
 The broker is emphatically **not** becoming an identity provider here -- see
@@ -120,7 +120,7 @@ _CODE_CHALLENGE_METHOD = "S256"
 # same audience identity.py's keycloak_dependency validates every /v1 bearer
 # against. The callback refuses to proceed (access_denied) when that audience
 # is missing (issue #245), so a plain Keycloak login by a user Keycloak won't
-# mint the audience for can no longer bootstrap a PAT. Operators attach the
+# mint the audience for cannot bootstrap a PAT. Operators attach the
 # `mcp-gateway` client scope to the login client as a *Default* scope (see
 # docs/auth.md's operator setup reference), which makes this explicit request
 # redundant -- it is kept so the flow still works if that attachment is ever
@@ -366,7 +366,7 @@ async def authorize(
     ):
         raise _bad_request("redirect_uri is not registered for this client_id")
 
-    # redirect_uri is now validated against the client's own CIMD document --
+    # redirect_uri is validated against the client's own CIMD document --
     # every error from here on can be safely reported by redirecting there
     # (OAuth 2.1 §4.1.2.1), rather than as a bare 400.
     if response_type != "code":

@@ -234,11 +234,11 @@ class BrokerTokenIssuer:
             except jwt.InvalidSignatureError:
                 continue  # try the next rotation key
             except jwt.InvalidTokenError as exc:
-                # verify() used to return bare None here with no record of
-                # which check failed (expired vs. wrong issuer vs. a stale
-                # token from before a key rotation) -- logging the specific
-                # PyJWT rejection reason is the only way an operator can
-                # tell those apart after the fact.
+                # verify() returns bare None here, so the log line is the only
+                # record of which check failed (expired vs. wrong issuer vs.
+                # a stale token from before a key rotation) -- the specific
+                # PyJWT rejection reason is how an operator tells those apart
+                # after the fact.
                 log.warning(
                     "broker_token_issuer.verify_failed",
                     reason=str(exc),

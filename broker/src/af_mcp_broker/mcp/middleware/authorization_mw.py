@@ -62,8 +62,8 @@ logger = structlog.get_logger(__name__)
 # is a genuine tools/call for a specific service, not a tools/list
 # schema-cache refresh sharing the same factory.
 #
-# Supersedes the old HTTP-loopback broker_mw.py: that module re-validated the
-# same JWT per call over /v1/authorize and /v1/credential even when
+# Calls in-process rather than looping back over HTTP to /v1/authorize and
+# /v1/credential, which would re-validate the same JWT per call even when
 # co-located with the broker. The /v1 route bodies (api/permissions.py's
 # authorize(), api/credentials.py's issue_credential()) remain the canonical
 # logic; this middleware and the client_factory call the same in-process
@@ -199,7 +199,7 @@ class AuthorizationMiddleware(Middleware):
         # authenticated principal -- they must keep answering precisely when
         # a service or its credential provider is broken, and an entitlement
         # check against "__none__" touches neither. Unlike issue #153's
-        # name-based bypass, the calls are now audited and metered
+        # name-based bypass, the calls are audited and metered
         # (service=gateway_service) like everything else; the one builtin difference
         # is the authorized_call_target guard below.
         service = self.registry.get_by_tool_prefix(tool_name)

@@ -253,10 +253,9 @@ def resolve_action_type(
 
     ``permission`` is the target's required permission as declared by the
     service registry (``ServiceSpec.required_permission``) -- the fallback
-    below a tool-glob override, same as before this took the permission as a
-    parameter instead of looking it up in ``policy.target_permissions``
-    (deleted; the service registry is now the sole source for what permission
-    a target requires -- see issue #60).
+    below a tool-glob override. The service registry is the sole source for
+    what permission a target requires (the policy file carries no
+    per-target permission table -- see issue #60).
 
     Returns ``(action_type, via)`` where ``via`` is ``"target_action_types"``
     (a tool-glob override), ``"permission"`` (the built-in or custom
@@ -311,7 +310,7 @@ def check_entitlement(
     ``permission`` is the target's required permission, resolved per-tool by
     ``ServiceRegistry.required_permission_for`` from ``ServiceSpec.
     required_permission`` (services.yaml is the sole source of truth for what
-    a target requires; policy.yaml no longer duplicates it):
+    a target requires; policy.yaml does not duplicate it):
       - a permission name (e.g. "read_data") -> principal must hold it.
       - "__none__" -> open to any authenticated user (deliberate opt-in).
       - None (omitted) -> no permission gate; the credential layer is the

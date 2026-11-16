@@ -591,11 +591,11 @@ async def resolve_list_time_credential(
 class ToolListingEntry(NamedTuple):
     """One tool as ``fetch_service_tool_listing`` and the builtin-service listing (``api/catalog_tools.py``) both see it (issue #238 B.7).
 
-    A bare ``(name, description)`` pair used to be all either path kept, so
-    ``/v1/catalog``'s per-service tool listing could never show a read/write
-    badge even once a backend declared one, and a client comparing
-    ``GET /v1/catalog/{service}/tools`` against a real ``tools/list`` saw
-    less than the latter carries. ``annotations`` is forwarded verbatim (or
+    A bare ``(name, description)`` pair would leave
+    ``/v1/catalog``'s per-service tool listing unable to show a read/write
+    badge even when a backend declares one, and a client comparing
+    ``GET /v1/catalog/{service}/tools`` against a real ``tools/list`` would
+    see less than the latter carries. ``annotations`` is forwarded verbatim (or
     ``None`` if the tool declared none); ``has_output_schema`` is a bare
     presence flag, not the schema itself -- the payload stays light, schemas
     belong to the MCP client.

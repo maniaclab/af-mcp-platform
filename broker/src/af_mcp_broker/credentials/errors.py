@@ -208,12 +208,11 @@ class VomsServiceRejectedError(BrokerError):
 class PosixIdentityRequiredError(BrokerError):
     """Raised when x509 proxy minting is attempted for a principal with no POSIX identity.
 
-    Issue #148 made ``Principal.uid``/``gid``/``unixname`` optional -- almost
+    ``Principal.uid``/``gid``/``unixname`` are optional (issue #148) -- almost
     nothing in the broker needs them, but x509 genuinely does (the broker
     asserts them to voms-token-service, which mints as that uid/gid against
     that user's home). Rather than reject such a principal at the door for every
-    backend (the old JWT-level behavior this issue removes), the requirement
-    moves to this point of use, naming *target* so the resulting error is
+    backend, the requirement is enforced at this point of use, naming *target* so the resulting error is
     actionable: "this service needs a grid identity your account doesn't
     have" rather than an opaque failure.
     """

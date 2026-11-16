@@ -46,7 +46,7 @@ docstring) -- and matches existing precedent one layer up:
 ``AsgiAuthMiddleware`` already collapses *any* ``IdentityError`` raised
 during JWT validation (including a ``JwksUnavailableError`` from an unreachable JWKS endpoint)
 into the same blanket "Invalid bearer token" 401, so a principal_cache
-outage surfacing the same way here is consistent, not a new carve-out.
+outage surfacing the same way here is consistent, not a special case.
 """
 
 from __future__ import annotations

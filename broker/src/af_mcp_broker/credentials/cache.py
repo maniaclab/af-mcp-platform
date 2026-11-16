@@ -61,9 +61,9 @@ class CredentialCache:
     """Per-principal in-memory credential cache.
 
     Keyed by ``(subject: str, target: str)`` -- ``principal.subject`` (issue
-    #148). Used to be keyed by numeric uid on the reasoning that "subject
-    strings can be spoofed or rotated; uids are provisioning-assigned and
-    stable" -- but issue #148 made ``Principal.uid`` optional (most
+    #148), not by numeric uid. A uid might look more stable than a subject
+    string ("subject strings can be spoofed or rotated; uids are
+    provisioning-assigned"), but ``Principal.uid`` is optional (most
     principals never touch a filesystem and have no POSIX identity at all),
     and this cache is shared by every credential provider (X509Provider,
     OIDCProvider, ...), including ones with no POSIX-identity need of their

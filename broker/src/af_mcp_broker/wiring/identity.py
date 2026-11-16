@@ -79,11 +79,11 @@ def build_principal_cache(
     """Build the principal cache (issue #144 steps 2a/3/3b), or None under the dev bypass with no Keycloak admin account.
 
     The cache resolves every authenticated request's *current*
-    groups/uid/gid/unixname/email from Keycloak. Originally built only for
-    PATs (opaque bearers carrying none of that themselves); steps 3 and 3b
-    made the JWT path defer to it too (groups, then POSIX identity), so the
-    token answers only "who is this?" and the directory alone answers "what
-    groups/POSIX identity do they have?" -- see identity.py's
+    groups/uid/gid/unixname/email from Keycloak. PATs are opaque bearers
+    carrying none of that themselves, and the JWT path defers to the cache
+    too (groups, then POSIX identity), so the token answers only "who is
+    this?" and the directory alone answers "what groups/POSIX identity do
+    they have?" -- see identity.py's
     `_resolve_current_attributes` and principal_cache.py/
     principal_directory.py's module docstrings for the mechanism.
 

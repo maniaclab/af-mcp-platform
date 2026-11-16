@@ -57,8 +57,7 @@ logger = structlog.get_logger(__name__)
 #    rest of the pipeline to read.
 #
 # 2. IdentityMiddleware -- one of FastMCP's own Middleware subclasses,
-#    registered in the aggregator's middleware chain (aggregator.py) exactly
-#    as before this fix. It performs no JWT validation of its own; it is a
+#    registered in the aggregator's middleware chain (aggregator.py). It performs no JWT validation of its own; it is a
 #    thin hand-off that reads the Principal AsgiAuthMiddleware already
 #    stashed and republishes it as FastMCP Context state ("principal") the
 #    way EntitlementMiddleware/AuthorizationMiddleware/the aggregator's
@@ -118,10 +117,8 @@ def _www_authenticate_header(scope: Scope, settings: Settings) -> str:
 
     Carries a ``resource_metadata`` pointer (RFC 9728, MCP spec's 2025-11-25
     revision) at the ``/mcp``-suffixed protected-resource metadata path
-    (api/wellknown.py) whenever ``broker_public_origin`` is configured -- PR
-    #145 deliberately omitted this parameter because the metadata endpoint
-    did not exist yet (issue #140); it does now. Omitted (bare ``Bearer``,
-    the pre-#140 behavior) when ``broker_public_origin`` is unset, since no
+    (api/wellknown.py) whenever ``broker_public_origin`` is configured (issue
+    #140). Omitted (a bare ``Bearer``) when ``broker_public_origin`` is unset, since no
     resolvable metadata URL exists to point at -- a client without the
     header still falls back to the well-known root path per spec.
 

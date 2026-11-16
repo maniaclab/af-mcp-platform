@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 @dataclass
 class AuditRecord:
     principal_sub: str
-    # Optional (issue #148): POSIX identity is no longer required of every
+    # Optional (issue #148): POSIX identity is not required of every
     # principal, but audit records still carry it when present -- operators
     # want it, and `principal_sub` alone is a stable substitute when it's
     # absent, not a gap in the record.

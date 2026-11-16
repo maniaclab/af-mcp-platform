@@ -197,14 +197,14 @@ class ServiceSpec:
     # The service's Elwood v5 / Shannon trust tier (see docs/architecture.md's
     # "Trust tiers" section for what each tier's governance bar means), or None
     # when undeclared. This field only lets services.yaml/the chart *declare* a
-    # service's posture in machine-checkable form (re-review finding #5); the
+    # service's posture in machine-checkable form (re-review finding 5); the
     # authoritative per-deployment tier assignment still lives alongside each
     # app's deployment manifests in the GitOps repo,
     # not here.
     trust_tier: TrustTier | None = None
     # Model-facing policy/guidance the LLM agent reads and reasons over before
     # deciding whether and how to call this service's tools -- the model-facing
-    # half of "dual enforcement" (Elwood v5 re-review finding #6). DISTINCT from
+    # half of "dual enforcement" (Elwood v5 re-review finding 6). DISTINCT from
     # `description` (user-facing catalog UX shown in the portal) and from the
     # authorization policy.yaml/required_permission gate (the technical
     # permission boundary). This text is guidance the agent reasons over, NOT an
@@ -386,8 +386,8 @@ class ToolMappingDrift:
     All three lists hold wire (namespaced) tool names, sorted. ``unmapped``
     tools are advertised but have no entry and no ``__default__``, so they
     are implicitly ``__disabled__``. ``stale`` entries are keys the backend
-    no longer advertises (typically a rename), which leaves every new tool
-    ``unmapped``. ``unroutable`` tools are advertised by an
+    does not advertise (typically after a rename), which leaves every
+    renamed tool ``unmapped``. ``unroutable`` tools are advertised by an
     ``apply_namespace: false`` service's backend without its ``prefix``, so
     no caller can reach them whatever ``required_permission`` says (see
     ToolRouting); they count toward ``advertised`` but not ``routable``, and
