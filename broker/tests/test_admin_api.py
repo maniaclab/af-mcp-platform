@@ -51,6 +51,11 @@ def test_post_requires_admin(maintenance_client):
     client, _state = maintenance_client
     resp = client.post("/v1/admin/maintenance", json={"enabled": True, "reason": "r"})
     assert resp.status_code == 403
+    assert (
+        resp.json()["detail"] == "This action requires membership in the admin group."
+    )
+    # The refused request left maintenance mode off.
+    assert client.get("/v1/admin/maintenance").json()["enabled"] is False
 
 
 def test_admin_can_enable_and_it_shows_up_on_get(maintenance_client, make_principal):
@@ -316,7 +321,11 @@ def _service_status(body, service):
 @pytest.mark.parametrize("path", ["annotation-mismatches", "tool-mapping-drift"])
 def test_lint_tables_require_admin(maintenance_client, path):
     client, _state = maintenance_client  # default principal has no admin group
-    assert client.get(f"/v1/admin/{path}").status_code == 403
+    resp = client.get(f"/v1/admin/{path}")
+    assert resp.status_code == 403
+    assert (
+        resp.json()["detail"] == "This action requires membership in the admin group."
+    )
 
 
 @pytest.mark.parametrize(

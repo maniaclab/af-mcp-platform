@@ -182,6 +182,7 @@ def test_usage_days_out_of_bounds_is_422(app_client, days: int) -> None:
     client, _ = app_client
     resp = client.get("/v1/usage", params={"days": days})
     assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"][0]["loc"] == ["query", "days"]
 
 
 def test_usage_is_scoped_to_the_calling_subject(app_client, make_principal) -> None:
@@ -279,12 +280,17 @@ def test_usage_requires_authentication(app_client) -> None:
             app.dependency_overrides[keycloak_dependency] = saved
 
     assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"] == "Not authenticated"
 
 
 def test_usage_subjects_requires_admin(app_client_factory) -> None:
     with app_client_factory() as (client, _state):
         resp = client.get("/v1/usage/subjects")
         assert resp.status_code == 403
+        assert (
+            resp.json()["detail"]
+            == "This action requires membership in the admin group."
+        )
 
 
 def test_usage_subjects_resolves_unixname(

@@ -866,6 +866,9 @@ def test_credential_unknown_target_404(app_client: tuple[TestClient, dict]) -> N
         "/v1/credential", json={"target": "no-such-target"}, headers=_AUTH
     )
     assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == (
+        "No credential provider registered for target 'no-such-target'"
+    )
 
 
 def test_credential_x509_needs_unlock_409(app_client: tuple[TestClient, dict]) -> None:

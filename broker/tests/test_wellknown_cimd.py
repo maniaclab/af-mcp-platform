@@ -26,6 +26,9 @@ def test_cimd_returns_200_without_auth_headers(
         resp: Any = client.get("/.well-known/cimd", headers={})
 
     assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["client_id"] == "http://testserver/.well-known/cimd"
+    assert body["token_endpoint_auth_method"] == "none"
 
 
 def test_cimd_content_type_is_json(

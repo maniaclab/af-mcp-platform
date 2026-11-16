@@ -103,3 +103,4 @@ def test_dev_mode_boots_with_the_documented_keycloak_settings(
         resp = client.get("/v1/identities")
 
     assert resp.status_code == 401, resp.text
+    assert resp.json()["detail"] == "Not authenticated"

@@ -310,6 +310,7 @@ async def test_unknown_backend_is_404(
     state["principal"] = make_principal(groups=["atlas"])
     resp = await _get_tools(app, "no-such-backend")
     assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "service 'no-such-backend' is not registered"
 
 
 async def test_open_backend_lists_namespaced_tools(
