@@ -90,6 +90,39 @@ def test_removed_tracing_keys_are_unknown_to_the_schema(key: str) -> None:
     assert f"additional properties '{key}' not allowed" in result.stderr
 
 
+def test_facility_url_is_rendered_into_the_portal_config() -> None:
+    result = _helm_template(
+        sets=("portal.branding.facilityUrl=https://af.example.org/",)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '"facilityUrl": "https://af.example.org/"' in result.stdout
+
+
+def test_facility_url_defaults_to_empty() -> None:
+    result = _helm_template()
+
+    assert result.returncode == 0, result.stderr
+    assert '"facilityUrl": ""' in result.stdout
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "ftp://af.example.org",
+        "af.example.org",
+    ],
+)
+def test_facility_url_must_be_an_http_url(url: str) -> None:
+    result = _helm_template(set_jsons=(f'portal.branding.facilityUrl="{url}"',))
+
+    assert result.returncode != 0
+    assert "values don't meet the specifications of the schema" in result.stderr
+    assert "facilityUrl" in result.stderr
+
+
 def test_base_values_pass_the_schema() -> None:
     result = _helm_template()
 

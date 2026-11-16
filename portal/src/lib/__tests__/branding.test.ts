@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyBranding, DEFAULT_BRANDING } from '../branding';
+import { applyBranding, DEFAULT_BRANDING, safeHttpUrl } from '../branding';
 import type { BrandingConfig } from '../branding';
 
 function domWithBrandTags(): Document {
   document.body.innerHTML = `
     <a data-af-brand="shortName">placeholder</a>
     <a data-af-brand="fullName" data-af-brand-target="aria-label" aria-label="placeholder">logo text</a>
-    <span data-af-brand="facilityName">placeholder</span>
+    <a data-af-brand-link="facilityUrl"><span data-af-brand="facilityName">placeholder</span></a>
     <span data-af-no-brand>untouched</span>
   `;
   return document;
@@ -55,4 +55,48 @@ describe('applyBranding', () => {
     applyBranding({ shortName: 'X', fullName: 'Y', facilityName: 'Z' }, doc);
     expect(doc.querySelector('[data-af-no-brand]')?.textContent).toBe('untouched');
   });
+});
+
+describe('safeHttpUrl', () => {
+  it.each(['https://af.example.org/', 'http://af.example.org/path?q=1'])('accepts %s', (url) => {
+    expect(safeHttpUrl(url)).toBe(url);
+  });
+
+  it.each([
+    '',
+    undefined,
+    'javascript:alert(1)',
+    'data:text/html,x',
+    'ftp://af.example.org',
+    'af.example.org',
+    'not a url',
+  ])('rejects %s', (url) => {
+    expect(safeHttpUrl(url)).toBeUndefined();
+  });
+});
+
+describe('applyBranding facilityUrl', () => {
+  const config: BrandingConfig = { shortName: '', fullName: '', facilityName: 'Example AF' };
+
+  it('links the facility name to an http(s) facilityUrl, opening safely in a new tab', () => {
+    const doc = domWithBrandTags();
+    applyBranding({ ...config, facilityUrl: 'https://af.example.org/' }, doc);
+    const link = doc.querySelector('[data-af-brand-link="facilityUrl"]');
+    expect(link?.getAttribute('href')).toBe('https://af.example.org/');
+    expect(link?.getAttribute('target')).toBe('_blank');
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(link?.textContent).toBe('Example AF');
+  });
+
+  it.each([undefined, '', 'javascript:alert(1)'])(
+    'leaves the name unlinked for %s',
+    (facilityUrl) => {
+      const doc = domWithBrandTags();
+      applyBranding({ ...config, facilityUrl }, doc);
+      const link = doc.querySelector('[data-af-brand-link="facilityUrl"]');
+      expect(link?.hasAttribute('href')).toBe(false);
+      expect(link?.hasAttribute('target')).toBe(false);
+      expect(link?.textContent).toBe('Example AF');
+    },
+  );
 });

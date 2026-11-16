@@ -15,6 +15,10 @@ describe('Footer.astro', () => {
     expect(FOOTER).not.toMatch(/ATLAS|atlas\.cern/i);
   });
 
+  it('carries no href of its own: the facility link comes from branding config', () => {
+    expect(FOOTER).toContain('data-af-brand-link="facilityUrl"');
+  });
+
   it('renders the default facility name from DEFAULT_BRANDING', () => {
     expect(FOOTER).toContain('DEFAULT_BRANDING.facilityName');
   });
