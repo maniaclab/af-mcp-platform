@@ -721,6 +721,31 @@ enabled or disabled, the reason given) and logs `maintenance_mode_changed`
 at `info`. A toggle that loses the compare-and-set race changed nothing and
 writes neither.
 
+## Log event names and fields
+
+Every broker log line is one JSON object whose `event` is a dotted
+`component.action` name (`jwks.fetch_failed`, `token_registry.minted`,
+`http.request.finished`). Lines of the audit log keep `event` `audit`. A name
+ending in `failed` is logged at `warning` or above. Query on these names and
+fields; they change only with a release note.
+
+| Field | Meaning |
+|---|---|
+| `subject` | The user's Keycloak `sub`. |
+| `target` | A credential target (the service or identity a credential is for). |
+| `service` | A backend service name. |
+| `reason` | Short machine-readable cause. |
+| `error` | The exception message, `str(exc)`. |
+| `detail` | A human-readable explanation. |
+| `status_code`, `upstream_status` | The HTTP status the broker answered, and the status a dependency (token service, backend) answered. |
+| `duration_ms`, `exc_type` | Elapsed milliseconds; exception class name. |
+| `correlation_id` | The request's id (see [Following one call end to end](#following-one-call-end-to-end)). |
+| `audit_id`, `lookup_id` | The audit record's id; a personal access token's lookup id. |
+| `uid`, `unixname` | POSIX identity. |
+
+Tokens, passphrases, passwords, keytabs, proxies and request or response
+bodies are never logged.
+
 ## HTTP request lines
 
 Every request except the kubelet probes (`/v1/healthz`, `/v1/readyz`) logs
