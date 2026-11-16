@@ -679,7 +679,8 @@ broker:
   # (broker usage/otel_events.py), beside the usage store above, which stays
   # authoritative. One record per tool call with audit_id, trace_id,
   # principal_sub, token_id, service, method, outcome, duration_ms,
-  # result_bytes and result_tokens_est -- never tool arguments or results.
+  # result_bytes, result_tokens_est and result_content.<type>.* (the
+  # per-content-type breakdown) -- never tool arguments or results.
   # Because these carry the caller's identity, the receiving log backend
   # needs its own access control. Off by default, rendering nothing. The
   # collector, headers and egress come from broker.otlp above, shared with
