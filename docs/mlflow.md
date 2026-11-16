@@ -99,7 +99,7 @@ OTLP/gRPC endpoint is not supported). Every request must carry an
 
 The chart renders only `OTEL_EXPORTER_OTLP_ENDPOINT` (plus the sampler
 variables) for the broker; it has no value for exporter headers. Pointing
-`broker.tracing.endpoint` straight at MLflow would therefore send no
+`broker.otlp.endpoint` straight at MLflow would therefore send no
 experiment header. Route through an OpenTelemetry Collector instead, which
 also lets the same spans go to a second backend. A Collector configuration
 based on the one in MLflow's documentation:

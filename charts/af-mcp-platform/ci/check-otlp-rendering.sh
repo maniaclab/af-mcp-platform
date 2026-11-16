@@ -115,10 +115,10 @@ literal=$(render -f "$ci/otel-metrics-values.yaml" \
 expect_has "literal header" "name: OTEL_EXPORTER_OTLP_HEADERS" "$literal"
 expect_has "literal header" 'value: "x-mlflow-experiment-id=3"' "$literal"
 
-# The keys the chart does not accept fail with a message naming the ones to use.
-expect_fails "old broker.tracing.endpoint" "set broker.otlp.endpoint" \
+# The removed keys are unknown to the schema.
+expect_fails "removed broker.tracing.endpoint" "additional properties 'endpoint' not allowed" \
   -f "$ci/test-values.yaml" --set broker.tracing.endpoint=http://x:4318
-expect_fails "old broker.tracing.networkPolicy" "networkPolicy.egress.endpoints" \
+expect_fails "removed broker.tracing.networkPolicy" "additional properties 'networkPolicy' not allowed" \
   -f "$ci/test-values.yaml" --set broker.tracing.networkPolicy.port=4318
 
 # A signal with no collector, or two header sources, is refused.

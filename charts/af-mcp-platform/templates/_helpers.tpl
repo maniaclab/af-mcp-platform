@@ -667,17 +667,10 @@ selector is "vault". The gate is af-mcp-platform.needsVault.
 
 {{/*
 Fails the render on OTLP configuration that cannot work: the
-broker.tracing.endpoint / broker.tracing.networkPolicy keys (not accepted;
-use broker.otlp.*), a signal enabled with no collector endpoint, or both a literal and a
-Secret for the collector headers. Emits nothing.
+a signal enabled with no collector endpoint, or both a literal and a Secret
+for the collector headers. Emits nothing.
 */}}
 {{- define "af-mcp-platform.validateOtlp" -}}
-{{- if hasKey .Values.broker.tracing "endpoint" }}
-{{- fail "broker.tracing.endpoint was removed: set broker.otlp.endpoint (the collector endpoint is now shared by every OpenTelemetry signal)" }}
-{{- end }}
-{{- if hasKey .Values.broker.tracing "networkPolicy" }}
-{{- fail "broker.tracing.networkPolicy was removed: the collector egress rule is generated from broker.otlp.endpoint (declare the collector pods under networkPolicy.egress.endpoints)" }}
-{{- end }}
 {{- if and (or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled) (not .Values.broker.otlp.endpoint) }}
 {{- fail "broker.otlp.endpoint is required when broker.tracing.enabled, broker.metrics.otlp.enabled or broker.usageEvents.otlp.enabled is true" }}
 {{- end }}
