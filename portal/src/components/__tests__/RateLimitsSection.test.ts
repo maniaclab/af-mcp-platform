@@ -27,6 +27,7 @@ const RULES: RateLimitsResponse = {
       used: 12,
       resets_in_seconds: 180,
       tools: ['condor_submit_dag', 'condor_submit_job'],
+      tool_count: 2,
     },
     {
       action_type: null,
@@ -36,6 +37,7 @@ const RULES: RateLimitsResponse = {
       used: 30,
       resets_in_seconds: 45,
       tools: ['condor_submit_dag', 'condor_submit_job'],
+      tool_count: 2,
     },
     {
       action_type: null,
@@ -45,6 +47,7 @@ const RULES: RateLimitsResponse = {
       used: 0,
       resets_in_seconds: null,
       tools: [],
+      tool_count: 0,
     },
   ],
 };
@@ -96,6 +99,26 @@ describe('RateLimitsSection', () => {
     expect(rows[0].text()).not.toContain('rucio_list_dids');
     expect(rows[1].text()).toContain('condor_submit_dag');
     expect(rows[2].text()).toContain('No tool of yours matches');
+  });
+
+  it('says how many more tools a capped list leaves out', async () => {
+    const [first] = RULES.rate_limits;
+    stubFetches({
+      ...RULES,
+      rate_limits: [
+        { ...first, tools: ['condor_submit_dag', 'condor_submit_job'], tool_count: 25 },
+      ],
+    });
+    const wrapper = await mountSection();
+
+    expect(wrapper.find('[data-testid="rl-more-tools"]').text()).toBe('and 23 more');
+  });
+
+  it('shows no "and N more" when the list is complete', async () => {
+    stubFetches();
+    const wrapper = await mountSection();
+
+    expect(wrapper.find('[data-testid="rl-more-tools"]').exists()).toBe(false);
   });
 
   it('says which services the broker could not list rather than implying completeness', async () => {

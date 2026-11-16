@@ -825,6 +825,7 @@ describe('permissions client (issue #144 step 4: permission PATs)', () => {
           used: 12,
           resets_in_seconds: 180,
           tools: ['condor_submit_job'],
+          tool_count: 1,
         },
       ],
     });
