@@ -13,6 +13,8 @@ Everything Python runs through [pixi](https://pixi.sh); dependencies live in `pi
 ```bash
 pixi run -e dev broker       # run broker locally with reload → http://localhost:8080/docs
 pixi run test                # broker + skills tests in parallel (pytest broker/ skills/ -v -n auto; -n 0 to debug serially)
+pixi run test-unit           # broker unit tests only (broker/tests/unit, marker `unit`)
+pixi run test-integration    # broker integration tests only (broker/tests/integration, marker `integration`)
 pixi run test-spikes         # spike validation tests (pytest spikes/ -v)
 pixi run lint                # ruff check + format --check on broker/
 pixi run fmt                 # ruff format + autofix
@@ -21,6 +23,8 @@ pixi run -e dev lint-imports # import-linter layer contracts (broker/pyproject.t
 pixi run -e dev lint-all     # everything the CI lint job runs (ruff + import-linter + mypy + pre-commit)
 pixi run -e dev pytest broker/ -k <name> -v   # single test
 ```
+
+The broker's tests are split by directory into `unit/` (one module, no booted app, server, subprocess or database), `integration/` (the booted app, in-process servers, subprocesses, helm renders) and a reserved `e2e/` (a deployed broker, no mocks); the directory sets the pytest marker. New tests go in the tier directory that matches what they boot; `docs/testing.md` has the definitions.
 
 Portal (Astro + Vue + Tailwind):
 
