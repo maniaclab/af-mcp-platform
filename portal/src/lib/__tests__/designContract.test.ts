@@ -16,7 +16,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const SRC_DIR = resolve(process.cwd(), 'src');
 const GLOBAL_CSS = 'src/styles/global.css';
@@ -400,9 +400,12 @@ export function scanSource(path: string, source: string): Violation[] {
 
   // Basecoat classes redefined in a style block (a rule head is the text
   // before each `{` that is not an at-rule).
-  for (const m of style.matchAll(/(?:^|[{};])\s*([^{};@]+)\{/g)) {
+  // The head's own leading whitespace is matched by the group, not a separate
+  // `\s*`: that pair is ambiguous and backtracks quadratically over the
+  // blanked-out regions of a .vue/.astro file.
+  for (const m of style.matchAll(/(?:^|[{};])([^{};@]+)\{/g)) {
     const head = m[1];
-    const at = m.index + m[0].indexOf(head);
+    const at = m.index + m[0].indexOf(head) + (head.length - head.trimStart().length);
     for (const selector of splitSelectors(head)) {
       const classes = [...selector.matchAll(/\.([\w-]+)/g)].map((c) => c[1]);
       if (
@@ -466,12 +469,17 @@ function formatViolations(violations: Violation[]): string {
 }
 
 describe('design contract', () => {
+  // Every source file is scanned once for both tests below.
+  let files: string[];
+  let scanned: Violation[];
+  beforeAll(() => {
+    files = listFiles(SRC_DIR);
+    scanned = files.flatMap((f) => scanSource(relative(process.cwd(), f), readFileSync(f, 'utf8')));
+  });
+
   it('has no off-contract styling or icon glyphs in src', () => {
-    const files = listFiles(SRC_DIR);
     expect(files.length).toBeGreaterThan(20);
-    const violations = files
-      .flatMap((f) => scanSource(relative(process.cwd(), f), readFileSync(f, 'utf8')))
-      .filter((v) => !isAllowed(v));
+    const violations = scanned.filter((v) => !isAllowed(v));
     if (violations.length > 0) {
       throw new Error(
         `${violations.length} design-contract violation(s):\n${formatViolations(violations)}`,
@@ -481,13 +489,11 @@ describe('design contract', () => {
 
   it('keeps every allowlist entry in use', () => {
     const used = new Set<string>();
-    for (const f of listFiles(SRC_DIR)) {
-      for (const v of scanSource(relative(process.cwd(), f), readFileSync(f, 'utf8'))) {
-        const entry = ALLOWLIST.find(
-          (a) => a.file === v.file && a.rule === v.rule.id && v.text.includes(a.contains),
-        );
-        if (entry) used.add(entry.file + entry.contains);
-      }
+    for (const v of scanned) {
+      const entry = ALLOWLIST.find(
+        (a) => a.file === v.file && a.rule === v.rule.id && v.text.includes(a.contains),
+      );
+      if (entry) used.add(entry.file + entry.contains);
     }
     expect([...used].sort()).toEqual(ALLOWLIST.map((a) => a.file + a.contains).sort());
   });
@@ -570,5 +576,15 @@ describe('design contract scanner', () => {
     expect(scanSource(GLOBAL_CSS, '@theme { --color-af-bg: #fff; }')).toEqual([]);
     expect(scanSource(COMPONENTS_CSS, 'a { border-radius: 1px; }')).toEqual([]);
     expect(scanSource('src/x.css', 'a { border-radius: 1px; }')).not.toEqual([]);
+  });
+
+  it('scans a large template without a style block in linear time', () => {
+    // A quadratic scan of the blanked-out style region took tens of seconds at
+    // this size; a linear one takes milliseconds, so the bound has no
+    // sensitivity to machine load.
+    const source = `<template>\n${'<p class="af-sub">text</p>\n'.repeat(4000)}</template>\n`;
+    const start = performance.now();
+    scanSource('src/Big.vue', source);
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 });
