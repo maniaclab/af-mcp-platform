@@ -205,7 +205,7 @@ explained in the Deployment Runbook.
 | Key | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `networkPolicy.enabled` | boolean | `true` | no | Master switch. false renders no NetworkPolicy objects at all. |
-| `networkPolicy.ipFamilies` | array | `[IPv4, IPv6]` | no | Address families the pods use. Every ipBlock the chart renders (the public-internet rule today) is emitted once per family listed, and `egress.external.exceptCidrs` are split by family automatically ... |
+| `networkPolicy.ipFamilies` | array | `[IPv4, IPv6]` | no | Address families the pods use. Every ipBlock the chart renders (the public-internet rule) is emitted once per family listed, and `egress.external.exceptCidrs` are split by family automatically (an ... |
 | `networkPolicy.egress.generate` | boolean | `true` | no | Generate the egress rules from the URLs the broker connects to (see below). |
 | `networkPolicy.egress.endpoints` | object | `{}` | no | What a URL cannot say, per host (the host part of the URL, no scheme or port). |
 | `networkPolicy.egress.external.exceptCidrs` | array | `[]` | no | CIDRs the public rule must not reach, in addition to RFC-1918, IPv6 ULA (fc00::/7, which includes the pod range), link-local and the cloud metadata address (169.254.169.254/32), which are always ... |
