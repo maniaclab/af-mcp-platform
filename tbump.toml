@@ -9,7 +9,7 @@ regex = '''
   (?P<minor>\d+)
   \.
   (?P<patch>\d+)
-  (rc
+  (-rc\.
     (?P<candidate>\d+)
   )?
   '''

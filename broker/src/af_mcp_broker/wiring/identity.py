@@ -108,10 +108,10 @@ def build_principal_cache(
             return None
         msg = (
             "KEYCLOAK_ADMIN_CLIENT_ID/KEYCLOAK_ADMIN_CLIENT_SECRET are unset "
-            "and BROKER_DEV_INSECURE_PRINCIPAL is not active. As of issue "
-            "#144 step 3, every authenticated request (JWT or PAT) resolves "
-            "its current groups from the PrincipalDirectory, so the broker "
-            "cannot authenticate anyone without this service account. "
+            "and BROKER_DEV_INSECURE_PRINCIPAL is not active. Every "
+            "authenticated request (JWT or PAT) resolves its current groups "
+            "from the PrincipalDirectory, so the broker cannot authenticate "
+            "anyone without this service account. "
             "Configure the Keycloak admin service account (see "
             "docs/auth.md's 'Operator setup: the Keycloak admin service "
             "account'), or set BROKER_DEV_INSECURE_PRINCIPAL for local "

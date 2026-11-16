@@ -156,6 +156,16 @@ class TestBuildPrincipalCache:
                 dev_bypass_active=False,
             )
 
+    def test_refusal_names_the_fix_without_issue_history(self) -> None:
+        with pytest.raises(RuntimeError) as excinfo:
+            build_principal_cache(
+                _settings(), None, httpx2.AsyncClient(), dev_bypass_active=False
+            )
+
+        message = str(excinfo.value)
+        assert "As of issue" not in message
+        assert "cannot authenticate anyone without this service account" in message
+
 
 class TestBuildTokenRegistry:
     def test_wraps_the_in_memory_backend_by_default(self) -> None:

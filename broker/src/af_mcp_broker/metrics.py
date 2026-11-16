@@ -229,7 +229,7 @@ tool_mapping_drift_total = Counter(
     "Tools whose backend listing and services.yaml's dict-form "
     "required_permission disagree, by service and kind ('unmapped': "
     "advertised but implicitly disabled; 'stale': a mapped key the backend "
-    "no longer advertises; 'unroutable': advertised without the service's "
+    "does not advertise; 'unroutable': advertised without the service's "
     "prefix, so unreachable whatever required_permission's form) -- see GET "
     "/v1/admin/tool-mapping-drift for the "
     "current set. Incremented once per newly observed tool, not once per "
