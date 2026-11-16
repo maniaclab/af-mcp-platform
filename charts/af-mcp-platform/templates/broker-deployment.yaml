@@ -67,10 +67,9 @@ spec:
             # broker_state_key/broker_public_origin when this client id is
             # actually set, same "half-configured must fail loudly, absent is
             # a valid degraded state" shape as oauth21-direct's validation).
-            # These env var names predate this purpose: issue #144 step 2a
-            # replaced the RFC 8693 token-exchange design that originally
-            # needed a confidential client here, leaving TOKEN_MINT_CLIENT_ID/
-            # SECRET wired but unused until this repurposed them for a
+            # These env var names come from the RFC 8693 token-exchange
+            # design that issue #144 step 2a replaced with broker-issued
+            # PATs; TOKEN_MINT_CLIENT_ID/SECRET serve a
             # different grant type (authorization_code instead of
             # token-exchange) rather than adding a second env var pair for
             # the same "confidential client + sealed secret" shape.
