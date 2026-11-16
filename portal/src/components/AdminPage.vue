@@ -40,6 +40,7 @@ import type { CredmonHealth } from '../lib/credmonStatus';
 import { maintenanceErrorMessage } from '../lib/maintenanceBanner';
 import { permissionLabel } from '../lib/permissionLabel';
 import { formatDateTime, formatRelative } from '../lib/relativeTime';
+import { useAsyncAction } from '../lib/useAsyncAction';
 import { useLoadState } from '../lib/useLoadState';
 import AsyncState from './ui/AsyncState.vue';
 import ConfirmDialog from './ui/ConfirmDialog.vue';
@@ -162,8 +163,11 @@ const driftRetention = ref(0);
 
 // ── HTCondor credmon sync (docs/credmon.md) ─────────────────────────────
 const credmon = ref<CredmonStatus | null>(null);
-const credmonSyncing = ref(false);
-const credmonSyncError = ref<string | null>(null);
+const {
+  busy: credmonSyncing,
+  error: credmonSyncError,
+  run: runSync,
+} = useAsyncAction(credmonSyncErrorMessage);
 // Errors list starts expanded only when short enough to scan at a glance.
 const CREDMON_ERRORS_OPEN_MAX = 3;
 const credmonErrorsOpen = ref(false);
@@ -174,16 +178,10 @@ async function refreshCredmon(): Promise<void> {
 }
 
 async function syncCredmonNow(): Promise<void> {
-  credmonSyncing.value = true;
-  credmonSyncError.value = null;
-  try {
+  await runSync(async () => {
     await runCredmonSync();
     await refreshCredmon();
-  } catch (err) {
-    credmonSyncError.value = credmonSyncErrorMessage(err);
-  } finally {
-    credmonSyncing.value = false;
-  }
+  });
 }
 
 const CREDMON_HEALTH_LABELS: Record<CredmonHealth, string> = {

@@ -45,6 +45,7 @@ import { errorMessage } from '../lib/apiError';
 import { getBrokerOrigin } from '../lib/auth';
 import { copyText } from '../lib/clipboard';
 import { formatDateTime, formatRelative } from '../lib/relativeTime';
+import { useAsyncAction } from '../lib/useAsyncAction';
 import { useLoadState } from '../lib/useLoadState';
 import AsyncState from './ui/AsyncState.vue';
 import ConfirmDialog from './ui/ConfirmDialog.vue';
@@ -106,8 +107,11 @@ const mintTrigger = ref<HTMLButtonElement | null>(null);
 const expiryOption = ref<'30' | '90' | '365' | 'never'>('90');
 const name = ref('');
 const note = ref('');
-const minting = ref(false);
-const mintError = ref<string | null>(null);
+const {
+  busy: minting,
+  error: mintError,
+  run: runMint,
+} = useAsyncAction((err) => errorMessage(err, 'Could not create the token. Try again.'));
 const mintedToken = ref<MintedToken | null>(null);
 
 // ── Permission PATs (issue #144 step 4) ─────────────────────────────────
@@ -186,9 +190,10 @@ function onMintDialogClose() {
 
 async function handleMint(evt: Event) {
   evt.preventDefault();
-  minting.value = true;
-  mintError.value = null;
-  try {
+  // A failure includes the 409 duplicate-name case (api/tokens.py's
+  // DuplicateNameError) -- APIError's message already carries the broker's
+  // `detail` text.
+  await runMint(async () => {
     const neverExpires = expiryOption.value === 'never';
     mintedToken.value = await mintToken(
       name.value.trim() || undefined,
@@ -197,13 +202,7 @@ async function handleMint(evt: Event) {
       neverExpires,
       restrictPermissions.value ? [...selectedPermissions.value] : undefined,
     );
-  } catch (err) {
-    // Includes the 409 duplicate-name case (api/tokens.py's DuplicateNameError)
-    // -- APIError's message already carries the broker's `detail` text.
-    mintError.value = errorMessage(err, 'Could not create the token. Try again.');
-  } finally {
-    minting.value = false;
-  }
+  });
 }
 
 async function handleDone() {

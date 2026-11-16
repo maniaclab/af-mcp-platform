@@ -7,9 +7,7 @@ import {
   fetchIdentities,
   type CatalogServer,
   type IdentityProvider,
-  type KrbTicketMetadata,
   type ProxyMetadata,
-  type ServiceXTokenMetadata,
 } from '../lib/api';
 import { groupServersByAlias } from '../lib/catalog';
 import { identityTargetFromHash } from '../lib/identityTarget';
@@ -262,12 +260,14 @@ function handleX509Linked(id: string, meta: ProxyMetadata, remember: boolean) {
   clearIdentitiesCache();
 }
 
-// Called on Krb5IdentityCard's `linked` event, once POST /v1/krb5/ticket has
-// already succeeded — same reflect-locally-and-drop-cache pattern as
+// Called on Krb5IdentityCard's `linked` event (once POST /v1/krb5/ticket has
+// already succeeded) and on ServiceXIdentityCard's `linked` event (once POST
+// /v1/servicex/link has) — same reflect-locally-and-drop-cache pattern as
 // handleX509Linked above. Krb5 has no stored-credential custody mode or
 // proxy expiry to track: a mint is a one-shot action (see
-// Krb5IdentityCard.vue's doc comment), so only `linked` flips.
-function handleKrb5Linked(id: string, meta: KrbTicketMetadata) {
+// Krb5IdentityCard.vue's doc comment). servicex-token has no separate
+// custody mode (always the hands-free-renewal shape). So only `linked` flips.
+function markLinked(id: string) {
   const provider = providers.value.find((p) => p.id === id);
   if (provider) provider.linked = true;
   clearIdentitiesCache();
@@ -324,17 +324,6 @@ function handleKrb5Revoked(id: string) {
     provider.linked = false;
     provider.krb5_has_keytab = false;
   }
-  clearIdentitiesCache();
-}
-
-// Called on ServiceXIdentityCard's `linked` event, once POST
-// /v1/servicex/link has already succeeded — same reflect-locally-and-drop-
-// cache pattern as handleKrb5Linked. servicex-token has no separate
-// custody mode (always the hands-free-renewal shape), so only `linked`
-// flips.
-function handleServiceXLinked(id: string, meta: ServiceXTokenMetadata) {
-  const provider = providers.value.find((p) => p.id === id);
-  if (provider) provider.linked = true;
   clearIdentitiesCache();
 }
 
@@ -461,7 +450,7 @@ function handleServiceXRevoked(id: string) {
                 :display_name="p.display_name"
                 :enables="p.enables"
                 :powers="powersForAlias(p.id)"
-                @linked="(meta) => handleKrb5Linked(p.id, meta)"
+                @linked="() => markLinked(p.id)"
                 @keytab-linked="handleKrb5KeytabLinked(p.id)"
                 @keytab-unlinked="handleKrb5KeytabUnlinked(p.id)"
                 @revoked="handleKrb5Revoked(p.id)"
@@ -474,7 +463,7 @@ function handleServiceXRevoked(id: string) {
                 :enables="p.enables"
                 :powers="powersForAlias(p.id)"
                 :external_login_url="p.external_login_url"
-                @linked="(meta) => handleServiceXLinked(p.id, meta)"
+                @linked="() => markLinked(p.id)"
                 @revoked="handleServiceXRevoked(p.id)"
               />
               <IdentityLink
