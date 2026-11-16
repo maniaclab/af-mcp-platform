@@ -13,6 +13,10 @@ portal:
   brokerOrigin: "https://mcp.example.com"
 
 broker:
+  # The broker refuses to start without its Keycloak admin service account.
+  keycloakAdmin:
+    clientId: "example-keycloak-admin-client"
+    existingClientSecretSecret: "example-keycloak-admin-client-secret"
   # Two replicas (the chart default) need a shared state store or an explicit
   # opt-in; this file is not about shared state, so it opts in.
   sharedState:
