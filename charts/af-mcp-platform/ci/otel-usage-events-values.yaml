@@ -23,13 +23,18 @@ broker:
   # Tracing stays disabled: the collector endpoint and NetworkPolicy shape are
   # shared with it, and usage events must not switch tracing on.
   otlp:
-    endpoint: "http://otel-collector.observability:4318"
-    networkPolicy:
-      namespaceSelector:
-        kubernetes.io/metadata.name: "observability"
-      podSelector:
-        app.kubernetes.io/name: "opentelemetry-collector"
-      port: 4318
+    endpoint: "http://otel-collector.observability.svc:4318"
+
+# Narrows the generated egress rule to the collector's pods.
+networkPolicy:
+  egress:
+    endpoints:
+      docs-mcp.example.svc.cluster.local:
+        podSelector:
+          app.kubernetes.io/name: docs-mcp
+      otel-collector.observability.svc:
+        podSelector:
+          app.kubernetes.io/name: "opentelemetry-collector"
 
 # values.schema.json requires a non-empty service registry and group map.
 aggregator:

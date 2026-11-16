@@ -618,33 +618,117 @@ it can't reach — see docs/auth.md's "Group-to-Permission Mapping Example".
 
 ---
 
-## Step 4 — Allow egress to the service in NetworkPolicy (if needed)
+## Step 4 — Declare the pods behind the service for the NetworkPolicy
 
-The broker's NetworkPolicy allows in-cluster egress to service pods **in the
-same namespace** as the broker, on a configured list of ports. If your new
-service is in the same namespace and uses one of the default ports (8000,
-8080), no change is needed.
+The chart generates the broker's egress NetworkPolicy from the URLs already in
+your values: every `aggregator.services[].url`, plus `broker.oidc.internalUrl`
+(`oidc.issuer` when that is empty), the Vault `addr`, each identity provider's
+`serviceUrl` / `tokenEndpoint` / `revocationEndpoint`,
+`broker.credmon.htcondorApiUrl`, and `broker.otlp.endpoint` while an OTLP
+signal is on. What each URL becomes:
 
-If it listens on a different port, append it to
-`networkPolicy.broker.servicePorts` in your `HelmRelease` values — no template
-edit needed:
+- **In-cluster host.** `http://svc:8080` is a Service in the release
+  namespace; `<service>.<namespace>.svc[.cluster.local]` names its namespace.
+  The rule pairs that namespace with the pods behind the Service, on the URL's
+  port (80 for `http://`, 443 for `https://` when the URL has none).
+- **External host.** A NetworkPolicy cannot select a DNS name, so every
+  external host shares one rule to public addresses on port 443 and the port
+  of each external URL. Pods are dual-stack, so the rule has one `ipBlock`
+  per family in `networkPolicy.ipFamilies` (default `[IPv4, IPv6]`): without
+  the `::/0` block IPv6 egress is dropped and clients that try IPv6 first
+  stall until they fall back. A single-stack cluster lists one family. RFC-1918, IPv6 ULA (`fc00::/7`, which
+  includes the pod range), link-local and the cloud metadata address
+  `169.254.169.254/32` are always excluded; list the facility's own node
+  ranges (kubelet, sshd and the Kubernetes API live there) in
+  `networkPolicy.egress.external.exceptCidrs`, IPv4 and IPv6 together.
+
+A URL cannot name the pods, so **every in-cluster host needs an entry under
+`networkPolicy.egress.endpoints`**, keyed by the host part of the URL. The render
+fails naming the host if it is missing, so a rule never opens a whole
+namespace by accident.
+
+- `podSelector` (required): `matchLabels` of the pods behind the Service.
+  Take the Service's own selector (`kubectl get svc <svc> -o
+  jsonpath='{.spec.selector}'`), leaving out labels that change at runtime
+  (OpenBao's `openbao-active`). `{}` opts into every pod in the namespace.
+- `targetPort`: a NetworkPolicy matches the **pod's** port, not the
+  Service's. A Service on port 80 that forwards to a pod listening on 9000
+  needs `targetPort: 9000`, or the rule opens port 80 and the connection
+  hangs. `kubectl get endpointslice -n <ns> -l kubernetes.io/service-name=<svc>`
+  shows the pod port.
+- `namespace`: declares a host that is not a `*.svc` name as served by pods
+  in that namespace; see below.
 
 ```yaml
 values:
   networkPolicy:
-    broker:
-      servicePorts:
-        - 8000
-        - 8080
-        - 9000  # e.g. rucio-mcp
+    egress:
+      endpoints:
+        rucio-mcp.mcp.svc.cluster.local:
+          targetPort: 9000
+          podSelector:
+            app.kubernetes.io/instance: rucio-mcp
+            app.kubernetes.io/name: rucio-mcp
+      external:
+        exceptCidrs: [192.0.2.0/23, 2001:db8:10:200a::/64]
 ```
 
-**Cross-namespace services** are not currently exposed through values — the
-namespace selector in `templates/networkpolicy.yaml` is scoped to the release
-namespace. To reach a service in a different namespace you'd need to either
-move it into the broker's namespace or extend the chart's egress rule. If
-that becomes a recurring need, file an issue to parameterize
-`serviceNamespaces` similarly.
+### A public hostname that is served in the same cluster
+
+A public hostname resolves to a load balancer IP, which kube-proxy rewrites to
+the ingress controller's (or Gateway's) private pod IPs *before* NetworkPolicy
+is evaluated. The destination is then a private pod IP, so the public rule
+never matches it, and the broker hangs on a URL that works from a laptop.
+Either point the URL at the in-cluster Service (the usual fix, e.g.
+`broker.oidc.internalUrl`, while `oidc.issuer` stays the public name that
+appears in tokens), or declare the host as served by those pods:
+
+```yaml
+values:
+  networkPolicy:
+    egress:
+      endpoints:
+        hub.example.org:
+          namespace: envoy-gateway-system
+          targetPort: 10443        # the Gateway pods' port, not the Service's 443
+          podSelector:
+            gateway.envoyproxy.io/owning-gateway-name: public
+```
+
+Destinations no URL names (a public hostname whose URL is not in the values,
+such as client metadata documents fetched from user hostnames; a node
+service such as an S3 NodePort or XCache) go in `networkPolicy.egress.extraEgress`,
+a list of NetworkPolicy egress rules appended verbatim. An `ipBlock` there
+covers one address family: add an IPv6 twin next to each IPv4 block.
+
+### Switches, ingress, and extending the policies
+
+- `networkPolicy.enabled: false` renders no NetworkPolicy objects at all; it
+  is the full opt-out.
+- `networkPolicy.egress.generate: false` keeps the broker's ingress rules
+  and drops every URL-derived egress rule (the public-internet rule, the
+  in-cluster rules, and the Postgres and shared-state store rules). The
+  broker policy then allows DNS and `networkPolicy.egress.extraEgress` only,
+  so something must allow the rest: your own NetworkPolicies, or
+  `extraEgress`.
+- Ingress sources are `networkPolicy.ingress.broker.sources` (API and MCP on
+  8080, metrics on 9090) and `networkPolicy.ingress.portal.sources` (8081):
+  lists of `{namespaceSelector, podSelector, ports}`, with at least one
+  selector. The defaults are the stock `ingress-nginx` and a `monitoring`
+  namespace; a list you set replaces the default. `extraIngress` appends raw
+  rules. The chart's own helm-test pod is always allowed on 8080.
+- The chart renders no CNI-specific objects. NetworkPolicies are additive,
+  so a site that needs more adds NetworkPolicies of its own next to the
+  chart's, selecting the broker pods by their labels, as UChicago's
+  supplemental policies do. Another set of rules is never a patch to these.
+
+The Postgres usage store (`broker.usage.postgres.networkPolicy`) and the
+shared state store (`broker.sharedState.networkPolicy`) keep their own
+selectors because their URLs live in Secrets.
+
+Inspect the result with
+`helm template ... | yq 'select(.kind == "NetworkPolicy")'`; a backend that
+times out on the first call usually has a wrong `targetPort`.
 
 ---
 

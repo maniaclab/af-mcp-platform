@@ -615,7 +615,9 @@ broker:
   # signal off this block renders nothing.
   otlp:
     # OTLP/HTTP collector base URL (the SDK appends each signal's /v1/<signal>
-    # path itself), e.g. http://otel-collector.observability:4318
+    # path itself), e.g. http://otel-collector.observability.svc:4318. While a
+    # signal is enabled the chart allows egress to it like any other URL (see
+    # networkPolicy; narrow an in-cluster collector with networkPolicy.endpoints).
     endpoint: ""
     # Request headers for the collector, rendered as OTEL_EXPORTER_OTLP_HEADERS
     # ("k1=v1,k2=v2") for every signal. Set at most one of `value` and
@@ -629,15 +631,6 @@ broker:
       existingSecret:
         name: ""
         key: "headers"
-    # Selects the collector for the broker's NetworkPolicy egress rule
-    # (rendered when any signal is enabled and networkPolicy.enabled) -- same
-    # shape as broker.usage.postgres.networkPolicy above. namespaceSelector /
-    # podSelector are matchLabels maps: an empty namespaceSelector selects the
-    # release namespace; an empty podSelector allows any pod there.
-    networkPolicy:
-      namespaceSelector: {}
-      podSelector: {}
-      port: 4318
 
   # OpenTelemetry trace EMISSION (broker tracing.py, observability roadmap
   # PR D). Rendered as TRACING_ENABLED. Disabled (the default) renders no trace
@@ -912,18 +905,141 @@ ingress:
 # Network Policy
 # ---------------------------------------------------------------------------
 networkPolicy:
-  # When enabled, deny-all ingress to broker except from ingress controller;
-  # restrict broker egress to DNS, Keycloak, ATLAS IAM, services, and Prometheus.
+  # Master switch. false renders no NetworkPolicy objects at all. NetworkPolicies
+  # are additive: a site that needs more than this chart generates adds
+  # NetworkPolicies of its own next to these (selecting the broker pods by
+  # their labels) rather than patching them; `enabled: false` is the full
+  # opt-out, for a cluster whose CNI does not enforce NetworkPolicy or that
+  # manages its own.
   enabled: true
 
-  broker:
-    # Ports the broker is allowed to reach on in-namespace MCP services.
-    # Add a port here when introducing a service MCP server that listens on a
-    # non-default port (e.g., rucio-mcp on 9000). Defaults cover the two most
-    # common backend port choices; extend as needed.
-    servicePorts:
-      - 8000
-      - 8080
+  # Address families the pods use. Every ipBlock the chart renders (the
+  # public-internet rule today) is emitted once per family listed, and
+  # `egress.external.exceptCidrs` are split by family automatically (an IPv4
+  # CIDR only on the IPv4 block, an IPv6 CIDR only on the IPv6 block).
+  # Pods on a dual-stack cluster need both: an IPv6 destination not allowed
+  # by an ipBlock is dropped, and clients that try IPv6 first (xrootd,
+  # HTCondor) stall until they fall back to IPv4. A single-stack cluster
+  # lists one.
+  ipFamilies: [IPv4, IPv6]
+
+  egress:
+    # Generate the egress rules from the URLs the broker connects to (see
+    # below). false drops all of them, including the public-internet rule and
+    # the Postgres and shared-state store rules: the broker policy then
+    # allows DNS and `extraEgress` only, and its ingress rules stay. Use it
+    # when you manage broker egress with NetworkPolicies of your own.
+    generate: true
+
+    # The URLs the broker connects to: broker.oidc.internalUrl (oidc.issuer
+    # when that is empty), broker.oauth21.tokenStore.vault.addr,
+    # broker.credmon.htcondorApiUrl, aggregator.services[].url, each
+    # broker.identityProviders[] serviceUrl / tokenEndpoint /
+    # revocationEndpoint, and broker.otlp.endpoint while an OTLP signal is
+    # enabled.
+    #  - A single-label host (http://svc:8080) is a Service in the release
+    #    namespace; <service>.<namespace>.svc[.cluster.local] names its
+    #    namespace. Each such host gets an egress rule pairing that namespace
+    #    with the pods behind the Service (`endpoints` below) on the URL's
+    #    port (the scheme's default when the URL has none: http 80, https 443).
+    #  - Any other host is external. A NetworkPolicy cannot select a DNS name,
+    #    so external hosts share one rule to public addresses on port 443 and
+    #    the port of each external URL, with one ipBlock per `ipFamilies`
+    #    entry; private, link-local and cloud-metadata addresses are excluded
+    #    (see `external`).
+
+    # What a URL cannot say, per host (the host part of the URL, no scheme or
+    # port). Every in-cluster host needs an entry with a podSelector: the
+    # render fails naming the host otherwise, so a rule never opens a whole
+    # namespace by accident.
+    #   podSelector: matchLabels of the pods behind the Service (the Service's
+    #                own `spec.selector`, minus labels that change at runtime,
+    #                such as OpenBao's `openbao-active`). `{}` opts into
+    #                every pod in the namespace.
+    #   targetPort:  the pod's port, when the URL carries the Service's port
+    #                and the two differ (a NetworkPolicy matches the pod's
+    #                port)
+    #   namespace:   declares a host that is not a *.svc name as served by
+    #                pods in this namespace. A public hostname whose load
+    #                balancer IP kube-proxy DNATs to private pod IPs (an
+    #                ingress controller or Gateway in the same cluster) never
+    #                matches the public rule, because the destination is
+    #                already a pod IP when policy runs; reach it by selecting
+    #                those pods and their pod port, or point the URL at the
+    #                in-cluster Service.
+    # e.g.
+    #   endpoints:
+    #     rucio-mcp.mcp.svc.cluster.local:
+    #       targetPort: 9000
+    #       podSelector:
+    #         app.kubernetes.io/name: rucio-mcp
+    #     hub.example.org:                     # public host, same cluster
+    #       namespace: envoy-gateway-system
+    #       targetPort: 10443                  # Gateway pods listen on 10443
+    #       podSelector:
+    #         gateway.envoyproxy.io/owning-gateway-name: public
+    endpoints: {}
+
+    # Tunes the shared public-internet rule.
+    external:
+      # CIDRs the public rule must not reach, in addition to RFC-1918, IPv6
+      # ULA (fc00::/7, which includes the pod range), link-local and the
+      # cloud metadata address (169.254.169.254/32), which are always
+      # excluded. List IPv4 and IPv6 together. For the facility's own node
+      # ranges, where host-network services (kubelet, sshd, the Kubernetes
+      # API) live, e.g.
+      #   exceptCidrs: [192.0.2.0/23, 2001:db8:10:200a::/64]
+      exceptCidrs: []
+
+    # NetworkPolicy egress rules appended verbatim to the broker's policy,
+    # for destinations no URL in these values names (a public hostname with
+    # no URL, a node service such as an S3 NodePort or an XCache, a store
+    # reached by a Secret-held URL). Written as-is, so an ipBlock covers one
+    # address family: add an IPv6 twin next to each IPv4 block.
+    # e.g.
+    #   extraEgress:
+    #     - to:
+    #         - ipBlock: {cidr: 192.0.2.0/23}
+    #         - ipBlock: {cidr: 2001:db8:10:200a::/64}
+    #       ports:
+    #         - protocol: TCP
+    #           port: 30443
+    extraEgress: []
+
+  ingress:
+    # Who may reach the broker pods (API and MCP on 8080, metrics on 9090).
+    # Each source is {namespaceSelector, podSelector, ports}: a standard
+    # NetworkPolicy selector pair (at least one of the two) and the pod ports
+    # it may reach. The chart's own helm-test pod is always allowed on 8080.
+    # The defaults are the stock ingress-nginx and a `monitoring` namespace
+    # for a Prometheus; set the list to match the cluster (a list replaces
+    # the default; it is not merged).
+    broker:
+      sources:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+          ports: [8080]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          ports: [9090]
+      # NetworkPolicy ingress rules appended verbatim.
+      extraIngress: []
+    # Who may reach the portal pods (port 8081).
+    portal:
+      sources:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+          ports: [8081]
+      extraIngress: []
 
 # ---------------------------------------------------------------------------
 # Prometheus ServiceMonitor

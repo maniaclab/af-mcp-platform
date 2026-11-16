@@ -129,11 +129,7 @@ The chart values are the same ones already documented for any collector:
 broker:
   tracing:
     enabled: true
-    endpoint: "http://otel-collector.observability:4318"
-    networkPolicy:
-      namespaceSelector: { kubernetes.io/metadata.name: observability }
-      podSelector: { app.kubernetes.io/name: otel-collector }
-      port: 4318
+    endpoint: "http://otel-collector.observability.svc:4318"
 ```
 
 What an operator needs:
@@ -248,11 +244,11 @@ cannot be registered. If an HTTP endpoint exists, the wiring would be:
   ([`exclude_tools`](adding-a-service.md#exclude_tools-hiding-backend-tools-entirely)).
   The [MCP Design Guide](mcp-design.md) asks every tool to declare
   `readOnlyHint`; whether MLflow's server does was not checked.
-- **NetworkPolicy.** If the MLflow MCP pod is in the broker's namespace on
-  port 8000 or 8080, no change is needed. Another port goes in
-  `networkPolicy.broker.servicePorts`. A pod in another namespace is not
-  supported by the chart today
-  ([Adding a Service, Step 4](adding-a-service.md#step-4-allow-egress-to-the-service-in-networkpolicy-if-needed)).
+- **NetworkPolicy.** The broker's egress rule to the MLflow MCP pod is
+  generated from its `url`; declare its pods under
+  `networkPolicy.egress.endpoints.<host>.podSelector` (and `targetPort` when the
+  Service port differs from the pod port)
+  ([Adding a Service, Step 4](adding-a-service.md#step-4-declare-the-pods-behind-the-service-for-the-networkpolicy)).
   The MCP pod's own egress to the tracking server is outside this chart.
 
 The use case would be an agent asking the gateway for traces of its own
