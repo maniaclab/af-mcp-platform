@@ -41,7 +41,7 @@ export interface LinkedErrorParams {
  * Identities page when the backend authorization server itself failed (see
  * broker/src/af_mcp_broker/api/oauth21.py's `callback` route and
  * oauth_state.py's `append_linked_error_params`), so IdentitiesPage.vue can
- * show an error banner instead of the raw 422 the broker used to return.
+ * show an error banner instead of a raw 422.
  *
  * `linked_error_uri` is intentionally not parsed here -- it's an OAuth 2.1
  * informational field the broker passes through for server-side log

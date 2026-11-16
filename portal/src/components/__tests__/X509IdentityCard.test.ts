@@ -3,7 +3,7 @@
  *
  * Regression for the deployed "VOMS proxy details flips on every click" bug:
  * the accordion starts a fetch on expand, but a response landing AFTER the
- * accordion has collapsed (or after a newer expand) used to be applied
+ * accordion has collapsed (or after a newer expand) would be applied
  * anyway — so with slow responses (and a backend whose
  * /v1/x509/proxy/status answer varies per request across replicas) the chip
  * was rewritten exactly at collapse time, one fetch behind the clicks,

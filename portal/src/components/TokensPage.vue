@@ -5,7 +5,7 @@
  * enforced revocation. Interactive browser use never touches this page —
  * the portal's own OIDC login (see ../lib/auth.ts, docs/auth.md) handles that
  * transparently. This page exists for clients like Claude Desktop that can't
- * do OAuth discovery yet.
+ * do OAuth discovery.
  *
  * CRITICAL SECURITY NOTE: the minted token value only ever lives in
  * MintTokenDialog.vue's `mintedToken` for the lifetime of the mint dialog. It is cleared the moment
@@ -89,7 +89,7 @@ async function handleRevoke() {
   revokeError.value = null;
   try {
     await revokeToken(lookupId);
-    // Revoking no longer removes the row (PR #28's behavior) -- it stays
+    // Revoking does not remove the row -- it stays
     // listed with a "revoked" status, so patch it in place rather than
     // refetching the whole list.
     const row = tokens.value.find((t) => t.lookup_id === lookupId);

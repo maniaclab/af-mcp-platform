@@ -49,7 +49,7 @@ describe('resolvePoweredBy', () => {
   });
 
   it('resolves an x509 entry through the providers list like any other alias', () => {
-    // Since #182 x509 is an ordinary identity_providers entry — its alias
+    // x509 is an ordinary identity_providers entry (#182) — its alias
     // resolves against the providers list, linkage tracked, pointing at the
     // Identities page (the single home for x509 credential UX).
     const providers = [

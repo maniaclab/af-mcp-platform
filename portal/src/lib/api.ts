@@ -672,8 +672,8 @@ export interface KrbTicketMetadata {
   renew_until: string | null;
   // How the ticket was actually obtained (KrbTokenProvider's fallback tier:
   // "cache" | "vault" | "renew" | "keytab_remint" | "password_mint" |
-  // "keytab_link") -- null only for a ticket minted before the broker
-  // started returning this field.
+  // "keytab_link") -- null only for a ticket whose record carries no
+  // source.
   source: string | null;
 }
 
@@ -781,9 +781,10 @@ export async function linkServiceXToken(
 // ---------------------------------------------------------------------------
 // Tokens — POST/GET/DELETE /v1/tokens. Mints a broker-issued identity PAT
 // (issue #144 step 2a) -- see docs/auth.md's "Programmatic client bootstrap"
-// section. Replaces the RFC 8693 token-exchange design (issue #24/#115):
-// `lookup_id` replaces `jti`, `created_at` replaces `issued_at`, `expires_at`
-// is nullable (a never-expiring PAT), and `last_used_at` is now populated.
+// section. Unlike the RFC 8693 token-exchange design (issue #24/#115),
+// rows carry `lookup_id` (not `jti`) and `created_at` (not `issued_at`),
+// `expires_at` is nullable (a never-expiring PAT), and `last_used_at` is
+// populated.
 // ---------------------------------------------------------------------------
 
 /** POST /v1/tokens response. `token` is present ONLY here — the broker never
@@ -809,7 +810,7 @@ export interface MintedToken {
 
 /** GET /v1/tokens row — no `token` field, by design. `revoked_at` is null
  * until DELETE /v1/tokens/{lookup_id} is called -- revoked rows stay listed
- * (rather than disappearing, as PR #28 did) so the portal can show a
+ * (rather than disappearing) so the portal can show a
  * revoked/active/expired status; see tokenDisplay.ts's tokenStatus().
  * `last_used_at` is null until the PAT has authenticated at least one
  * request on /mcp (throttled server-side -- see token_registry.py -- so it

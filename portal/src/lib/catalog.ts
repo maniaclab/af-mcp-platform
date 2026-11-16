@@ -17,7 +17,7 @@ import {
 
 /** What a server card's "Powered by" affordance should show. */
 export interface PoweredBy {
-  /** "identity" -- an identity_providers entry (x509 included: since #182
+  /** "identity" -- an identity_providers entry (x509 included: per #182
    *  it is an ordinary entry whose alias appears in the providers list);
    *  "none" -- auth_type "none", no user credential required at all. */
   kind: 'identity' | 'none';
