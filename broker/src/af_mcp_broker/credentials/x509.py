@@ -393,7 +393,6 @@ class X509Provider(CredentialProvider):
             "x509.linked",
             subject=principal.subject,
             target=target,
-            dn=minted.dn,
             not_after=minted.not_after,
         )
         return await self._cache_stored_record(principal, target, record)
@@ -456,10 +455,12 @@ class X509Provider(CredentialProvider):
         self._log.info(
             "x509.proxy_minted",
             subject=subject,
-            dn=minted.dn,
             not_after=minted.not_after,
             source="voms_token_service",
         )
+        # The DN carries the holder's real name, so it is debug-only; the
+        # info lines above say what happened without it.
+        self._log.debug("x509.proxy_dn", subject=subject, dn=minted.dn)
         return X509Proxy(
             proxy_pem=SecretStr(minted.pem),
             dn=minted.dn,

@@ -745,7 +745,7 @@ fields; they change only with a release note.
 | `claimed_subject` | A `sub` read from a token whose signature was not verified (`jwt.expired`, `jwt.audience_mismatch`). Caller-controlled, so never in `subject`. |
 
 Tokens, passphrases, passwords, keytabs, proxies and request or response
-bodies are never logged.
+bodies are never logged. A certificate DN is logged only at `debug` (`x509.proxy_dn`).
 
 ## HTTP request lines
 

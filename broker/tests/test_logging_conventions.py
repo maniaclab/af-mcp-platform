@@ -6,7 +6,8 @@ statically over every ``logger.<level>("event", field=...)`` call:
 - the event is a dotted ``component.action`` literal;
 - no field uses a name the conventions replace (``principal_id`` for
   ``subject``, ``message`` for ``detail``, ...) or that could carry a secret;
-- an event named ``*failed`` is never logged below ``warning``.
+- an event named ``*failed`` is never logged below ``warning``;
+- personal data (a certificate DN, an email) appears on debug lines only.
 """
 
 from __future__ import annotations
@@ -52,6 +53,11 @@ _FORBIDDEN_FIELDS = frozenset(
         "query_string",
     }
 )
+
+# Personal data: a certificate DN carries the holder's real name, an email
+# identifies a person. Allowed on a debug line only; info and above are kept
+# by log pipelines and read by more people than debugging is.
+_PII_FIELDS = frozenset({"dn", "email", "full_name", "given_name", "family_name"})
 
 # Calls whose event is built at runtime. ``(file, source of the first
 # argument)``. ``self._event`` is ``f"{component}.shared_state_unavailable"``,
@@ -152,6 +158,14 @@ def _field_violations(calls: list[LogCall]) -> dict[str, frozenset[str]]:
     return {event: frozenset(fields) for event, fields in found.items()}
 
 
+def _pii_violations(calls: list[LogCall]) -> set[str]:
+    return {
+        call.event or call.event_source
+        for call in calls
+        if call.level != "debug" and _PII_FIELDS.intersection(call.fields)
+    }
+
+
 def _level_violations(calls: list[LogCall]) -> set[str]:
     return {
         call.event
@@ -180,6 +194,10 @@ def test_failed_events_log_at_warning_or_above() -> None:
     assert _level_violations(_all_calls()) == set()
 
 
+def test_personal_data_fields_are_logged_at_debug_only() -> None:
+    assert _pii_violations(_all_calls()) == set()
+
+
 def test_scanner_flags_each_kind_of_outlier() -> None:
     calls = scan_source(
         """
@@ -190,6 +208,8 @@ logger.warning(f'{x}.thing')
 logger.info('jwks.fetch_failed', principal_id=p, message='m')
 log('http.exception', status_code=500)
 logger.error('audit')
+logger.info('x509.linked', dn=d)
+logger.debug('x509.proxy_dn', dn=d)
 """
     )
     assert _event_violations(calls) == {
@@ -201,3 +221,4 @@ logger.error('audit')
         "jwks.fetch_failed": frozenset({"principal_id", "message"})
     }
     assert _level_violations(calls) == {"jwks.fetch_failed"}
+    assert _pii_violations(calls) == {"x509.linked"}
