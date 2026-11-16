@@ -247,7 +247,7 @@ class TestPrimeJwksCache:
 
         assert [
             (entry["event"], entry["log_level"], entry["error"]) for entry in logs
-        ] == [("jwks_cache_prime_failed", "warning", "keycloak unreachable")]
+        ] == [("jwks.cache_prime_failed", "warning", "keycloak unreachable")]
 
     async def test_a_successful_fetch_primes_the_cache(
         self, monkeypatch: pytest.MonkeyPatch

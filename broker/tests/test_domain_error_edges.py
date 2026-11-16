@@ -447,7 +447,7 @@ async def test_mcp_edge_logs_the_dedicated_event_for_a_credential_429(
         await _make_client_factory(spec, registry, settings, _OPEN_POLICY)()
 
     [event] = events
-    assert event["event"] == "rate_limit_exceeded"
+    assert event["event"] == "rate_limit.exceeded"
     assert event["subject"] == principal.subject
     assert event["limiter"] == "credential_service"
     assert event["retry_after_seconds"] == 17

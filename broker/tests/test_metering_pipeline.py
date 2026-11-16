@@ -254,7 +254,7 @@ async def test_worker_survives_audit_write_failure_and_reports_it_loudly(
     # capture_logs diverts every structlog event, the audit lines included.
     assert [e["request_id"] for e in logs if e["event"] == "audit"] == ["next"]
     assert _sample("af_mcp_metering_worker_errors_total") == errors_before + 1
-    (failure,) = [e for e in logs if e["event"] == "metering_audit_write_failed"]
+    (failure,) = [e for e in logs if e["event"] == "metering.audit_write_failed"]
     assert failure["log_level"] == "error"
     assert failure["exc_info"] is True
     assert failure["audit_id"] == "lost-1"

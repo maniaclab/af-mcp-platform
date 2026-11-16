@@ -378,7 +378,7 @@ def test_rate_limited_logs_the_dedicated_event(
         json={"username": "tuser", "password": "hunter2"},
     )
 
-    [event] = [e for e in events if e["event"] == "rate_limit_exceeded"]
+    [event] = [e for e in events if e["event"] == "rate_limit.exceeded"]
     assert event["limiter"] == "krb5_service"
     assert event["retry_after_seconds"] == 30
 

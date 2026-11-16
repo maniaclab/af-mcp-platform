@@ -60,8 +60,8 @@ def build_dev_bypass_principal(settings: Settings) -> Principal | None:
     # bad JSON or missing required keys — propagate as-is.
     dev_principal = build_dev_principal(settings.dev_insecure_principal)
     logger.warning(
-        "dev_auth_bypass_active",
-        message="AUTH BYPASSED — DO NOT USE IN PRODUCTION",
+        "dev_bypass.active",
+        detail="AUTH BYPASSED — DO NOT USE IN PRODUCTION",
         oidc_issuer=settings.oidc_issuer,
         unixname=dev_principal.unixname,
         uid=dev_principal.uid,

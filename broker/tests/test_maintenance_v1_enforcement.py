@@ -193,6 +193,6 @@ def test_store_unavailable_is_logged_at_error_with_traceback_and_counted(
         assert resp.status_code == 200
         assert _store_unavailable_count() == before + 1
 
-    matching = [c for c in calls if c["event"] == "maintenance_store_unavailable"]
+    matching = [c for c in calls if c["event"] == "maintenance.store_unavailable"]
     assert len(matching) == 1
     assert "maintenance store unreachable" in matching[0]["error"]

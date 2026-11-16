@@ -141,14 +141,14 @@ You should see a very loud warning line at startup:
 
 ```json
 {"message": "AUTH BYPASSED — DO NOT USE IN PRODUCTION",
- "event": "dev_auth_bypass_active",
+ "event": "dev_bypass.active",
  "oidc_issuer": "http://localhost:8081/realms/x",
  "unixname": "devuser", "uid": 1000,
  "level": "warning", ...}
 ```
 
 Every response is stamped with `X-Dev-Bypass: true` and every bypassed
-request writes an `event="dev_auth_bypass_used"` log line. Refresh the
+request writes an `event="dev_bypass.used"` log line. Refresh the
 portal — the Vue islands now render with the dev principal.
 
 > **Do not use this in production.** The broker will refuse to start

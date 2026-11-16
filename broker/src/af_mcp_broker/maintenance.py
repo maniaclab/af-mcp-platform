@@ -408,7 +408,7 @@ async def check_not_maintenance_or_fail_open(
         # .warning()) -- ERROR level with a full traceback, same idiom
         # identity.py already uses for _fetch_jwks's jwks_fetch_failed.
         logger.exception(
-            "maintenance_store_unavailable",
+            "maintenance.store_unavailable",
             error=str(exc),
             subject=principal.subject,
         )

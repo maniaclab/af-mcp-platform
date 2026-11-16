@@ -50,7 +50,7 @@ def test_http_exception_logs_5xx_at_error_and_4xx_at_info(
             resp = client.post("/v1/credential", json={"target": _TARGET})
 
     assert resp.status_code == status_code
-    [entry] = [e for e in logs if e["event"] == "http_exception"]
+    [entry] = [e for e in logs if e["event"] == "http.exception"]
     assert entry["log_level"] == level
     assert entry["status_code"] == status_code
     assert entry["path"] == "/v1/credential"

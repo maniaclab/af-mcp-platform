@@ -318,8 +318,8 @@ async def mint_token(
     if body.never_expires:
         expires_at: float | None = None
         logger.warning(
-            "pat_minted_without_expiry",
-            principal_id=principal.subject,
+            "tokens.pat_minted_without_expiry",
+            subject=principal.subject,
             lookup_id=lookup_id,
         )
     else:
@@ -350,7 +350,7 @@ async def mint_token(
         )
     except DuplicateNameError as exc:
         logger.warning(
-            "token_mint_duplicate_name", principal_id=principal.subject, name=name
+            "tokens.mint_duplicate_name", subject=principal.subject, name=name
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)

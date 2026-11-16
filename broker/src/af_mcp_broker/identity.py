@@ -71,7 +71,7 @@ async def _fetch_jwks(
         resp.raise_for_status()
         return resp.json()["keys"]
     except Exception as exc:
-        logger.exception("jwks_fetch_failed", uri=jwks_uri, error=str(exc))
+        logger.exception("jwks.fetch_failed", uri=jwks_uri, error=str(exc))
         raise JwksUnavailableError(
             f"Unable to reach JWKS endpoint: {jwks_uri}"
         ) from exc
@@ -104,11 +104,11 @@ async def get_jwks(
             keys = await _fetch_jwks(uri, http_client)
         except JwksUnavailableError:
             if entry is not None:
-                logger.warning("jwks_refresh_failed_serving_stale", uri=uri)
+                logger.warning("jwks.refresh_failed_serving_stale", uri=uri)
                 return entry.keys
             raise
         _jwks_cache[uri] = _JwksEntry(keys=keys, fetched_at=now)
-        logger.debug("jwks_cache_refreshed", uri=uri, key_count=len(keys))
+        logger.debug("jwks.cache_refreshed", uri=uri, key_count=len(keys))
         return keys
 
 
@@ -359,7 +359,7 @@ async def get_principal(
     has no last-known value to fall back on and cannot authenticate at all.
 
     *caller_path* is purely diagnostic: the request path this validation is
-    gating, attached to the ``jwt_validation_failed`` log line below so a
+    gating, attached to the ``jwt.validation_failed`` log line below so a
     rejection here can be told apart from an unrelated one logged moments
     later by a different concurrent request -- this function otherwise gives
     no indication of which endpoint invoked it. Never affects the outcome.
@@ -378,7 +378,7 @@ async def get_principal(
     except jwt.ExpiredSignatureError as exc:
         error = exc
         expired = True
-        logger.info("jwt_expired", subject=_peek_sub(token))
+        logger.info("jwt.expired", claimed_subject=_peek_sub(token))
     except jwt.InvalidAudienceError as exc:
         # Caught ahead of the broader InvalidTokenError below -- it's a
         # subclass, so ordering matters. Everything else about the token
@@ -395,15 +395,15 @@ async def get_principal(
         return principal
 
     logger.warning(
-        "jwt_validation_failed",
+        "jwt.validation_failed",
         error=str(error) if error else "no matching key",
         caller_path=caller_path,
     )
     if wrong_audience:
         correlation_id = current_correlation_id()
         logger.warning(
-            "jwt_audience_mismatch",
-            subject=_peek_sub(token),
+            "jwt.audience_mismatch",
+            claimed_subject=_peek_sub(token),
             correlation_id=correlation_id,
             actual_audience=_peek_aud(token),
             expected_audience=settings.oidc_audience,

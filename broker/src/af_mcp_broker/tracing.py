@@ -104,7 +104,7 @@ def init_tracing(settings: Settings) -> None:
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(provider)
     _tracer_provider = provider
-    logger.info("tracing_initialized", endpoint=settings.otel_exporter_otlp_endpoint)
+    logger.info("tracing.initialized", endpoint=settings.otel_exporter_otlp_endpoint)
 
 
 def shutdown_tracing() -> None:

@@ -1289,7 +1289,7 @@ another JWT:
    inspects or acts on. Expiry defaults to 90 days
    (`Settings.pat_default_expiry_days`, `PAT_DEFAULT_EXPIRY_DAYS`);
    never-expiring is an explicit opt-in (`never_expires: true` in the mint
-   request), logged loudly (`pat_minted_without_expiry`) and never the
+   request), logged loudly (`tokens.pat_minted_without_expiry`) and never the
    default.
 2. **List** — `GET /v1/tokens` shows metadata for PATs minted through this
    endpoint, including ones already revoked (shown with a revoked status

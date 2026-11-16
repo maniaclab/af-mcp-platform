@@ -495,7 +495,7 @@ class PostgresUsageStore(UsageStore):
             ):
                 return False
             status = await conn.execute(_ROLLUP, cutoff)
-        logger.info("usage_rollup_completed", status=status, cutoff=cutoff.isoformat())
+        logger.info("usage.rollup_completed", status=status, cutoff=cutoff.isoformat())
         return True
 
     async def _rollup_loop(self) -> None:
@@ -505,5 +505,5 @@ class PostgresUsageStore(UsageStore):
             try:
                 await self.rollup_and_prune(self._retention_days)
             except Exception as exc:  # noqa: BLE001 -- retry next interval
-                logger.warning("usage_rollup_failed", error=str(exc))
+                logger.warning("usage.rollup_failed", error=str(exc))
             await asyncio.sleep(self._rollup_interval_seconds)

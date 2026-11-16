@@ -1195,7 +1195,7 @@ async def test_rate_limited_call_logs_the_dedicated_event(
         await mw.on_call_tool(context, _CallNextRecorder())
 
     [event] = events
-    assert event["event"] == "rate_limit_exceeded"
+    assert event["event"] == "rate_limit.exceeded"
     assert event["subject"] == principal.subject
     assert event["limiter"] == "tool_rate_limit"
     assert event["rule"] == "1/60s"

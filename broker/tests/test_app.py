@@ -189,7 +189,7 @@ def test_stateful_multi_replica_warns_at_startup(
         pass
 
     matches = [
-        kwargs for event, kwargs in events if event == "mcp_stateful_multi_replica"
+        kwargs for event, kwargs in events if event == "mcp.stateful_multi_replica"
     ]
     assert matches, events
     assert matches[0]["replica_count"] == 2
@@ -198,7 +198,7 @@ def test_stateful_multi_replica_warns_at_startup(
 # ---------------------------------------------------------------------------
 # Maintenance-mode backend startup check: the in_memory backend is
 # process-local, so it can't propagate a toggle across replicas -- warn
-# (never fail), the same shape as the mcp_stateful_multi_replica check above.
+# (never fail), the same shape as the mcp.stateful_multi_replica check above.
 # ---------------------------------------------------------------------------
 
 
@@ -225,7 +225,7 @@ def test_warns_when_in_memory_maintenance_backend_with_multiple_replicas(
     matches = [
         kwargs
         for event, kwargs in events
-        if event == "maintenance_mode_in_memory_multi_replica"
+        if event == "maintenance.in_memory_multi_replica"
     ]
     assert matches, events
     assert matches[0]["replica_count"] == 3
@@ -260,7 +260,7 @@ def test_maintenance_mode_warning_does_not_fire_at_safe_replica_counts(
         pass
 
     assert not any(
-        event == "maintenance_mode_in_memory_multi_replica" for event, _ in events
+        event == "maintenance.in_memory_multi_replica" for event, _ in events
     )
 
 
@@ -288,7 +288,7 @@ def test_maintenance_mode_warning_does_not_fire_for_replica_visible_backend(
         pass
 
     assert not any(
-        event == "maintenance_mode_in_memory_multi_replica" for event, _ in events
+        event == "maintenance.in_memory_multi_replica" for event, _ in events
     )
 
 
@@ -389,7 +389,7 @@ def test_stateful_multi_replica_warning_does_not_fire_when_safe(
     with app_client_factory():
         pass
 
-    assert not any(event == "mcp_stateful_multi_replica" for event, _ in events)
+    assert not any(event == "mcp.stateful_multi_replica" for event, _ in events)
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +428,9 @@ def test_per_replica_state_escape_hatch_warns_at_startup(
     with app_client_factory():
         pass
 
-    matches = [kwargs for event, kwargs in events if event == "per_replica_state"]
+    matches = [
+        kwargs for event, kwargs in events if event == "shared_state.per_replica_state"
+    ]
     assert matches, events
     assert matches[0]["replica_count"] == 2
 

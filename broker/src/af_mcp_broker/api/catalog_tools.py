@@ -233,7 +233,7 @@ async def list_service_tools(
                 # the catalog's "rejected" link state, not "not_linked".
                 status = "unauthorized" if exc.rejected else "not_linked"
                 logger.info(
-                    "catalog.tools_list_failed",
+                    "catalog.tools_list_skipped",
                     subject=principal.subject,
                     target=spec.name,
                     status=status,
@@ -256,9 +256,18 @@ async def list_service_tools(
             if status == "ok":
                 if skip_reason is None:
                     cache.put(spec.name, tools)
-            else:
-                logger.info(
+            elif status == "unavailable":
+                logger.warning(
                     "catalog.tools_list_failed",
+                    subject=principal.subject,
+                    target=spec.name,
+                    status=status,
+                )
+            else:
+                # not_linked / unauthorized: the caller's own credential
+                # state, an expected outcome rather than a failure.
+                logger.info(
+                    "catalog.tools_list_skipped",
                     subject=principal.subject,
                     target=spec.name,
                     status=status,

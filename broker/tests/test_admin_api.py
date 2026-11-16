@@ -166,7 +166,7 @@ def test_toggle_is_audited_and_logged(
     assert audit["action_type"] == "state_change"
     assert audit["outcome"] == "success"
     assert "upgrading" in audit["args_summary"]
-    (info,) = [e for e in logs if e["event"] == "maintenance_mode_changed"]
+    (info,) = [e for e in logs if e["event"] == "maintenance.mode_changed"]
     assert info["log_level"] == "info"
     assert info["subject"] == "admin-sub"
     assert info["enabled"] is enabled

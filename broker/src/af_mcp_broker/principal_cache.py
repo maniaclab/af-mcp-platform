@@ -397,7 +397,7 @@ class PrincipalCache:
         except Exception:  # noqa: BLE001 — a backend outage at cold start is a miss, not an error; see module docstring
             self._log.warning(
                 "principal_cache.backend_read_failed_treated_as_miss",
-                principal_id=principal_id,
+                subject=principal_id,
                 exc_info=True,
             )
             return None
@@ -468,7 +468,7 @@ class PrincipalCache:
         except Exception:  # noqa: BLE001 — persistence failing must never fail a successful resolve
             self._log.error(
                 "principal_cache.persist_failed",
-                principal_id=principal_id,
+                subject=principal_id,
                 exc_info=True,
             )
             return previous.persisted_at if previous is not None else float("-inf")
@@ -504,7 +504,7 @@ class PrincipalCache:
         except Exception:  # noqa: BLE001 — persistence failing must never turn a rejection into access
             self._log.error(
                 "principal_cache.rejection_persist_failed",
-                principal_id=principal_id,
+                subject=principal_id,
                 exc_info=True,
             )
 
@@ -564,7 +564,7 @@ class PrincipalCache:
                 self._rejections[principal_id] = (now, exc.reason)
                 self._log.warning(
                     "principal_cache.principal_rejected",
-                    principal_id=principal_id,
+                    subject=principal_id,
                     reason=exc.reason,
                 )
                 if not already_persisted:
@@ -574,7 +574,7 @@ class PrincipalCache:
                 if entry is None:
                     self._log.error(
                         "principal_cache.resolve_failed_no_cached_value",
-                        principal_id=principal_id,
+                        subject=principal_id,
                         exc_info=True,
                     )
                     raise PrincipalUnavailableError(principal_id) from None
@@ -583,7 +583,7 @@ class PrincipalCache:
                 if staleness > self._max_staleness:
                     self._log.error(
                         "principal_cache.stale_past_max_serving_failed_closed",
-                        principal_id=principal_id,
+                        subject=principal_id,
                         staleness_seconds=staleness,
                         max_staleness_seconds=self._max_staleness,
                         exc_info=True,
@@ -592,7 +592,7 @@ class PrincipalCache:
 
                 self._log.warning(
                     "principal_cache.refresh_failed_serving_stale",
-                    principal_id=principal_id,
+                    subject=principal_id,
                     staleness_seconds=staleness,
                     exc_info=True,
                 )

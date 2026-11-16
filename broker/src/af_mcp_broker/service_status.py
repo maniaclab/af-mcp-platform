@@ -128,7 +128,7 @@ async def service_status(
             subject=principal.subject,
             target=spec.name,
             status="permission_required",
-            request_id=correlation_id,
+            correlation_id=correlation_id,
         )
         return (
             "permission_required",
@@ -150,7 +150,7 @@ async def service_status(
             subject=principal.subject,
             target=spec.name,
             status="misconfigured",
-            request_id=correlation_id,
+            correlation_id=correlation_id,
         )
         return (
             "misconfigured",
@@ -181,7 +181,7 @@ async def service_status(
             subject=principal.subject,
             target=spec.name,
             status="misconfigured",
-            request_id=correlation_id,
+            correlation_id=correlation_id,
         )
         return "misconfigured", STATUS_DETAILS["misconfigured"], correlation_id, None
 

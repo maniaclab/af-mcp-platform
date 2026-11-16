@@ -113,8 +113,8 @@ def _warn_replica_hazards(settings: Settings) -> None:
     # front of more than one replica.
     if not settings.mcp_stateless_http and multi_replica:
         logger.warning(
-            "mcp_stateful_multi_replica",
-            message=(
+            "mcp.stateful_multi_replica",
+            detail=(
                 "mcp_stateless_http=False with more than one broker replica: "
                 "streamable-HTTP sessions are in-process state, so a load "
                 "balancer without session affinity will route a session's "
@@ -136,8 +136,8 @@ def _warn_replica_hazards(settings: Settings) -> None:
     # legitimately wants this default with no extra infra.
     if settings.maintenance_mode_backend == "in_memory" and multi_replica:
         logger.warning(
-            "maintenance_mode_in_memory_multi_replica",
-            message=(
+            "maintenance.in_memory_multi_replica",
+            detail=(
                 "maintenance_mode_backend=in_memory with more than one "
                 "broker replica: toggling maintenance mode only affects the "
                 "replica that handled the toggle, so other replicas keep "
@@ -153,8 +153,8 @@ def _warn_replica_hazards(settings: Settings) -> None:
     # visible in pod logs, never silent.
     if not settings.shared_state_url and multi_replica:
         logger.warning(
-            "per_replica_state",
-            message=(
+            "shared_state.per_replica_state",
+            detail=(
                 "allow_per_replica_state with more than one broker replica "
                 "and no shared_state_url: the unlock brute-force budget is "
                 "multiplied by the replica count and replica-local caches "
@@ -310,7 +310,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
 
         await prime_jwks_cache(settings, http_client)
         logger.info(
-            "af_mcp_broker_started",
+            "broker.started",
             version=__version__,
             oidc_issuer=settings.oidc_issuer,
             policy_file=settings.policy_file,
@@ -329,7 +329,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[dict[str, Any], None]
             mcp_app.lifespan(application)
         )
         yield dict(mcp_lifespan_state or {})
-    logger.info("af_mcp_broker_stopped")
+    logger.info("broker.stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +506,7 @@ try:
 except ImportError:
     # prometheus-fastapi-instrumentator is an optional dependency. The broker
     # functions correctly without it; metrics simply won't be available.
-    logger.debug("prometheus_instrumentator_not_installed")
+    logger.debug("metrics.instrumentator_not_installed")
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +523,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> Respo
     # expected refusal (auth, validation, rate limit) and stays at info.
     log = logger.error if exc.status_code >= 500 else logger.info
     log(
-        "http_exception",
+        "http.exception",
         status_code=exc.status_code,
         detail=exc.detail,
         path=request.url.path,
@@ -649,7 +649,7 @@ async def _validation_error_handler(
     # Bad request bodies raise RequestValidationError, which FastAPI's
     # default handler already turns into a 422.
     logger.error(
-        "internal_validation_error",
+        "http.internal_validation_error",
         path=request.url.path,
         errors=exc.errors(),
     )

@@ -1,4 +1,4 @@
-"""The ``rate_limit_exceeded`` log event every ``/v1`` 429 emits beside the generic ``http_exception`` line."""
+"""The ``rate_limit.exceeded`` log event every ``/v1`` 429 emits beside the generic ``http.exception`` line."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def test_log_rate_limited_emits_one_searchable_event(
     )
 
     [event] = events
-    assert event["event"] == "rate_limit_exceeded"
+    assert event["event"] == "rate_limit.exceeded"
     assert event["subject"] == "user-1"
     assert event["limiter"] == "tool_rate_limit"
     assert event["rule"] == "1/60s"
@@ -85,8 +85,8 @@ def test_v1_429_logs_the_dedicated_event_beside_the_generic_line(
         resp = client.post("/v1/credential", json={"target": _TARGET})
 
     assert resp.status_code == 429
-    [event] = [e for e in events if e["event"] == "rate_limit_exceeded"]
+    [event] = [e for e in events if e["event"] == "rate_limit.exceeded"]
     assert event["subject"] == _SUBJECT
     assert event["limiter"] == limiter
     assert event["retry_after_seconds"] == retry_after
-    assert [e for e in generic if e["event"] == "http_exception"]
+    assert [e for e in generic if e["event"] == "http.exception"]

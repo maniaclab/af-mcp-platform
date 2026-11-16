@@ -25,7 +25,7 @@ class RateLimitedHTTPException(HTTPException):
     renders the body), so a client backs off the same way whichever limit it
     hit. ``/mcp`` carries the same two values in the tool error message; see
     ``retry_after.py``. *limiter* names the limiter that refused, for the
-    ``rate_limit_exceeded`` event the handler logs.
+    ``rate_limit.exceeded`` event the handler logs.
     """
 
     def __init__(
