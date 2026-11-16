@@ -553,7 +553,7 @@ express it.
 # Keycloak user fields the admin user search joins into a display name -- always
 # set, same visibility rationale as POSIX_UID_ATTRIBUTE below.
 - name: ADMIN_USER_DISPLAY_NAME_ATTRIBUTES
-  value: {{ .Values.broker.admin.userDisplayName.attributes | toJson | quote }}
+  value: {{ join "," .Values.broker.admin.userDisplayName.attributes | quote }}
 {{- include "af-mcp-platform.validateOtlp" . }}
 {{- if or .Values.broker.tracing.enabled .Values.broker.metrics.otlp.enabled .Values.broker.usageEvents.otlp.enabled }}
 # OTLP transport (broker.otlp), rendered once for every enabled OpenTelemetry

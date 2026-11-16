@@ -105,6 +105,7 @@ broker:
       # Keycloak user fields (e.g. firstName, lastName) or custom user
       # attributes joined with spaces into the name the search shows and
       # matches on. A user with none of them set is shown by username.
+      # Rendered comma-separated as ADMIN_USER_DISPLAY_NAME_ATTRIBUTES.
       attributes:
         - firstName
         - lastName

@@ -987,3 +987,28 @@ def test_access_groups_defaults_to_empty():
 
 def test_access_groups_accepts_a_list_and_normalises_entries():
     assert Settings(access_groups=[" a ", "", "b"]).access_groups == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("firstName", ["firstName"], id="single"),
+        pytest.param("firstName, lastName", ["firstName", "lastName"], id="trimmed"),
+        pytest.param("a,,b, ,", ["a", "b"], id="empty-entries-dropped"),
+        pytest.param("", [], id="empty-string"),
+    ],
+)
+def test_admin_user_display_name_attributes_parses_a_comma_list_from_the_environment(
+    monkeypatch, raw, expected
+):
+    monkeypatch.setenv("ADMIN_USER_DISPLAY_NAME_ATTRIBUTES", raw)
+    assert Settings().admin_user_display_name_attributes == expected
+
+
+def test_admin_user_display_name_attributes_defaults_to_first_and_last_name():
+    assert Settings().admin_user_display_name_attributes == ["firstName", "lastName"]
+
+
+def test_admin_user_display_name_attributes_accepts_a_list_and_normalises_entries():
+    settings = Settings(admin_user_display_name_attributes=[" a ", "", "b"])
+    assert settings.admin_user_display_name_attributes == ["a", "b"]

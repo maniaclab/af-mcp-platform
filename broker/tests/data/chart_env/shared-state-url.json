@@ -1,6 +1,6 @@
 {
   "env": {
-    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "[\"firstName\",\"lastName\"]",
+    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "firstName,lastName",
     "BROKER_TOKEN_ISSUER": "https://mcp.example.com",
     "KEYCLOAK_ADMIN_CLIENT_ID": "example-keycloak-admin-client",
     "KEYCLOAK_ADMIN_CLIENT_SECRET": "<secret:example-keycloak-admin-client-secret/keycloak-admin-client-secret>",

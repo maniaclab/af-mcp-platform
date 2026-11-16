@@ -1,7 +1,7 @@
 {
   "env": {
     "ACCESS_GROUPS": "/example/af,/example/ops",
-    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "[\"firstName\",\"lastName\"]",
+    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "firstName,lastName",
     "BROKER_ADDITIONAL_PUBLIC_KEYS_DIR": "/etc/af-mcp/identity-token-public-keys",
     "BROKER_PUBLIC_ORIGIN": "https://portal.example.com",
     "BROKER_SIGNING_KEY_FILE": "/etc/af-mcp/identity-token/signing-key.pem",
