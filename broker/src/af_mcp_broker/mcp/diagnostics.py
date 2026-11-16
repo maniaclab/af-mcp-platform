@@ -32,6 +32,7 @@ from af_mcp_broker.service_status import (
     service_status,
 )
 from af_mcp_broker.usage.summary import (
+    TOKEN_ESTIMATE_CAVEAT,
     UsageResponse,
     build_usage_summary,
 )
@@ -483,6 +484,16 @@ def register_diagnostic_tools(
 
     @mcp.tool(
         name=USAGE_TOOL_NAME,
+        description=(
+            "Return the caller's own tool-call usage over a trailing window. "
+            "The same data `GET /v1/usage` serves: window totals plus "
+            "per-service, per-day and per-content-type aggregates of the "
+            "caller's tool calls (and nobody else's -- the subject comes from "
+            "the authenticated principal, never a parameter). Relay this "
+            f"caveat to the user: {TOKEN_ESTIMATE_CAVEAT} `days` is the "
+            "trailing window in UTC calendar days (1..365, today inclusive). "
+            "Needs no permission of its own and never contacts a service."
+        ),
         annotations=ToolAnnotations(
             title="Usage summary",
             read_only_hint=True,
@@ -492,20 +503,6 @@ def register_diagnostic_tools(
     async def _usage(
         days: Annotated[int, Field(ge=1, le=365)] = 30,
     ) -> UsageResponse:
-        """Return the caller's own tool-call usage over a trailing window.
-
-        The same data `GET /v1/usage` serves: window totals plus
-        per-service, per-day and per-content-type aggregates of the caller's tool calls (and
-        nobody else's -- the subject comes from the authenticated
-        principal, never a parameter). Honesty caveats to relay to the
-        user: token counts are an ESTIMATE of the tool-result
-        content injected into the LLM client's context (text by a tiktoken
-        o200k count, images by Claude's vision-token rule) -- not
-        provider-reported usage, and not the user's full token volume.
-        `days` is the trailing window in UTC calendar days (1..365, today
-        inclusive). Needs no permission of its own and never contacts a
-        service.
-        """
         principal = await _require_principal()
         return await build_usage_summary(usage_store, principal.subject, days)
 

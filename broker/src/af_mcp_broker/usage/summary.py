@@ -4,13 +4,13 @@ The single implementation behind both ``GET /v1/usage`` (``api/usage.py``)
 and the ``af_usage`` MCP tool (``mcp/diagnostics.py``): store query and
 aggregation shaping live here so the two surfaces can never drift apart.
 
-Honesty caveats (repeated in both surfaces' descriptions): the token
-numbers are a tiktoken (o200k) ESTIMATE of what each tool result would
-inject into an LLM client's context -- not provider-reported usage, and not
-the user's full token volume (their prompts, the model's own output, and
-every non-tool token are invisible to the broker). Image tokens follow
-Anthropic's documented 28 px-patch rule on an assumed high-resolution tier
-(``audit/image_tokens.py``).
+Honesty caveats (``TOKEN_ESTIMATE_CAVEAT``, repeated in both surfaces'
+descriptions): the token numbers are an ESTIMATE of what each tool result
+would inject into an LLM client's context -- not provider-reported usage,
+and not the user's full token volume (their prompts, the model's own
+output, and every non-tool token are invisible to the broker). Image tokens
+follow Anthropic's documented 28 px-patch rule on an assumed
+high-resolution tier (``audit/image_tokens.py``).
 """
 
 from __future__ import annotations
@@ -24,11 +24,27 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.audit.image_tokens import ASSUMED_TIER
 from af_mcp_broker.usage.store import add_content
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit.measure import ContentMeasure
     from af_mcp_broker.usage.store import UsageAggregate, UsageStore
+
+# The single statement of how token numbers are estimated, shared by the
+# /v1/usage route description and the af_usage tool description; it mirrors
+# docs/observability.md ("How token counts are estimated"), and
+# tests/test_token_explainer_docs.py fails if it drifts from the code.
+TOKEN_ESTIMATE_CAVEAT = (
+    "Token counts are ESTIMATES of what tool results add to the LLM client's "
+    "context -- not provider-reported usage, and not the user's full token "
+    "volume. Text is counted with tiktoken o200k_base; images with Claude's "
+    f"vision rule (28x28 px patches, high-resolution tier: {ASSUMED_TIER.max_edge} "
+    f"px long edge, at most {ASSUMED_TIER.max_tokens} tokens per image); audio, "
+    "blobs and resource links record bytes only. `by_content_type` splits the "
+    "totals per content type and may sum to less than the totals for calls "
+    "recorded before the breakdown existed."
+)
 
 # ---------------------------------------------------------------------------
 # Response models

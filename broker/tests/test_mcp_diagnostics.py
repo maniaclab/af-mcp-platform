@@ -38,6 +38,7 @@ from af_mcp_broker.service_registry import (
     identity_provider_url,
 )
 from af_mcp_broker.usage import InMemoryUsageStore
+from af_mcp_broker.usage.summary import TOKEN_ESTIMATE_CAVEAT
 
 if TYPE_CHECKING:
     from af_mcp_broker.principal import Principal
@@ -966,3 +967,32 @@ async def test_af_list_mcp_servers_reports_docs_url_and_granting_groups(
     assert rows["open"]["status"] == "available"
     assert rows["open"]["granting_groups"] == []
     assert rows["open"]["docs_url"] == "https://docs.example.org/open"
+
+
+async def test_af_usage_tool_description_carries_the_token_estimate_caveat(
+    settings: Any, sig_key: Any, prime_jwks: Any, static_principal_cache: Any
+) -> None:
+    """The LLM-facing description states how tokens are estimated, from the one shared caveat."""
+    principal_cache, directory = static_principal_cache
+    directory.groups_by_subject["user-123"] = []
+    prime_jwks([sig_key.jwk])
+    token = sig_key.sign(make_claims())
+
+    mcp = build_aggregator(
+        ServiceRegistry(),
+        settings,
+        EntitlementPolicy(),
+        CredentialRegistry(),
+        **aggregator_inputs(),
+    )
+    async with (
+        run_aggregator_async(
+            mcp, path="/mcp", settings=settings, principal_cache=principal_cache
+        ) as server,
+        server.client(headers={"Authorization": f"Bearer {token}"}) as client,
+    ):
+        tools = await client.list_tools()
+
+    description = {t.name: t for t in tools}[USAGE_TOOL_NAME].description
+    assert description is not None
+    assert TOKEN_ESTIMATE_CAVEAT in description
