@@ -74,9 +74,10 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # The portal ships no favicon, and every browser asks for /favicon.ico on
-    # each page load. The 404 is the correct answer; the [error] "open()
-    # failed" line nginx writes for it is not a fault, so it is not logged.
+    # The portal's icon is an SVG each page links from its <head>; there is no
+    # /favicon.ico, yet some browsers still ask for it. The 404 is the correct
+    # answer; the [error] "open() failed" line nginx writes for it is not a
+    # fault, so it is not logged.
     location = /favicon.ico {
         log_not_found off;
         # Re-apply security headers so they aren't stripped by this block

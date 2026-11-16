@@ -28,6 +28,7 @@ import {
   UserRound,
 } from '@lucide/astro';
 import Fonts from '../components/Fonts.astro';
+import faviconUrl from '../assets/favicon.svg?url';
 import Footer from '../components/Footer.astro';
 import MaintenanceBanner from '../components/MaintenanceBanner.astro';
 import ThemeToggle from '../components/ThemeToggle.astro';
@@ -122,6 +123,7 @@ const currentPath = Astro.url.pathname.replace(/\/$/, '') || '/';
     <script is:inline set:html={THEME_INIT_SCRIPT} />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — AF MCP Platform</title>
+    <link rel="icon" type="image/svg+xml" href={faviconUrl} />
 
     <Fonts />
 
