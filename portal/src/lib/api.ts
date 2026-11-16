@@ -38,7 +38,7 @@ import type { StatusCta } from './serviceStatus';
 import { soonestExpiringToken, tokenStatus } from './tokenDisplay';
 
 // PUBLIC_BROKER_URL MUST include the `/v1` suffix when overridden
-// (e.g. https://mcp.af.uchicago.edu/v1). It replaces the base wholesale, so a
+// (e.g. https://mcp.example.org/v1). It replaces the base wholesale, so a
 // value without `/v1` would silently drop the API prefix. Default is the
 // same-origin `/v1` path.
 const API_BASE = (import.meta.env.PUBLIC_BROKER_URL ?? '/v1') as string;
@@ -242,7 +242,7 @@ export interface IdentityProvider {
   link_permission_denied?: boolean;
   /** Only ever set on a "servicex-token" entry: the URL
    * ServiceXIdentityCard.vue's "Get your ServiceX token" button links out
-   * to (operator-configured, e.g. "https://servicex.af.uchicago.edu/api-token").
+   * to (operator-configured, e.g. "https://servicex.example.org/api-token").
    * Null/absent hides the button. */
   external_login_url?: string | null;
 }

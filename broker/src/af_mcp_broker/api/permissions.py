@@ -146,7 +146,7 @@ class CatalogServer(BaseModel):
     # the registry entry leaves it undeclared. Surfaced as a machine-readable
     # field so a catalog consumer can reason about a service's governance
     # posture; the authoritative per-deployment assignment lives in the GitOps
-    # repo (maniaclab/flux_apps#32).
+    # repo.
     trust_tier: str | None
     # The service's own documentation link (ServiceSpec.docs_url), returned
     # for every status; None when the registry entry sets none.

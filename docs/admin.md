@@ -158,13 +158,13 @@ read -s -p "Bearer token: " MCP_BEARER_TOKEN
 export MCP_BEARER_TOKEN
 
 # Enable, with a reason
-curl -sS -X POST "https://mcp.af.uchicago.edu/v1/admin/maintenance" \
+curl -sS -X POST "https://mcp.example.org/v1/admin/maintenance" \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"enabled": true, "reason": "Scheduled Postgres upgrade, back by 14:00 UTC"}'
 
 # Disable
-curl -sS -X POST "https://mcp.af.uchicago.edu/v1/admin/maintenance" \
+curl -sS -X POST "https://mcp.example.org/v1/admin/maintenance" \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'

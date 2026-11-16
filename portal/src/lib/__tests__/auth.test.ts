@@ -123,9 +123,9 @@ describe('auth — OIDC configured', () => {
       },
       brokerOrigin: 'https://mcp.example.com',
       branding: {
-        shortName: 'UChicago AF Ops',
+        shortName: 'Example AF Ops',
         fullName: '',
-        facilityName: 'UChicago Analysis Facility',
+        facilityName: 'Example Analysis Facility',
         accentColor: '#800000',
         accentColorDark: '',
       },
@@ -248,9 +248,9 @@ describe('auth — OIDC configured', () => {
   it('getBranding() returns configured fields and DEFAULT_BRANDING for one left empty', async () => {
     const { getBranding } = await import('../auth');
     await expect(getBranding()).resolves.toEqual({
-      shortName: 'UChicago AF Ops',
+      shortName: 'Example AF Ops',
       fullName: DEFAULT_BRANDING.fullName,
-      facilityName: 'UChicago Analysis Facility',
+      facilityName: 'Example Analysis Facility',
       accentColor: '#800000',
     });
   });

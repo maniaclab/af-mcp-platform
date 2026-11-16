@@ -1032,7 +1032,7 @@ audit because a backend that cannot meet them cannot be registered.
 - **Spec.** Platform-specific.
 - **In this repo.** `docs/architecture.md`, "Trust tiers". The declaration in
   `services.yaml` is posture only; the authoritative per-deployment assignment
-  lives with each app's manifests in the GitOps repo (maniaclab/flux_apps#32).
+  lives with each app's manifests in the GitOps repo.
 
 ### P4: Hide infrastructure tools with `exclude_tools`
 
