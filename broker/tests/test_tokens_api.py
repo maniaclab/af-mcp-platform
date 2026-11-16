@@ -97,6 +97,8 @@ def test_mint_rejects_name_above_max_length(
     client, _ = app_client
     resp = _mint(client, name="x" * 201)
     assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"][0]["loc"] == ["body", "name"]
+    assert _listed_ids(client) == set()
 
 
 def test_mint_duplicate_name_returns_409(app_client: tuple[TestClient, dict]) -> None:
@@ -182,6 +184,7 @@ def test_mint_rejects_never_expires_and_expires_in_days_together(
     client, _ = app_client
     resp = _mint(client, never_expires=True, expires_in_days=5)
     assert resp.status_code == 422, resp.text
+    assert _listed_ids(client) == set()
 
 
 def test_mint_rejects_expires_in_days_below_minimum(
@@ -190,6 +193,8 @@ def test_mint_rejects_expires_in_days_below_minimum(
     client, _ = app_client
     resp = _mint(client, expires_in_days=0)
     assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"][0]["loc"] == ["body", "expires_in_days"]
+    assert _listed_ids(client) == set()
 
 
 def test_mint_rejects_expires_in_days_above_maximum(
@@ -198,6 +203,8 @@ def test_mint_rejects_expires_in_days_above_maximum(
     client, _ = app_client
     resp = _mint(client, expires_in_days=3651)
     assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"][0]["loc"] == ["body", "expires_in_days"]
+    assert _listed_ids(client) == set()
 
 
 def test_mint_note_round_trips_through_list(
@@ -396,6 +403,7 @@ def test_revoke_non_owned_lookup_id_403(
     make_principal: Callable[..., object],
 ) -> None:
     client, state = app_client
+    owner_sub = state["principal"].subject
     mint_resp = _mint(client, name="owned-by-first-user")
     lookup_id = mint_resp.json()["lookup_id"]
 
@@ -404,12 +412,20 @@ def test_revoke_non_owned_lookup_id_403(
     )
     revoke_resp = client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
     assert revoke_resp.status_code == 403, revoke_resp.text
+    assert revoke_resp.json() == {"detail": "Not your token"}
+
+    # The owner's token is untouched.
+    state["principal"] = make_principal(uid=1000, groups=["atlas"], subject=owner_sub)
+    [row] = client.get("/v1/tokens", headers=_AUTH).json()
+    assert row["lookup_id"] == lookup_id
+    assert row["revoked_at"] is None
 
 
 def test_revoke_unknown_lookup_id_404(app_client: tuple[TestClient, dict]) -> None:
     client, _ = app_client
     resp = client.delete("/v1/tokens/does-not-exist", headers=_AUTH)
     assert resp.status_code == 404, resp.text
+    assert resp.json() == {"detail": "Unknown token"}
 
 
 def test_revoke_marks_the_record_revoked(
@@ -428,6 +444,126 @@ def test_revoke_marks_the_record_revoked(
 
     rows = {r["lookup_id"]: r for r in client.get("/v1/tokens", headers=_AUTH).json()}
     assert rows[lookup_id]["revoked_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Mint/revoke audit records are authoritative: each field is asserted, and a
+# failed audit write fails the request rather than being swallowed.
+# ---------------------------------------------------------------------------
+
+
+def test_mint_writes_one_audit_record_with_every_field(
+    app_client: tuple[TestClient, dict], audited: list[AuditRecord]
+) -> None:
+    client, state = app_client
+    before = time.time()
+
+    body = _mint(client, name="audited-mint").json()
+
+    after = time.time()
+    [record] = audited
+    principal = state["principal"]
+    lookup_id = body["lookup_id"]
+    assert record.principal_sub == principal.subject
+    assert record.principal_uid == principal.uid
+    assert record.permission == "tokens"
+    assert record.target == "mcp-gateway"
+    assert record.action == "token.minted"
+    assert record.action_type == "state_change"
+    assert record.args_summary == (
+        f"lookup_id={lookup_id} name='audited-mint' never_expires=False"
+    )
+    assert record.request_id == lookup_id
+    assert record.audit_id == lookup_id
+    assert before <= record.timestamp <= after
+    assert body["token"] not in record.args_summary
+
+
+def test_mint_never_expires_is_recorded_in_the_audit_summary(
+    app_client: tuple[TestClient, dict], audited: list[AuditRecord]
+) -> None:
+    client, _ = app_client
+
+    body = _mint(client, name="forever", never_expires=True).json()
+
+    [record] = audited
+    assert record.args_summary == (
+        f"lookup_id={body['lookup_id']} name='forever' never_expires=True"
+    )
+
+
+def test_revoke_writes_one_audit_record_with_every_field(
+    app_client: tuple[TestClient, dict], audited: list[AuditRecord]
+) -> None:
+    client, state = app_client
+    lookup_id = _mint(client, name="audited-revoke").json()["lookup_id"]
+    audited.clear()
+    before = time.time()
+
+    resp = client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
+
+    after = time.time()
+    assert resp.status_code == 200, resp.text
+    [record] = audited
+    principal = state["principal"]
+    assert record.principal_sub == principal.subject
+    assert record.principal_uid == principal.uid
+    assert record.permission == "tokens"
+    assert record.target == "mcp-gateway"
+    assert record.action == "token.revoked"
+    assert record.action_type == "state_change"
+    assert record.args_summary == f"lookup_id={lookup_id}"
+    assert record.request_id == lookup_id
+    assert record.audit_id == lookup_id
+    assert before <= record.timestamp <= after
+
+
+def test_revoke_of_unknown_or_foreign_token_writes_no_audit_record(
+    app_client: tuple[TestClient, dict],
+    audited: list[AuditRecord],
+    make_principal: Callable[..., object],
+) -> None:
+    client, state = app_client
+    lookup_id = _mint(client, name="foreign").json()["lookup_id"]
+    audited.clear()
+
+    assert client.delete("/v1/tokens/missing", headers=_AUTH).status_code == 404
+    state["principal"] = make_principal(uid=99999, groups=["atlas"], subject="sub-x")
+    assert client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH).status_code == 403
+
+    assert audited == []
+
+
+@pytest.fixture
+def failing_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fail(record: AuditRecord) -> None:
+        raise OSError("audit sink unavailable")
+
+    monkeypatch.setattr(tokens_api, "write_audit", _fail)
+
+
+def test_mint_fails_when_the_audit_write_fails(
+    app_client: tuple[TestClient, dict], failing_audit: None
+) -> None:
+    client, _ = app_client
+
+    with pytest.raises(OSError, match="audit sink unavailable"):
+        _mint(client, name="unaudited")
+
+
+def test_revoke_fails_when_the_audit_write_fails(
+    app_client: tuple[TestClient, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = app_client
+    lookup_id = _mint(client, name="unaudited-revoke").json()["lookup_id"]
+
+    async def _fail(record: AuditRecord) -> None:
+        raise OSError("audit sink unavailable")
+
+    monkeypatch.setattr(tokens_api, "write_audit", _fail)
+
+    with pytest.raises(OSError, match="audit sink unavailable"):
+        client.delete(f"/v1/tokens/{lookup_id}", headers=_AUTH)
 
 
 # ---------------------------------------------------------------------------

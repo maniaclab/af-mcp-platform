@@ -746,6 +746,11 @@ The threshold and window are configurable via `Settings`:
 | `CREDENTIAL_UNLOCK_MAX_FAILURES` | `credential_unlock_max_failures` | 5 attempts |
 | `CREDENTIAL_UNLOCK_WINDOW_SECONDS` | `credential_unlock_window_seconds` | 900s (15 min) |
 
+The limit is the number of failures tolerated per window: with the default of 5, the
+fifth failed unlock is still allowed to pass and the sixth is refused (the counter
+must *exceed* the limit). `check_unlock_rate_limit()` therefore passes at exactly
+the limit.
+
 Five attempts is generous enough to tolerate a mistyped passphrase but tight
 enough to slow a brute-force guesser; fifteen minutes roughly matches how
 often a browser session's token refresh forces re-authentication anyway.

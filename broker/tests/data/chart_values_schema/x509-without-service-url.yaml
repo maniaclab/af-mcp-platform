@@ -1,0 +1,5 @@
+# An x509 identity provider entry needs the voms-token-service URL.
+broker:
+  identityProviders:
+    - type: x509
+      alias: x509-example

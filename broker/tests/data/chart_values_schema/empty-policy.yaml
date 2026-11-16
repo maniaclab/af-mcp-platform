@@ -1,0 +1,4 @@
+# The group-to-permission policy may not be empty. Maps merge over the base
+# values, so null is how an overlay removes the base values group map.
+entitlements:
+  group_permissions: null
