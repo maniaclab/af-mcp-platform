@@ -321,9 +321,7 @@ class AsgiAuthMiddleware:
                 # platform outage, not a bad credential -- see that
                 # exception's docstring. 503 with the actionable detail,
                 # not a vague 401, so a caller can tell the difference.
-                logger.exception(
-                    "mcp.principal_directory_unavailable", error=str(exc.detail)
-                )
+                logger.exception("mcp.principal_directory_unavailable")
                 await send_error(
                     scope,
                     receive,

@@ -71,7 +71,7 @@ async def _fetch_jwks(
         resp.raise_for_status()
         return resp.json()["keys"]
     except Exception as exc:
-        logger.exception("jwks.fetch_failed", uri=jwks_uri, error=str(exc))
+        logger.exception("jwks.fetch_failed", uri=jwks_uri)
         raise JwksUnavailableError(
             f"Unable to reach JWKS endpoint: {jwks_uri}"
         ) from exc

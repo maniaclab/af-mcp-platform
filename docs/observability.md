@@ -745,7 +745,7 @@ fields; they change only with a release note.
 | `target` | A credential target (the service or identity a credential is for). |
 | `service` | A backend service name. |
 | `reason` | Short machine-readable cause. |
-| `error` | The exception message, `str(exc)`. |
+| `error` | The exception message, `str(exc)`. A `.exception(...)` line carries the traceback, which holds the message, and does not repeat it as `error`: an exception is reported once. |
 | `detail` | A human-readable explanation. |
 | `status_code`, `upstream_status` | The HTTP status the broker answered, and the status a dependency (token service, backend) answered. |
 | `duration_ms`, `exc_type` | Elapsed milliseconds; exception class name. |

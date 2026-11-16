@@ -7,7 +7,9 @@ statically over every ``logger.<level>("event", field=...)`` call:
 - no field uses a name the conventions replace (``principal_id`` for
   ``subject``, ``message`` for ``detail``, ...) or that could carry a secret;
 - an event named ``*failed`` is never logged below ``warning``;
-- personal data (a certificate DN, an email) appears on debug lines only.
+- personal data (a certificate DN, an email) appears on debug lines only;
+- an exception is reported once: a call that attaches the traceback
+  (``.exception`` or ``exc_info``) does not also pass ``error=str(exc)``.
 """
 
 from __future__ import annotations
@@ -76,6 +78,7 @@ class LogCall:
     event: str | None  # None when the event is not a literal
     event_source: str
     fields: tuple[str, ...]
+    has_exc_info: bool = False
 
 
 def _module_string_constants(tree: ast.Module) -> dict[str, str]:
@@ -129,6 +132,7 @@ def scan_source(source: str, file: str = "<memory>") -> list[LogCall]:
                 event=event,
                 event_source=ast.unparse(first),
                 fields=tuple(k.arg for k in node.keywords if k.arg is not None),
+                has_exc_info=any(k.arg == "exc_info" for k in node.keywords),
             )
         )
     return calls
@@ -169,6 +173,14 @@ def _pii_violations(calls: list[LogCall]) -> set[str]:
     }
 
 
+def _double_report_violations(calls: list[LogCall]) -> set[str]:
+    return {
+        call.event or call.event_source
+        for call in calls
+        if "error" in call.fields and (call.level == "exception" or call.has_exc_info)
+    }
+
+
 def _level_violations(calls: list[LogCall]) -> set[str]:
     return {
         call.event
@@ -201,6 +213,10 @@ def test_personal_data_fields_are_logged_at_debug_only() -> None:
     assert _pii_violations(_all_calls()) == set()
 
 
+def test_exceptions_are_reported_once() -> None:
+    assert _double_report_violations(_all_calls()) == set()
+
+
 def test_audit_record_uses_the_log_field_names() -> None:
     """The audit line is a log line: it names the user ``subject``, the request ``request_id`` and a token ``jti``."""
     fields = {f.name for f in dataclasses.fields(AuditRecord)}
@@ -220,6 +236,10 @@ log('http.exception', status_code=500)
 logger.error('audit')
 logger.info('x509.linked', dn=d)
 logger.debug('x509.proxy_dn', dn=d)
+logger.exception('jwks.fetch_failed', error=str(exc))
+logger.error('jwks.fetch_failed', exc_info=True, error=str(exc))
+logger.exception('jwks.fetch_failed')
+logger.warning('jwks.fetch_failed', error=str(exc))
 """
     )
     assert _event_violations(calls) == {
@@ -232,3 +252,4 @@ logger.debug('x509.proxy_dn', dn=d)
     }
     assert _level_violations(calls) == {"jwks.fetch_failed"}
     assert _pii_violations(calls) == {"x509.linked"}
+    assert _double_report_violations(calls) == {"jwks.fetch_failed"}
