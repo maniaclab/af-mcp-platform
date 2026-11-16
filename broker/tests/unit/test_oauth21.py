@@ -30,6 +30,7 @@ from oauth21_support import (  # noqa: F401
     TOKEN_ENDPOINT,
     _FakeTokenClient,
     _make_cred,
+    _make_provider,
     x509_service_env_fixture,
 )
 from pydantic import SecretStr
@@ -70,28 +71,6 @@ def _principal(subject: str = SUBJECT) -> Principal:
         unixname="tuser",
         groups=[],
         raw_token=SecretStr("fake-token"),
-    )
-
-
-def _make_provider(
-    store: InMemoryTokenStore,
-    revocation_endpoint: str | None = None,
-    client_id: str = CLIENT_ID,
-    client_secret: SecretStr | None = None,
-    http_client: Any = None,
-) -> OAuth21Provider:
-    return OAuth21Provider(
-        alias=ALIAS,
-        targets=frozenset({ALIAS}),
-        authorization_endpoint=AUTHORIZATION_ENDPOINT,
-        token_endpoint=TOKEN_ENDPOINT,
-        issuer=PROVIDER_ISSUER,
-        scope="openid profile",
-        store=store,
-        client_id=client_id,
-        client_secret=client_secret,
-        revocation_endpoint=revocation_endpoint,
-        http_client=http_client or httpx2.AsyncClient(),
     )
 
 

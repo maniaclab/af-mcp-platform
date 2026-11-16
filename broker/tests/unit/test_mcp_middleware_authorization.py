@@ -22,7 +22,7 @@ from mcp_middleware_authorization_support import (  # noqa: F401
     registry_fixture,
 )
 from prometheus_client import REGISTRY
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 
 from af_mcp_broker import metering as pipeline
 from af_mcp_broker import retry_after as retry_after_module

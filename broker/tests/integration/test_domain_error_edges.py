@@ -43,8 +43,8 @@ from domain_error_edges_support import (  # noqa: F401
     _UnreachableJwksClient,
     unreachable_jwks_fixture,
 )
+from mcp_aggregator_support import _FakeProvider
 from rate_limited_helpers import assert_rate_limited_shape
-from test_mcp_aggregator import _FakeProvider
 
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import asyncpg
 import pytest
-from test_usage_postgres import _record
+from usage_postgres_support import _record
 
 from af_mcp_broker.usage import PostgresUsageStore
 from af_mcp_broker.usage import postgres as usage_postgres

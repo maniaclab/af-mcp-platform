@@ -24,10 +24,10 @@ from typing import TYPE_CHECKING, Any
 import jwt
 import pytest
 from audit_lines import audit_lines
+from krb5_token_support import FakeKrb5VaultStore, _FakeClient
+from krb5_token_support import _ticket as _minted_ticket
 from pydantic import SecretStr
-from test_krb5_token import FakeKrb5VaultStore, _FakeClient
-from test_krb5_token import _ticket as _minted_ticket
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.api import credentials as credentials_api

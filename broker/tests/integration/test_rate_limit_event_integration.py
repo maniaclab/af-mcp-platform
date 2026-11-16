@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from test_mcp_aggregator import _FakeProvider
-from test_request_logging import _capturing_info
+from mcp_aggregator_support import _FakeProvider
+from request_logging_support import _capturing_info
 
 from af_mcp_broker import app as app_module
 from af_mcp_broker import retry_after as retry_after_module

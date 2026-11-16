@@ -22,8 +22,11 @@ import jwt
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 from x509_fakes import FakeVomsClient, FakeX509Store
+from x509_redeem_support import (
+    _BACKENDS_YAML,
+)
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.api.auth import keycloak_dependency
@@ -36,19 +39,6 @@ if TYPE_CHECKING:
 
 _REDEEM = "/v1/credentials/x509/redeem"
 
-# ami is an x509 backend (auth_type: x509): that single flag drives portal
-# minting (X509Provider registration), aggregator identity-JWT injection, and
-# this endpoint's audience gate. An explicit identity_providers entry
-# covering it is required too (conftest's app_client_factory default
-# supplies one; the broker refuses to start otherwise).
-_BACKENDS_YAML = (
-    "services:\n"
-    "  - name: ami\n"
-    "    prefix: ami\n"
-    "    url: http://ami-mcp.invalid/mcp\n"
-    "    auth_type: x509\n"
-    "    required_permission: read_data\n"
-)
 
 # An x509 service whose registry name and token audience diverge (issue #257):
 # the broker mints aud=ami-mcp (effective_audience) for the target ami_service.

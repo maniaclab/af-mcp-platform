@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
-from test_broker_issued import ISSUER_URL
+from broker_issued_support import ISSUER_URL
 from vault_fakes import ADDR, AUTH_MOUNT, AUTH_ROLE, KV_MOUNT, FakeVault
 
 from af_mcp_broker.config import Settings

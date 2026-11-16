@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from conftest import configure_keyless_env
-from signing_keys import make_rsa_key, private_pem, public_pem
-from test_broker_issued import (
+from broker_issued_support import (
     _rfc7638_thumbprint,
 )
+from conftest import configure_keyless_env
+from signing_keys import make_rsa_key, private_pem, public_pem
 
 if TYPE_CHECKING:
     from collections.abc import Callable

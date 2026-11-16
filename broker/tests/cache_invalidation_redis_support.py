@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from conftest import AUDIENCE, ISSUER
-from test_mcp_aggregator import (
+from mcp_aggregator_support import (
     _build_namespaced_aggregator,
     _CountingListClient,
 )

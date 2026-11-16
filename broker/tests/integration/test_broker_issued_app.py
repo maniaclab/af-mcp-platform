@@ -18,14 +18,15 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from broker_issued_support import (
+    _BASE_CLAIMS,
+    _find_service_provider,
+    verify_against_jwks,
+)
 from broker_state_helpers import aggregator_inputs
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
-from test_broker_issued import (
-    _BASE_CLAIMS,
-    verify_against_jwks,
-)
-from test_mcp_aggregator import _FakeFastMCPContext
+from mcp_aggregator_support import _FakeFastMCPContext
 from x509_fakes import seed_x509_link
 
 import af_mcp_broker.app as app_module
@@ -312,11 +313,6 @@ def test_identities_lists_broker_issued_provider_as_linked(
 # app.state.broker.broker_token_issuer loaded fine and the /v1 redeem endpoint uses
 # it happily.
 # ---------------------------------------------------------------------------
-
-
-def _find_service_provider(state: Any, service_name: str) -> Any:
-    """Return one backend's ``_ObservableProxyProvider`` from the app's recorded providers."""
-    return state.broker.mcp_aggregator.backend_providers.get(service_name)
 
 
 def test_lifespan_threads_issuer_into_x509_client_factory(

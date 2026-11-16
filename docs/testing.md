@@ -37,10 +37,10 @@ loop; CI runs every tier.
 
 Fixtures live in `broker/tests/conftest.py`; fakes and builders shared by many
 modules live in plain modules beside it (`vault_fakes.py`, `signing_keys.py`,
-`x509_fakes.py`, `broker_state_helpers.py`). Some test modules also import
-helpers from one another by module name (`from test_broker_issued import ...`).
-`tests/unit` and `tests/integration` are both on pytest's `pythonpath`, and test
-module basenames are unique across them, so that works from either tier.
+`x509_fakes.py`, `broker_state_helpers.py`, and the `*_support.py` modules named
+after the test module they serve). A test module never imports from another test
+module; `test_no_cross_test_imports.py` enforces it. Test module basenames stay
+unique across `unit/` and `integration/`.
 
 ## Tests outside `broker/tests/`
 

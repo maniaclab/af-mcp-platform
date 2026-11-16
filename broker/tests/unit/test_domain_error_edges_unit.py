@@ -37,15 +37,15 @@ from domain_error_edges_support import (  # noqa: F401
     unreachable_jwks_fixture,
 )
 from fastmcp.exceptions import ToolError
-from test_mcp_aggregator import _OPEN_POLICY, _FakeProvider, _patch_context, _spec
-from test_mcp_middleware_identity import (
+from mcp_aggregator_support import _OPEN_POLICY, _FakeProvider, _patch_context, _spec
+from mcp_middleware_identity_support import (
     _header,
     _http_scope,
     _InnerApp,
     _run,
     _status,
 )
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 
 from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.credentials import (

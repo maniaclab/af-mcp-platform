@@ -16,7 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from test_identities import _AUTH, ALIAS, _configure_oauth21_env
+from identities_support import _configure_oauth21_env
+from oauth21_support import ALIAS
 
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.mcp.aggregator import (
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 pytestmark = pytest.mark.usefixtures("unpinned_loggers")
+
+_AUTH = {"Authorization": "Bearer test"}
 
 
 _PUBSUB_TIMEOUT_SECONDS = 5

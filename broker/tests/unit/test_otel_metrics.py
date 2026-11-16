@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from _otlp_collector import OtlpCollector
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-from test_usage_postgres import _record
+from usage_postgres_support import _record
 
 from af_mcp_broker import metering as pipeline
 from af_mcp_broker import otel_metrics, tracing

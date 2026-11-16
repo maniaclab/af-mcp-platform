@@ -14,7 +14,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from test_servicex import FakeServiceXClient, FakeServiceXStore
+from servicex_support import FakeServiceXClient, FakeServiceXStore
 
 from af_mcp_broker.credentials.errors import (
     ServiceXBadRefreshTokenError,

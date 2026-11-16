@@ -7,15 +7,15 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
-from signing_keys import make_rsa_key, private_pem
-from test_condor_token import SERVICE_URL, _FakeCondorClient
-from test_oauth21 import (
+from condor_token_support import SERVICE_URL, _FakeCondorClient
+from oauth21_support import (
     ALIAS,
     SUBJECT,
     _FakeTokenClient,
     _make_cred,
     _make_provider,
 )
+from signing_keys import make_rsa_key, private_pem
 
 from af_mcp_broker import identity as identity_module
 from af_mcp_broker.config import Settings

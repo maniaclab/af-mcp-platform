@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
-from test_uvicorn_startup_logs import _container_log_config_args
+from uvicorn_startup_logs_support import _container_log_config_args
 
 from af_mcp_broker import __main__ as entrypoint
 

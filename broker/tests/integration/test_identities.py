@@ -29,6 +29,13 @@ from urllib.parse import parse_qs, urlparse
 import httpx2
 import pytest
 from cryptography.fernet import Fernet
+from identities_support import _configure_oauth21_env
+from oauth21_support import (
+    ALIAS,
+    AUTHORIZATION_ENDPOINT,
+    PROVIDER_ISSUER,
+    TOKEN_ENDPOINT,
+)
 from pydantic import SecretStr
 from x509_fakes import FakeX509Store
 
@@ -47,44 +54,6 @@ _AUTH = {"Authorization": "Bearer test"}
 
 # Matches conftest.py's app_client_factory default `identity_providers` entry.
 DEFAULT_KEYCLOAK_ALIAS = "atlas-oidc"
-
-ALIAS = "rucio-mcp-atlas"
-AUTHORIZATION_ENDPOINT = "https://backend-as.example/authorize"
-TOKEN_ENDPOINT = "https://backend-as.example/token"
-PROVIDER_ISSUER = "https://backend-as.example"
-
-
-def _configure_oauth21_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BROKER_STATE_KEY", Fernet.generate_key().decode())
-    monkeypatch.setenv("OAUTH21_CLIENT_ID", "https://mcp.example.com/.well-known/cimd")
-    monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp-portal.example.com")
-    monkeypatch.setenv(
-        "IDENTITY_PROVIDERS",
-        json.dumps(
-            [
-                {
-                    "type": "oauth21-direct",
-                    "alias": ALIAS,
-                    "targets": [ALIAS],
-                    "authorization_endpoint": AUTHORIZATION_ENDPOINT,
-                    "token_endpoint": TOKEN_ENDPOINT,
-                    "issuer": PROVIDER_ISSUER,
-                    "display_name": "Rucio (ATLAS)",
-                    "enables": "ATLAS Rucio operations via rucio-mcp",
-                },
-                # This override replaces conftest's default entirely, but
-                # the shipped services.yaml's "ami" (auth_type: x509) still
-                # needs an explicit entry or the broker refuses to start.
-                {
-                    "type": "x509",
-                    "voms": "atlas",
-                    "service_url": "http://voms-token-service.invalid:8000",
-                    "alias": "x509",
-                    "targets": ["ami"],
-                },
-            ]
-        ),
-    )
 
 
 def _by_id(body: dict) -> dict[str, dict]:

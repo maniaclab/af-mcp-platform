@@ -13,16 +13,22 @@ registration from config) lives in test_condor_token_app.py.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 import httpx2
 import jwt
 import pytest
 import structlog
-from test_broker_issued import (
+from broker_issued_support import (
     ISSUER_URL,
     verify_against_jwks,
+)
+from condor_token_support import (
+    IDTOKEN,
+    SERVICE_URL,
+    _FakeCondorClient,
+    _token_response,
 )
 
 from af_mcp_broker import metrics
@@ -36,42 +42,9 @@ from af_mcp_broker.credentials.errors import (
     CredentialServiceError,
 )
 
-SERVICE_URL = "http://condor-token-service.test"
-IDTOKEN = "fake-htcondor-idtoken"
-
 # Internals the service must never leak to the broker's callers -- assertions
 # check these strings are absent from client-visible credential error detail.
 _UPSTREAM_DETAIL = "condor_token_create exploded: /etc/condor/passwords.d/POOL"
-
-
-def _token_response(
-    *, expires_in_seconds: int = 3600, token: str = IDTOKEN
-) -> dict[str, Any]:
-    expires_at = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
-    return {
-        "token": token,
-        "identity": "auser@example.org",
-        "expires_at": expires_at.isoformat(),
-    }
-
-
-class _FakeCondorClient:
-    """Fake httpx2 client for the condor-token-service exchange.
-
-    Records every POST (url + headers) so tests can assert the broker
-    identity token actually presented, and returns a configurable
-    ``httpx2.Response`` per call.
-    """
-
-    def __init__(self, responses: list[httpx2.Response] | None = None) -> None:
-        self.responses = responses or [httpx2.Response(200, json=_token_response())]
-        self.calls: list[tuple[str, dict[str, str]]] = []
-
-    async def post(
-        self, url: str, headers: dict[str, str], **kwargs: Any
-    ) -> httpx2.Response:
-        self.calls.append((url, dict(headers)))
-        return self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
 
 
 @pytest.fixture

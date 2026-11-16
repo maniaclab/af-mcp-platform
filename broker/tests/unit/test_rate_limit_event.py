@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 
 from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.retry_after import RateLimiter, log_rate_limited

@@ -31,10 +31,10 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from krb5_token_support import FakeKrb5VaultStore
 from pydantic import SecretStr
 from rate_limited_helpers import assert_rate_limited_shape
-from test_krb5_token import FakeKrb5VaultStore
-from test_request_logging import _capturing_info
+from request_logging_support import _capturing_info
 
 from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.credentials import KrbTokenProvider

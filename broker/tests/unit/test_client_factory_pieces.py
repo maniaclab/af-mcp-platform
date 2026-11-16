@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 from fastmcp.exceptions import ToolError
-from test_mcp_aggregator import (
+from mcp_aggregator_support import (
     _FakeFastMCPContext,
     _FakeProvider,
     _make_issuer,

@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from broker_state_helpers import asgi_auth_middleware
 from conftest import make_claims
+from request_logging_support import _capturing_info
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Mount
 from starlette.testclient import TestClient
-from test_request_logging import _capturing_info
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.mcp.middleware import identity_mw

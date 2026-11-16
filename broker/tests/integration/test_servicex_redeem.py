@@ -20,8 +20,8 @@ import jwt
 import pytest
 from audit_lines import audit_lines
 from pydantic import SecretStr
-from test_request_logging import _capturing_info
-from test_servicex import FakeServiceXClient, FakeServiceXStore, _redeemed
+from request_logging_support import _capturing_info
+from servicex_support import FakeServiceXClient, FakeServiceXStore, _redeemed
 
 import af_mcp_broker.app as app_module
 from af_mcp_broker.api import credentials as credentials_api
