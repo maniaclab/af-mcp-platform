@@ -57,7 +57,7 @@ module basenames are unique across them, so that works from either tier.
 `broker/tests/e2e/` and the `e2e` marker are reserved for tests that run
 against a deployment: they take the broker URL and a bearer token from the
 environment (`MCP_BEARER_TOKEN`, as `scripts/verify-mcp-flow.py` does), skip
-themselves when those are absent, and are run by an operator or a scheduled
-job after a release, never as part of `pixi run test`. A test that fakes the
+themselves when those are absent, and are run by an operator after a
+release, never as part of `pixi run test` or CI. A test that fakes the
 identity provider or runs its backend in process belongs under `integration/`
 however it is named.
