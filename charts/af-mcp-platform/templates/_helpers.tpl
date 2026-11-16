@@ -627,12 +627,11 @@ selector is "vault". The gate is af-mcp-platform.needsVault.
       name: {{ .Values.broker.existingServiceTokenSecret | quote }}
       key: af-service-token
 {{- end }}
-# Keycloak admin service account (issue #144 step 2a) -- resolves an
-# identity-PAT-authenticated request's current groups/uid/gid/unixname via
-# the Admin REST API. Omitted entirely when unset so the broker's pydantic
-# defaults (both empty) apply -- see docs/auth.md's "Operator setup: the
-# Keycloak admin service account" section for the degraded-but-valid
-# behavior that results (every mcp_pat_... bearer on /mcp rejected).
+# Keycloak admin service account (issue #144) -- resolves every
+# authenticated request's current groups/uid/gid/unixname via the Admin REST
+# API. Required: values.schema.json enforces both keys, and the broker
+# refuses to start without them outside local development -- see
+# docs/auth.md's "Operator setup: the Keycloak admin service account".
 {{- if .Values.broker.keycloakAdmin.clientId }}
 - name: KEYCLOAK_ADMIN_CLIENT_ID
   value: {{ .Values.broker.keycloakAdmin.clientId | quote }}

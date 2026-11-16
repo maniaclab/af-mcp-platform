@@ -163,6 +163,7 @@ broker:
   # refuses to start with both unset, since the local-dev bypass this would
   # otherwise degrade to is never set via chart values (see the broker
   # section's own dev-bypass warning, if any, and docs/local-development.md).
+  # values.schema.json rejects an empty clientId or Secret name.
   keycloakAdmin:
     # Client id of the confidential client. Not a secret -- a plain value.
     # Deliberately a separate client from tokenMint/oidc above -- same
