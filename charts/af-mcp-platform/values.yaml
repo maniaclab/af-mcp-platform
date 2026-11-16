@@ -122,6 +122,9 @@ broker:
   # Name of a pre-existing Secret providing the AF service token.
   # The Secret must contain a key named `af-service-token`.
   # Create this via SealedSecret externally; the chart does NOT create it.
+  # A JWT is treated as expiring at its `exp` claim and is refused once
+  # expired; an opaque token is treated as non-expiring (logged once at
+  # warning level). See docs/architecture.md.
   existingServiceTokenSecret: ""
 
   # Confidential Keycloak client the broker authenticates as (authorization_

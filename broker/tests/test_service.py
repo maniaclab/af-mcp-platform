@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 import httpx2
+import jwt
 import pytest
+import structlog
 from pydantic import SecretStr
 
 from af_mcp_broker.config import Settings
@@ -156,7 +158,7 @@ class TestTokenSourcePriority:
         token, expires_at = await _provider(keycloak)._refresh_service_token()
 
         assert token == "env-token"
-        assert expires_at == _NOW + 3600
+        assert expires_at is None
         assert keycloak.requests == []
 
     async def test_env_token_wins_over_the_token_file(
@@ -204,7 +206,7 @@ class TestTokenSourcePriority:
         token, expires_at = await _provider(keycloak)._refresh_service_token()
 
         assert token == "file-token"
-        assert expires_at == _NOW + 3600
+        assert expires_at is None
         assert keycloak.requests == []
 
     async def test_empty_env_token_file_variable_falls_through_to_client_credentials(
@@ -562,3 +564,161 @@ class TestIssue:
             await _provider(keycloak).issue(_principal(), "docs")
 
         assert audit_buffer.getvalue() == ""
+
+
+def _jwt(**claims: object) -> str:
+    """An HS256 JWT; the broker never verifies a static token's signature."""
+    return jwt.encode(claims, "irrelevant-signing-key-0123456789", algorithm="HS256")
+
+
+class TestMinRemainingSeconds:
+    async def test_cached_token_with_less_than_requested_is_refreshed(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        _use_client_credentials(monkeypatch)
+        provider = _provider(keycloak)
+        await provider.issue(_principal(), "docs")
+
+        keycloak.body = {"access_token": "rotated", "expires_in": 3600}
+        now[0] += 3600 - 61  # 61 s left: above the refresh buffer, below 300 s
+        cred = await provider.issue(_principal(), "docs", min_remaining_seconds=300)
+
+        assert cred.payload["access_token"] == "rotated"
+        assert cred.expires_at == _NOW + 3600 - 61 + 3600
+        assert len(keycloak.requests) == 2
+
+    async def test_cached_token_with_enough_remaining_is_reused(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        _use_client_credentials(monkeypatch)
+        provider = _provider(keycloak)
+        await provider.issue(_principal(), "docs")
+
+        now[0] += 3600 - 301
+        await provider.issue(_principal(), "docs", min_remaining_seconds=300)
+
+        assert len(keycloak.requests) == 1
+
+    async def test_fresh_token_that_still_falls_short_is_returned_like_other_providers(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        _use_client_credentials(monkeypatch)
+        keycloak.body = {"access_token": "short", "expires_in": 120}
+
+        cred = await _provider(keycloak).issue(
+            _principal(), "docs", min_remaining_seconds=300
+        )
+
+        assert cred.payload["access_token"] == "short"
+        assert cred.expires_at == _NOW + 120
+
+
+class TestStaticTokenExpiry:
+    async def test_jwt_exp_claim_is_the_expiry(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        token = _jwt(exp=int(_NOW) + 7200)
+        monkeypatch.setenv("AF_SERVICE_TOKEN", token)
+
+        got, expires_at = await _provider(keycloak)._refresh_service_token()
+
+        assert got == token
+        assert expires_at == _NOW + 7200
+
+    async def test_jwt_exp_claim_is_read_from_a_token_file(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        keycloak: _FakeKeycloak,
+        tmp_path: Path,
+        now: list[float],
+    ) -> None:
+        token_file = tmp_path / "token"
+        token_file.write_text(_jwt(exp=int(_NOW) + 900) + "\n")
+        monkeypatch.setenv("AF_SERVICE_TOKEN_FILE", str(token_file))
+
+        _, expires_at = await _provider(keycloak)._refresh_service_token()
+
+        assert expires_at == _NOW + 900
+
+    async def test_issued_credential_carries_the_jwt_expiry(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        monkeypatch.setenv("AF_SERVICE_TOKEN", _jwt(exp=int(_NOW) + 7200))
+
+        cred = await _provider(keycloak).issue(_principal(), "docs")
+
+        assert cred.expires_at == _NOW + 7200
+
+    async def test_expired_jwt_fails_clearly_and_issues_nothing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        keycloak: _FakeKeycloak,
+        audit_buffer: AuditBuffer,
+        now: list[float],
+    ) -> None:
+        monkeypatch.setenv("AF_SERVICE_TOKEN", _jwt(exp=int(_NOW) - 1))
+
+        with pytest.raises(RuntimeError, match="expired"):
+            await _provider(keycloak).issue(_principal(), "docs")
+
+        assert audit_buffer.getvalue() == ""
+
+    async def test_expired_jwt_in_a_token_file_fails_clearly(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        keycloak: _FakeKeycloak,
+        tmp_path: Path,
+        now: list[float],
+    ) -> None:
+        token_file = tmp_path / "token"
+        token_file.write_text(_jwt(exp=int(_NOW) - 1))
+        monkeypatch.setenv("AF_SERVICE_TOKEN_FILE", str(token_file))
+
+        with pytest.raises(RuntimeError, match="expired"):
+            await _provider(keycloak).issue(_principal(), "docs")
+
+    async def test_jwt_without_exp_is_non_expiring_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        monkeypatch.setenv("AF_SERVICE_TOKEN", _jwt(sub="svc"))
+        provider = _provider(keycloak)
+
+        with structlog.testing.capture_logs() as logs:
+            first = await provider.issue(_principal(), "docs")
+            now[0] += 10 * 365 * 86400
+            second = await provider.issue(_principal(), "docs")
+
+        assert first.expires_at is None
+        assert second.expires_at is None
+        warnings = [e for e in logs if e["event"] == "service.token.static_no_expiry"]
+        assert len(warnings) == 1
+        assert warnings[0]["log_level"] == "warning"
+
+    async def test_opaque_token_is_non_expiring_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        monkeypatch.setenv("AF_SERVICE_TOKEN", "opaque-token")
+        provider = _provider(keycloak)
+
+        with structlog.testing.capture_logs() as logs:
+            first = await provider.issue(_principal(), "docs")
+            second = await provider.issue(_principal(), "docs")
+
+        assert first.expires_at is None
+        assert second.payload["access_token"] == "opaque-token"
+        warnings = [e for e in logs if e["event"] == "service.token.static_no_expiry"]
+        assert len(warnings) == 1
+        assert "opaque-token" not in str(warnings)
+
+    async def test_static_jwt_nearing_expiry_is_still_handed_out_until_it_expires(
+        self, monkeypatch: pytest.MonkeyPatch, keycloak: _FakeKeycloak, now: list[float]
+    ) -> None:
+        monkeypatch.setenv("AF_SERVICE_TOKEN", _jwt(exp=int(_NOW) + 120))
+        provider = _provider(keycloak)
+
+        cred = await provider.issue(_principal(), "docs", min_remaining_seconds=300)
+
+        assert cred.expires_at == _NOW + 120
+        now[0] += 121
+        with pytest.raises(RuntimeError, match="expired"):
+            await provider.issue(_principal(), "docs")
