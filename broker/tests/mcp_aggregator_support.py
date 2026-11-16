@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from broker_state_helpers import aggregator_inputs
 from mcp.types import Tool as McpTool
-from signing_keys import make_rsa_key, private_pem
+from signing_keys import private_pem, shared_rsa_key
 
 from af_mcp_broker.authorization import EntitlementPolicy
 from af_mcp_broker.credentials import (
@@ -316,7 +316,7 @@ def _build_namespaced_aggregator(
 def _make_issuer():
 
     return BrokerTokenIssuer(
-        private_key_pem=private_pem(make_rsa_key()),
+        private_key_pem=private_pem(shared_rsa_key()),
         issuer="https://mcp.example.com",
         ttl_seconds=600,
     )

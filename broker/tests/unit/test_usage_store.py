@@ -15,8 +15,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import structlog
+import structlog.testing
 from prometheus_client import REGISTRY
 
+from af_mcp_broker import usage
 from af_mcp_broker.audit import AuditRecord
 from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.usage import (
@@ -271,7 +274,7 @@ async def test_record_usage_batch_writes_through_record_many() -> None:
 
 
 async def test_record_usage_batch_failure_is_logged_and_counts_every_row(
-    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed batch never raises into the worker; usage is best-effort. The
     failure is logged with the audit_ids (so rows can be rebuilt from the
@@ -282,11 +285,17 @@ async def test_record_usage_batch_failure_is_logged_and_counts_every_row(
         async def record_many(self, records: list[AuditRecord]) -> None:
             raise RuntimeError("usage store down")
 
+    # A fresh logger, so capture_logs sees the event whatever structlog
+    # configuration an earlier test left pinned on the module's logger.
+    monkeypatch.setattr(usage, "logger", structlog.get_logger(usage.__name__))
     before = _sample("af_mcp_metering_worker_errors_total")
     batch = [_record(audit_id="a"), _record(audit_id="b"), _record(audit_id="c")]
-    await record_usage_batch(_ExplodingStore(), batch)  # must not raise
+    with structlog.testing.capture_logs() as logs:
+        await record_usage_batch(_ExplodingStore(), batch)  # must not raise
 
     assert _sample("af_mcp_metering_worker_errors_total") == before + 3
-    assert "usage.record_batch_failed" in caplog.text
-    assert "usage store down" in caplog.text
-    assert "'audit_ids': ['a', 'b', 'c']" in caplog.text
+    (event,) = logs
+    assert event["event"] == "usage.record_batch_failed"
+    assert event["error"] == "usage store down"
+    assert event["audit_ids"] == ["a", "b", "c"]
+    assert event["batch_size"] == 3

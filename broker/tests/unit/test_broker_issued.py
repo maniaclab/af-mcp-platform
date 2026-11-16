@@ -22,7 +22,7 @@ from broker_issued_support import (
     _rfc7638_thumbprint,
     verify_against_jwks,
 )
-from signing_keys import make_rsa_key, private_pem, public_pem
+from signing_keys import make_rsa_key, private_pem, public_pem, shared_rsa_key
 
 from af_mcp_broker import metrics
 from af_mcp_broker.config import Settings
@@ -275,7 +275,7 @@ def test_consumer_rejects_wrong_audience(issuer: BrokerTokenIssuer) -> None:
 
 
 def _write_key_files(tmp_path: Path) -> tuple[rsa.RSAPrivateKey, Path]:
-    key = make_rsa_key()
+    key = shared_rsa_key()
     key_file = tmp_path / "signing-key.pem"
     key_file.write_bytes(private_pem(key))
     return key, key_file

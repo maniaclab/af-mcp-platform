@@ -533,105 +533,86 @@ def test_identity_providers_condor_token_audience_is_overridable():
     assert cfg.audience == "condor-token-service-dev"
 
 
-# krb5-token identity providers (issue #274) -- KrbTokenProvider's config.
-def test_krb5_token_provider_config_parses():
+# krb5-token identity providers (issue #274) -- KrbTokenProvider's config --
+# and servicex-token identity providers (issue #295) -- ServiceXProvider's
+# config. Both are token-service entries with the same required fields.
+_TOKEN_SERVICE_ENTRIES = pytest.mark.parametrize(
+    ("provider_type", "alias", "display_name", "enables"),
+    [
+        pytest.param(
+            "krb5-token",
+            "krb5",
+            "CERN Kerberos ticket",
+            "Kerberos-authenticated access",
+            id="krb5-token",
+        ),
+        pytest.param(
+            "servicex-token",
+            "servicex",
+            "ServiceX access token",
+            "ServiceX on-demand data delivery",
+            id="servicex-token",
+        ),
+    ],
+)
+
+
+@_TOKEN_SERVICE_ENTRIES
+def test_token_service_provider_config_parses(
+    provider_type, alias, display_name, enables
+):
     settings = Settings(
         identity_providers=[
             {
-                "type": "krb5-token",
-                "alias": "krb5",
-                "display_name": "CERN Kerberos ticket",
-                "enables": "Kerberos-authenticated access",
+                "type": provider_type,
+                "alias": alias,
+                "display_name": display_name,
+                "enables": enables,
                 "targets": ["some-service"],
-                "service_url": "http://krb5-token-service.invalid",
+                "service_url": f"http://{provider_type}-service.invalid",
             }
         ],
         **_VAULT_ENV,
     )
     (cfg,) = settings.identity_providers
-    assert cfg.type == "krb5-token"
-    assert cfg.alias == "krb5"
+    assert cfg.type == provider_type
+    assert cfg.alias == alias
     assert cfg.targets == ["some-service"]
-    assert str(cfg.service_url) == "http://krb5-token-service.invalid/"
-    assert cfg.audience == "krb5-token-service"  # default
+    assert str(cfg.service_url) == f"http://{provider_type}-service.invalid/"
+    assert cfg.audience == f"{provider_type}-service"  # default
 
 
-def test_krb5_token_provider_config_requires_service_url():
+@_TOKEN_SERVICE_ENTRIES
+def test_token_service_provider_config_requires_service_url(
+    provider_type, alias, display_name, enables
+):
     valid_entry = {
-        "type": "krb5-token",
-        "alias": "krb5",
-        "display_name": "CERN Kerberos ticket",
-        "enables": "Kerberos-authenticated access",
+        "type": provider_type,
+        "alias": alias,
+        "display_name": display_name,
+        "enables": enables,
         "targets": ["some-service"],
-        "service_url": "http://krb5-token-service.invalid",
+        "service_url": f"http://{provider_type}-service.invalid",
     }
     entry = {k: v for k, v in valid_entry.items() if k != "service_url"}
     with pytest.raises(ValueError, match="service_url"):
         Settings(identity_providers=[entry], **_VAULT_ENV)
 
 
-def test_vault_config_required_by_krb5_token_entry():
-    """service_url is mandatory on every krb5-token entry, and a given entry
-    can't declare ahead of time whether any caller will ever request its
-    optional "remember" persistence -- so Vault is required unconditionally."""
+@_TOKEN_SERVICE_ENTRIES
+def test_vault_config_required_by_token_service_entry(
+    provider_type, alias, display_name, enables
+):
+    """service_url is mandatory on every token-service entry, and a given
+    entry can't declare ahead of time whether any caller will ever request
+    its optional "remember" persistence (krb5-token) or the refresh token it
+    vaults has no in-memory fallback (servicex-token) -- so Vault is
+    required unconditionally."""
     entry = {
-        "type": "krb5-token",
-        "alias": "krb5",
+        "type": provider_type,
+        "alias": alias,
         "targets": ["some-service"],
-        "service_url": "http://krb5-token-service.invalid",
-    }
-    with pytest.raises(ValueError, match="vault_addr"):
-        Settings(identity_providers=[entry])
-    with pytest.raises(ValueError, match="vault_auth_role"):
-        Settings(identity_providers=[entry], vault_addr="https://vault.example")
-
-
-# servicex-token identity providers (issue #295) -- ServiceXProvider's config.
-def test_servicex_token_provider_config_parses():
-    settings = Settings(
-        identity_providers=[
-            {
-                "type": "servicex-token",
-                "alias": "servicex",
-                "display_name": "ServiceX access token",
-                "enables": "ServiceX on-demand data delivery",
-                "targets": ["some-service"],
-                "service_url": "http://servicex-token-service.invalid",
-            }
-        ],
-        **_VAULT_ENV,
-    )
-    (cfg,) = settings.identity_providers
-    assert cfg.type == "servicex-token"
-    assert cfg.alias == "servicex"
-    assert cfg.targets == ["some-service"]
-    assert str(cfg.service_url) == "http://servicex-token-service.invalid/"
-    assert cfg.audience == "servicex-token-service"  # default
-
-
-def test_servicex_token_provider_config_requires_service_url():
-    valid_entry = {
-        "type": "servicex-token",
-        "alias": "servicex",
-        "display_name": "ServiceX access token",
-        "enables": "ServiceX on-demand data delivery",
-        "targets": ["some-service"],
-        "service_url": "http://servicex-token-service.invalid",
-    }
-    entry = {k: v for k, v in valid_entry.items() if k != "service_url"}
-    with pytest.raises(ValueError, match="service_url"):
-        Settings(identity_providers=[entry], **_VAULT_ENV)
-
-
-def test_vault_config_required_by_servicex_token_entry():
-    """Same reasoning as krb5-token: service_url is mandatory on every
-    entry, and the refresh token it vaults has no in-memory fallback, so
-    Vault is required unconditionally."""
-    entry = {
-        "type": "servicex-token",
-        "alias": "servicex",
-        "targets": ["some-service"],
-        "service_url": "http://servicex-token-service.invalid",
+        "service_url": f"http://{provider_type}-service.invalid",
     }
     with pytest.raises(ValueError, match="vault_addr"):
         Settings(identity_providers=[entry])

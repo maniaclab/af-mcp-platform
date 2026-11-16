@@ -61,6 +61,20 @@ def provider_factory(client, targets=("krb5-target",), vault_store=None):
     return provider, cache, vault_store
 
 
+async def _store_expired_renewable_ticket(
+    vault_store: FakeKrb5VaultStore, subject: str
+) -> None:
+    """Seed *vault_store* with a ticket past ``not_after`` whose renewal window is still open, so the provider must renew or remint it."""
+    await vault_store.store_ticket(
+        subject,
+        ccache_b64=SecretStr("b2xkY2NhY2hl"),
+        principal="alice@CERN.CH",
+        realm="CERN.CH",
+        not_after=time.time() - 60,
+        renew_until=time.time() + 3600,
+    )
+
+
 async def test_issue_without_credentials_raises_needs_unlock():
     provider, _, _ = provider_factory(_FakeClient())
     with pytest.raises(NeedsUnlockError) as exc_info:
@@ -166,14 +180,7 @@ async def test_has_keytab_link_false_with_no_link():
     ticket-only half implies a keytab link."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     provider, _, _ = provider_factory(_FakeClient(), vault_store=vault_store)
     assert await provider.has_keytab_link(principal) is False
 
@@ -193,14 +200,7 @@ async def test_is_linked_true_from_renewable_ticket_alone():
     within its renew_until, with an empty cache and no stored link."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     provider, _, _ = provider_factory(_FakeClient(), vault_store=vault_store)
     assert await provider.is_linked(principal) is True
 
@@ -378,14 +378,7 @@ async def test_issue_tier3_renew_success():
     in-process cache."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     fresh_ticket = _ticket(ccache_b64="bmV3Y2NhY2hl")
     client = _FakeClient(renew_ticket=fresh_ticket)
     provider, cache, vault_store = provider_factory(client, vault_store=vault_store)
@@ -433,14 +426,7 @@ async def test_issue_concurrent_tier3_renews_are_single_flighted():
     not a correctness risk."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     fresh_ticket = _ticket(ccache_b64="bmV3Y2NhY2hl")
     client = _SlowRenewMintClient(renew_ticket=fresh_ticket)
     provider, _, _ = provider_factory(client, vault_store=vault_store)
@@ -459,14 +445,7 @@ async def test_issue_tier3_renewal_window_closed_falls_through_to_needs_unlock()
     NeedsUnlockError rather than propagate."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     client = _FakeClient(renew_error=Krb5TokenRenewalWindowClosedError())
     provider, _, _ = provider_factory(client, vault_store=vault_store)
 
@@ -483,14 +462,7 @@ async def test_issue_tier3_renewal_window_closed_falls_through_to_tier4():
     fallthrough must actually reach and succeed at tier 4."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     await vault_store.store_link(
         principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
     )
@@ -517,14 +489,7 @@ async def test_issue_tier3_hard_failure_propagates_with_no_keytab_to_fall_throug
     still applies)."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     client = _FakeClient(
         renew_error=Krb5TokenMintError("krb5-token-service unreachable")
     )
@@ -544,14 +509,7 @@ async def test_issue_tier3_hard_failure_falls_through_to_tier4_when_keytab_prese
     renew failure if tier 4 also has nothing (see the test above)."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     await vault_store.store_link(
         principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
     )
@@ -578,14 +536,7 @@ async def test_issue_tier3_hard_failure_propagates_when_tier4_also_fails():
     mint() propagates uncaught" rule, just reached via the fallthrough."""
     vault_store = FakeKrb5VaultStore()
     principal = make_principal()
-    await vault_store.store_ticket(
-        principal.subject,
-        ccache_b64=SecretStr("b2xkY2NhY2hl"),
-        principal="alice@CERN.CH",
-        realm="CERN.CH",
-        not_after=time.time() - 60,
-        renew_until=time.time() + 3600,
-    )
+    await _store_expired_renewable_ticket(vault_store, principal.subject)
     await vault_store.store_link(
         principal.subject, username="alice", keytab_b64=SecretStr("a2V5dGFi")
     )

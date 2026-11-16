@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from af_mcp_broker.pat import (
     PAT_PREFIX,
     hash_secret,
@@ -61,20 +63,18 @@ def test_hash_secret_differs_for_different_secrets() -> None:
     assert hash_secret("abc") != hash_secret("abd")
 
 
-def test_parse_pat_rejects_wrong_prefix() -> None:
-    assert parse_pat("not_a_pat_at_all") is None
-
-
-def test_parse_pat_rejects_missing_secret() -> None:
-    assert parse_pat(f"{PAT_PREFIX}onlylookupid") is None
-
-
-def test_parse_pat_rejects_empty_lookup_id() -> None:
-    assert parse_pat(f"{PAT_PREFIX}_secretvalue") is None
-
-
-def test_parse_pat_rejects_empty_secret() -> None:
-    assert parse_pat(f"{PAT_PREFIX}lookupid_") is None
+@pytest.mark.parametrize(
+    "token",
+    [
+        pytest.param("not_a_pat_at_all", id="wrong_prefix"),
+        pytest.param(f"{PAT_PREFIX}onlylookupid", id="missing_secret"),
+        pytest.param(f"{PAT_PREFIX}_secretvalue", id="empty_lookup_id"),
+        pytest.param(f"{PAT_PREFIX}lookupid_", id="empty_secret"),
+        pytest.param("", id="empty_string"),
+    ],
+)
+def test_parse_pat_rejects_malformed_tokens(token: str) -> None:
+    assert parse_pat(token) is None
 
 
 def test_parse_pat_secret_may_contain_underscores() -> None:
@@ -82,7 +82,3 @@ def test_parse_pat_secret_may_contain_underscores() -> None:
     must split on the FIRST '_' only, keeping the rest as the secret."""
     parsed = parse_pat(f"{PAT_PREFIX}abc123_sec_ret_with_underscores")
     assert parsed == ("abc123", "sec_ret_with_underscores")
-
-
-def test_parse_pat_rejects_empty_string() -> None:
-    assert parse_pat("") is None
