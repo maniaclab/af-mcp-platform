@@ -28,6 +28,7 @@ from opentelemetry.sdk._logs.export import (
 from test_usage_postgres import _record
 
 from af_mcp_broker import otel_metrics, tracing
+from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import (
     EventEmittingUsageStore,
@@ -105,7 +106,7 @@ async def pg_store(postgres_dsn: str) -> AsyncIterator[PostgresUsageStore]:
     await s.start()
     conn = await asyncpg.connect(postgres_dsn)
     try:
-        await conn.execute("TRUNCATE af_mcp_usage_events")
+        await conn.execute("TRUNCATE af_mcp_usage_events CASCADE")
     finally:
         await conn.close()
     yield s
@@ -130,9 +131,36 @@ def _full_record(**overrides: Any) -> AuditRecord:
         "duration_ms": 12.5,
         "result_bytes": 321,
         "result_tokens_est": 80,
+        # No breakdown: the base attribute set is asserted exactly; the
+        # per-content-type attributes have their own test.
+        "result_content": None,
     }
     fields.update(overrides)
     return _record(**fields)
+
+
+def test_event_carries_a_breakdown_attribute_per_content_type(
+    exporter: InMemoryLogRecordExporter, emitter: OtelUsageEventEmitter
+) -> None:
+    emitter.emit(
+        _full_record(
+            result_content={
+                "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
+                "hologram": ContentMeasure(blocks=2, bytes=7, tokens_est=0),
+            }
+        )
+    )
+    emitter.shutdown()
+
+    (log,) = _logs(exporter)
+    attributes = dict(log.attributes)
+    # The real content-type string is kept (events are per-call, not a metric).
+    assert attributes["result_content.text.blocks"] == 1
+    assert attributes["result_content.text.bytes"] == 29
+    assert attributes["result_content.text.tokens_est"] == 14
+    assert attributes["result_content.hologram.blocks"] == 2
+    assert attributes["result_content.hologram.bytes"] == 7
+    assert attributes["result_content.hologram.tokens_est"] == 0
 
 
 def _logs(exporter: InMemoryLogRecordExporter) -> list[Any]:

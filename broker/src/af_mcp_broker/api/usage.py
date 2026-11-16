@@ -47,10 +47,11 @@ router = APIRouter(prefix="/usage", tags=["usage"])
     response_model=UsageResponse,
     summary="Get the caller's own usage, or (admins) another subject's",
     description=(
-        "Per-service and per-day aggregates of the caller's tool calls over "
-        "a trailing window. Honesty caveats: token "
-        "counts are a tiktoken (o200k) ESTIMATE of the tool-result text "
-        "injected into the LLM client's context -- not provider-reported "
+        "Per-service, per-day and per-content-type aggregates of the caller's "
+        "tool calls over a trailing window. Honesty caveats: token "
+        "counts are an ESTIMATE of the tool-result content injected into the "
+        "LLM client's context (text by a tiktoken o200k count, images by "
+        "Claude's vision-token rule) -- not provider-reported "
         "usage, and not the user's full token volume. A caller "
         "in the configured admin group may pass ``subject`` to view another "
         "subject's usage instead of their own; anyone else passing it is "

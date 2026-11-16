@@ -22,6 +22,7 @@ from test_usage_postgres import _record
 
 from af_mcp_broker import metering as pipeline
 from af_mcp_broker import otel_metrics, tracing
+from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.config import Settings
 from af_mcp_broker.usage import InMemoryUsageStore
 
@@ -45,6 +46,8 @@ _FORBIDDEN_ATTRIBUTES = {
 }
 _ENDPOINT = "http://collector.invalid:4318"
 _ALLOWED_ATTRIBUTES = {"service", "method", "action_type", "outcome"}
+# The size counters additionally carry the bounded content_type label.
+_SIZE_ATTRIBUTES = _ALLOWED_ATTRIBUTES | {"content_type"}
 
 
 def _enabled(endpoint: str = _ENDPOINT) -> Settings:
@@ -105,6 +108,7 @@ def test_records_calls_errors_duration_bytes_and_tokens(
             duration_ms=100.0,
             result_bytes=None,
             result_tokens_est=None,
+            result_content=None,
             audit_id="c",
         )
     )
@@ -130,6 +134,33 @@ def test_records_calls_errors_duration_bytes_and_tokens(
     assert result_bytes.value == 200
     (tokens,) = _points(reader, "af_mcp.tool.result_tokens_est")
     assert tokens.value == 50
+
+
+def test_size_counters_are_labelled_per_content_type_and_unknown_types_become_other(
+    reader: InMemoryMetricReader,
+) -> None:
+    otel_metrics.record_tool_call(
+        _record(
+            result_content={
+                "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
+                "image": ContentMeasure(blocks=1, bytes=32_000, tokens_est=414),
+                "hologram": ContentMeasure(blocks=1, bytes=7, tokens_est=0),
+                "holodeck": ContentMeasure(blocks=1, bytes=3, tokens_est=0),
+            }
+        )
+    )
+
+    bytes_by_type = {
+        p.attributes["content_type"]: p.value
+        for p in _points(reader, "af_mcp.tool.result_bytes")
+    }
+    tokens_by_type = {
+        p.attributes["content_type"]: p.value
+        for p in _points(reader, "af_mcp.tool.result_tokens_est")
+    }
+    # Unknown types never become label values; their sizes are summed.
+    assert bytes_by_type == {"text": 29, "image": 32_000, "other": 10}
+    assert tokens_by_type == {"text": 14, "image": 414, "other": 0}
 
 
 def test_attribute_set_is_exactly_service_method_action_type_outcome(
@@ -161,9 +192,14 @@ def test_attribute_set_is_exactly_service_method_action_type_outcome(
         "f" * 32,
         "audit-secret",
     }
-    for metric in metrics.values():
+    for name, metric in metrics.items():
+        expected = (
+            _SIZE_ATTRIBUTES
+            if name in {"af_mcp.tool.result_bytes", "af_mcp.tool.result_tokens_est"}
+            else _ALLOWED_ATTRIBUTES
+        )
         for point in metric.data.data_points:
-            assert set(point.attributes) == _ALLOWED_ATTRIBUTES
+            assert set(point.attributes) == expected
             assert not set(point.attributes) & _FORBIDDEN_ATTRIBUTES
             assert not leaked_values & set(point.attributes.values())
     (point,) = _points(reader, "af_mcp.tool.calls")
@@ -185,7 +221,7 @@ def test_error_counter_attributes_obey_the_same_policy(
 
 
 def test_the_declared_attribute_names_cannot_include_identity() -> None:
-    assert set(otel_metrics.METRIC_ATTRIBUTES) == _ALLOWED_ATTRIBUTES
+    assert set(otel_metrics.METRIC_ATTRIBUTES) == _SIZE_ATTRIBUTES
     assert not set(otel_metrics.METRIC_ATTRIBUTES) & _FORBIDDEN_ATTRIBUTES
 
 
@@ -301,7 +337,7 @@ def test_real_exporter_sends_only_the_allowed_attributes_over_otlp(
                             wire_attributes.add(kv.key)
                             wire_values.add(kv.value.string_value)
     assert "af_mcp.tool.calls" in names
-    assert wire_attributes == _ALLOWED_ATTRIBUTES
+    assert wire_attributes == _SIZE_ATTRIBUTES
     assert not {"alice-sub-secret", "tok-secret"} & wire_values
 
 

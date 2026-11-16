@@ -17,6 +17,7 @@ import asyncpg
 import pytest
 
 from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.usage import PostgresUsageStore, UsageStore
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ def _record(**overrides: Any) -> AuditRecord:
         "duration_ms": 10.0,
         "result_bytes": 100,
         "result_tokens_est": 25,
+        "result_content": {"text": ContentMeasure(blocks=1, bytes=100, tokens_est=25)},
     }
     fields.update(overrides)
     return AuditRecord(**fields)
@@ -51,7 +53,9 @@ async def store(postgres_dsn: str) -> AsyncIterator[PostgresUsageStore]:
     await s.start()
     conn = await asyncpg.connect(postgres_dsn)
     try:
-        await conn.execute("TRUNCATE af_mcp_usage_events, af_mcp_usage_daily")
+        await conn.execute(
+            "TRUNCATE af_mcp_usage_events, af_mcp_usage_daily, af_mcp_usage_daily_content CASCADE"
+        )
     finally:
         await conn.close()
     yield s
@@ -98,7 +102,9 @@ async def test_start_renames_the_legacy_tool_column(postgres_dsn: str) -> None:
     migration is idempotent (a second start() is a no-op)."""
     conn = await asyncpg.connect(postgres_dsn)
     try:
-        await conn.execute("DROP TABLE IF EXISTS af_mcp_usage_events")
+        await conn.execute(
+            "DROP TABLE IF EXISTS af_mcp_usage_event_content, af_mcp_usage_events"
+        )
         await conn.execute(
             """
             CREATE TABLE af_mcp_usage_events (

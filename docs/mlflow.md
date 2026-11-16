@@ -69,7 +69,7 @@ usage on its own, for these reasons:
   missing, partial or wrong. It is useful, but it cannot be the record of what
   a user was allowed to do.
 - **What is measured differs.** The broker measures the size of each tool
-  result and a token estimate of it (`result_bytes`, `result_tokens_est`).
+  result (per content type: text, images, …) and a token estimate of it (`result_bytes`, `result_tokens_est`, `result_content`).
   It cannot see the user's prompts or model output, so it does not report LLM
   spend. An agent-side tracer sees the model calls but not the broker's
   authorization decisions.

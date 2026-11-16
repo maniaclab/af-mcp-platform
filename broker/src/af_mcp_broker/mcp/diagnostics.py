@@ -495,11 +495,12 @@ def register_diagnostic_tools(
         """Return the caller's own tool-call usage over a trailing window.
 
         The same data `GET /v1/usage` serves: window totals plus
-        per-service and per-day aggregates of the caller's tool calls (and
+        per-service, per-day and per-content-type aggregates of the caller's tool calls (and
         nobody else's -- the subject comes from the authenticated
         principal, never a parameter). Honesty caveats to relay to the
-        user: token counts are a tiktoken (o200k) ESTIMATE of the
-        tool-result text injected into the LLM client's context -- not
+        user: token counts are an ESTIMATE of the tool-result
+        content injected into the LLM client's context (text by a tiktoken
+        o200k count, images by Claude's vision-token rule) -- not
         provider-reported usage, and not the user's full token volume.
         `days` is the trailing window in UTC calendar days (1..365, today
         inclusive). Needs no permission of its own and never contacts a

@@ -849,7 +849,8 @@ to it appears in the very usage data it reports.
 Success and error records reach the log through the metering pipeline
 (`metering.py`): the hot path enqueues `(record, result)` and returns,
 and a background worker measures the result (`result_bytes`,
-`result_tokens_est`) and writes the line — a tool call never waits on
+`result_tokens_est`, and the per-content-type breakdown `result_content`) and
+writes the line — a tool call never waits on
 measurement or audit I/O. DENIED and UNMAPPED records stay synchronous
 inline: they are security-relevant and have nothing to measure. Metering is
 best-effort; audit records are authoritative. The transport behind the
@@ -926,7 +927,7 @@ span counts/structure will need updating after the fastmcp v4 migration
 (`maniaclab/af-mcp-platform#238`).
 
 **The trace ↔ audit join.** Spans carry identity/outcome/timing;
-measurements (`result_bytes`, `result_tokens_est`) stay in the audit log —
+measurements (`result_bytes`, `result_tokens_est`, `result_content`) stay in the audit log —
 they are computed by the metering worker *after* the response returns, so
 they can never be span attributes. Every `AuditRecord` instead carries the
 span's `trace_id` (32-hex, `null` when tracing is off), captured at record

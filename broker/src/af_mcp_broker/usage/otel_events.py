@@ -20,8 +20,11 @@ own thread and drops on overflow; ``emit`` never raises. Delivery is
 at-least-once toward the collector (a record redelivered to the store is
 emitted again), so receivers dedupe on ``audit_id``.
 
-Attributes are exactly :data:`EVENT_ATTRIBUTES`; tool arguments and results
-are never included. The receiving log backend therefore holds per-user data
+Attributes are exactly :data:`EVENT_ATTRIBUTES` plus, for a measured call, three
+per-content-type attributes ``result_content.<content_type>.blocks`` /
+``.bytes`` / ``.tokens_est`` per entry of the record's breakdown (the real
+content-type string -- an event is per call, so it is not a metric label);
+tool arguments and results are never included. The receiving log backend therefore holds per-user data
 and needs its own access control -- out of scope here, as for traces.
 """
 
@@ -65,6 +68,10 @@ EVENT_ATTRIBUTES = (
 )
 
 
+# Prefix of the open-ended per-content-type attributes (see module docstring).
+EVENT_CONTENT_PREFIX = "result_content."
+
+
 class OtelUsageEventEmitter:
     """Emits one OTel log record per usage ``AuditRecord`` through a batch processor.
 
@@ -101,6 +108,15 @@ class OtelUsageEventEmitter:
             "method": record.action,
             "outcome": record.outcome,
             **{k: v for k, v in optional.items() if v is not None},
+            **{
+                f"{EVENT_CONTENT_PREFIX}{content_type}.{field}": value
+                for content_type, m in (record.result_content or {}).items()
+                for field, value in (
+                    ("blocks", m.blocks),
+                    ("bytes", m.bytes),
+                    ("tokens_est", m.tokens_est),
+                )
+            },
         }
         try:
             self._logger.emit(

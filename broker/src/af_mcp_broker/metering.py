@@ -87,9 +87,10 @@ async def _write_and_account(record: AuditRecord, usage_store: UsageStore) -> No
 def _measure_into(
     record: AuditRecord, result: ToolResult | None, settings: Settings
 ) -> None:
-    """Fill ``record.result_bytes``/``result_tokens_est`` from *result*.
+    """Fill the record's result totals and per-content-type breakdown from *result*.
 
-    ``measure_tool_result`` already degrades to ``(None, None)`` internally;
+    ``measure_tool_result`` already degrades to None internally (leaving the
+    record unmeasured);
     the catch here is belt-and-braces for failures it did not anticipate --
     the audit line must still be written (unmeasured) if measurement blows
     up, so nothing may propagate out of this helper.
@@ -97,9 +98,12 @@ def _measure_into(
     if result is None:
         return
     try:
-        record.result_bytes, record.result_tokens_est = measure_tool_result(
-            result, settings
-        )
+        measurement = measure_tool_result(result, settings)
+        if measurement is None:
+            return
+        record.result_bytes = measurement.result_bytes
+        record.result_tokens_est = measurement.result_tokens_est
+        record.result_content = measurement.content
     except Exception as exc:  # noqa: BLE001 -- metering must never lose an audit line
         metrics.metering_worker_errors_total.inc()
         metrics.metering_records_missing_measurements_total.inc()

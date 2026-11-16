@@ -22,14 +22,51 @@ audit records are authoritative.** Four surfaces divide the work:
 
 ## What gets measured per tool call
 
-The metering worker fills three measurements into each success/error audit
+The metering worker fills these measurements into each success/error audit
 record (and the usage store accumulates them):
 
 | Field | What it is |
 |---|---|
 | `duration_ms` | Wall time of the downstream tool call — credential resolution plus the backend call itself. |
-| `result_bytes` | Size of the tool result's serialized text content — its text blocks, or the JSON of its structured content only when no text blocks are present (the two are alternatives, never summed, since backends commonly mirror one into the other). |
-| `result_tokens_est` | A tiktoken **estimate** of the same text, using the `o200k_base` encoding by default (`TOKEN_ESTIMATE_ENCODING`; empty string disables token estimation, byte measurement is unaffected). |
+| `result_bytes` | Wire size of the whole tool result: the **sum** of the per-content-type bytes in `result_content` below. |
+| `result_tokens_est` | An **estimate** of what the result costs the LLM client's context: the sum of the per-content-type token estimates below. `null` when token estimation is off (see below). |
+| `result_content` | The breakdown behind those two totals, keyed by MCP content type (see below). |
+
+#### Per-content-type breakdown
+
+`result_content` maps a content type to `{blocks, bytes, tokens_est}`. The
+key is the MCP block's own `type` (`text`, `image`, `audio`, `resource`,
+`resource_link`, …) plus `structured` for the result's `structuredContent`.
+It is an open set: a new MCP content type shows up as a new key, with no
+schema change anywhere. A block type the broker does not recognize is still
+measured under its own type string (bytes = its serialized JSON, tokens 0) and
+logged once per call as `unknown_content_type` — never dropped.
+
+- **Bytes** are wire size as sent: text is its UTF-8 length; base64 payloads
+  (image and audio `data`, a blob resource's `blob`) are counted at their
+  **base64** length; a `resource_link` or unknown block is its serialized JSON.
+- **Tokens** come from a per-type rule table
+  (`broker/src/af_mcp_broker/audit/measure.py`, `_TOKEN_RULES`; a new rule is
+  one entry):
+  - `text`, `structured` and text `resource`: a tiktoken estimate, using the
+    `o200k_base` encoding by default (`TOKEN_ESTIMATE_ENCODING`; an empty
+    string disables token estimation: every `tokens_est` is then 0 and
+    `result_tokens_est` is `null`, byte measurement is unaffected).
+  - `image`: Anthropic's vision rule — `ceil(width/28) × ceil(height/28)`
+    visual tokens after downscaling to the tier's limits
+    ([Vision](https://platform.claude.com/docs/en/build-with-claude/vision),
+    [How Claude resizes and pads images](https://platform.claude.com/docs/en/build-with-claude/vision-coordinates)).
+    The broker cannot know the client's model, so the tier is a fixed
+    assumption: the high-resolution tier (2,576 px long edge, 4,784 visual
+    tokens; Claude 4.7 and later), `audit/image_tokens.py`'s `ASSUMED_TIER`.
+    Dimensions are read from the PNG/JPEG/GIF/WebP header; an unreadable image
+    is logged (`image_dimensions_unreadable`) and charged the tier maximum,
+    never 0. Example: a 640×480 PNG is 23 × 18 = 414 tokens.
+  - everything else (audio, blob `resource`, `resource_link`, unknown): 0 —
+    the model does not consume it as tokens.
+- `structuredContent` is measured only when the result has no text blocks (the
+  two are alternatives, never summed, since backends commonly mirror one into
+  the other).
 
 Be clear about what the token number is: an estimate of what each tool
 result would inject into an LLM client's context — **not**
@@ -98,14 +135,24 @@ Trimmed response:
   ],
   "by_day": [
     { "date": "2026-08-24", "calls": 42, "result_tokens_est": 262144 }
+  ],
+  "by_content_type": [
+    { "content_type": "image", "blocks": 3, "bytes": 786432, "tokens_est": 1242 },
+    { "content_type": "text", "blocks": 39, "bytes": 262144, "tokens_est": 260902 }
   ]
 }
 ```
 
 **Honesty caveats** (verbatim from the endpoint's own description): token
-counts are a tiktoken (o200k) ESTIMATE of the tool-result text injected
-into the LLM client's context — not provider-reported usage, and not the
-user's full token volume.
+counts are an ESTIMATE of the tool-result content injected into the LLM
+client's context (text by a tiktoken o200k count, images by Claude's
+vision-token rule) — not provider-reported usage, and not the user's full
+token volume.
+
+`by_content_type` is the same sums split per content type. Calls recorded
+without a breakdown (unmeasured, or written by a replica older than the
+breakdown) are in `totals` but in no `by_content_type` entry, so the entries
+can sum to less than the totals, never to more.
 
 An MCP client doesn't need to leave the MCP surface for this: the
 broker-native `af_usage` method (alongside `af_whoami` and the builtin
@@ -184,7 +231,10 @@ indexed, because nothing reads by them yet and an index adds write load.
 Raw rows would otherwise accumulate forever. The broker folds raw rows older
 than the retention window into `af_mcp_usage_daily`, keyed `(day,
 principal_sub, service, method, outcome)` with the summed calls, duration,
-bytes and tokens, and deletes them in the same statement.
+bytes and tokens, and deletes them in the same statement. The per-content-type
+rows are folded in that same statement into `af_mcp_usage_daily_content`,
+keyed `(day, principal_sub, service, method, outcome, content_type)`, before
+the delete cascades them away.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -278,16 +328,36 @@ The recipe:
 
 ### Schema
 
-Two idempotent tables: `af_mcp_usage_events` (raw rows), keyed by
+Four idempotent tables: `af_mcp_usage_events` (raw rows), keyed by
 `audit_id` (primary key) with indexes on `(principal_sub, ts)` and `ts`,
-and `af_mcp_usage_daily` (the rollup, see
-[Retention and daily rollup](#retention-and-daily-rollup-postgres)). Inserts use
+`af_mcp_usage_event_content` (one child row per content type of an event:
+`audit_id` → `af_mcp_usage_events ON DELETE CASCADE`, `content_type`,
+`blocks`, `bytes`, `tokens_est`, primary key `(audit_id, content_type)`),
+`af_mcp_usage_daily` (the rollup, see
+[Retention and daily rollup](#retention-and-daily-rollup-postgres)) and
+`af_mcp_usage_daily_content` (its per-content-type counterpart). The parent's
+`result_bytes` / `result_tokens_est` are the totals over its children, and
+`content_type` is an open set, so a new MCP content type or token rule needs
+no schema change. Parent and children are written in one transaction. Inserts use
 `ON CONFLICT (audit_id) DO NOTHING`, so redelivery of the same record —
 which best-effort metering permits — is safe by construction. The DDL is
 `CREATE ... IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` and runs at broker
 startup (replicas racing each other are fine); there is deliberately **no
 migration framework** yet — idempotent DDL does not justify one. Raw
 rows are bounded by the retention window described above.
+
+**Upgrading from a release without the breakdown.** Starting the broker
+creates the two content tables and backfills them once: each existing event
+row with `result_bytes > 0` and no child rows gets one `text` child row from
+its totals, and each daily row without content rows gets one `text` content
+row. Only text was measured before the breakdown, so `text` is what those
+totals were; the real block count is unknown, so `blocks` is an approximation
+(1 per event row, `calls` per daily row). The backfill uses `NOT EXISTS` and
+`ON CONFLICT DO NOTHING`, so it runs once per row no matter how often or from
+how many replicas the DDL runs. During a rolling deploy, replicas of the
+previous release keep inserting event rows without children; that does not
+fail, readers treat such a row as "breakdown unknown", and the next start
+adopts them as `text` (which is exactly what that release measured).
 
 ## Operator: metrics
 
@@ -347,9 +417,9 @@ signal is access-controlled and unbounded by design:
 | Signal | Carries identity | Attributes | Cardinality |
 |---|---|---|---|
 | Prometheus metrics (`:9090`) | No | `service`, `tool`, `action_type`, `outcome`, `error_class`, `target` (per metric) | Bounded by `services.yaml` / `policy.yaml` |
-| OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome` | Same bound |
+| OTel metrics (OTLP) | No | `service`, `method`, `action_type`, `outcome`; plus `content_type` on the two size counters | Same bound; `content_type` is MCP's small type set, unknown types become `other` |
 | Audit log (JSON lines) | Yes: `principal_sub`, `token_id`, `request_id`, `audit_id`, `trace_id` | One record per tool call | Unbounded by design; authoritative, behind access control |
-| OTel usage events (OTLP logs, opt-in) | Yes: `principal_sub`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`; never arguments or results | One per tool call; access control is the log backend's |
+| OTel usage events (OTLP logs, opt-in) | Yes: `principal_sub`, `token_id`, `audit_id`, `trace_id` | `service`, `method`, `outcome`, `duration_ms`, `result_bytes`, `result_tokens_est`, and `result_content.<type>.{blocks,bytes,tokens_est}`; never arguments or results | One per tool call; access control is the log backend's |
 | Spans (OTLP, sampled) | Yes: `user.id` | Identity, outcome and timing; never arguments or results | Sampled; joins to the audit log by `trace_id` |
 
 Rule of thumb: a question about *a user* is answered from the audit log
@@ -440,11 +510,15 @@ broker:
 | `af_mcp.tool.calls` | counter | `{call}` | Tool calls that reached a backend. |
 | `af_mcp.tool.errors` | counter | `{call}` | Of those, the ones that ended in error. |
 | `af_mcp.tool.duration` | histogram | `s` | Wall time of the downstream call; same buckets as `af_mcp_tool_duration_seconds`. |
-| `af_mcp.tool.result_bytes` | counter | `By` | Serialized size of tool results (an estimate of what enters the LLM client's context). |
-| `af_mcp.tool.result_tokens_est` | counter | `{token}` | Estimated tokens of those results. |
+| `af_mcp.tool.result_bytes` | counter | `By` | Wire size of tool results, per `content_type`. |
+| `af_mcp.tool.result_tokens_est` | counter | `{token}` | Estimated tokens of those results, per `content_type`. |
 
 Every instrument carries exactly `service`, `method`, `action_type` and
-`outcome`, and no other attribute: a test fails if any metric gains a user,
+`outcome`, and no other attribute — except that the two size counters also
+carry `content_type`, bounded by MCP's type set (`text`, `structured`,
+`image`, `audio`, `resource`, `resource_link`); any other type a backend
+sends is labelled `other` here (Postgres and the audit log keep the real
+string): a test fails if any metric gains a user,
 token, jti or request-id attribute. Like usage accounting, these cover
 success and error calls only; denied and unmapped calls never reach the
 metering worker.
@@ -472,9 +546,11 @@ broker:
 - One log record (event name `af_mcp.usage`) is emitted for each usage
   record the store records, with exactly these attributes: `audit_id`,
   `trace_id`, `principal_sub`, `token_id`, `service`, `method`, `outcome`,
-  `duration_ms`, `result_bytes`, `result_tokens_est`. Unset optional values
-  (no token for a session JWT, no trace when untraced, nothing measured) are
-  omitted. Tool arguments and results are never included.
+  `duration_ms`, `result_bytes`, `result_tokens_est`; a measured call also
+  carries `result_content.<content_type>.blocks`, `.bytes` and `.tokens_est`
+  for each content type of the result (the real type string). Unset optional
+  values (no token for a session JWT, no trace when untraced, nothing
+  measured) are omitted. Tool arguments and results are never included.
 - Postgres stays authoritative and the audit log stays authoritative
   overall. Emission is a wrapper around the usage store, so every record
   path (batched, overflow, inline) is covered with no second call site, and

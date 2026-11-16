@@ -5,11 +5,14 @@ import dataclasses
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME
+
+if TYPE_CHECKING:
+    from af_mcp_broker.audit.measure import ContentMeasure
 
 
 @dataclass
@@ -62,13 +65,19 @@ class AuditRecord:
     # duration_ms: wall time of the downstream call (credential resolution
     # plus the backend tool call), recorded on the success and error paths.
     duration_ms: float | None = None
-    # result_bytes / result_tokens_est: size of the tool result's serialized
-    # text content -- an estimate of what the call injects into the LLM
-    # client's context, not wire size. Success path only; tokens are a
-    # tiktoken ESTIMATE (see audit/measure.py) and stay None when estimation
-    # is disabled or unavailable.
+    # result_bytes / result_tokens_est: totals over every content block of the
+    # tool result -- the sums of result_content below (see audit/measure.py
+    # for exactly what each content type contributes). Bytes are wire size;
+    # tokens are an ESTIMATE of what the result costs the LLM client's context
+    # and stay None when token estimation is disabled or unavailable.
+    # Success path only.
     result_bytes: int | None = None
     result_tokens_est: int | None = None
+    # The per-content-type breakdown behind those totals: MCP content type
+    # (text, image, audio, resource, resource_link, ..., structured) ->
+    # ContentMeasure. An open set, so a new content type needs no schema
+    # change. None when nothing was measured; {} for a measured empty result.
+    result_content: dict[str, ContentMeasure] | None = None
     # The trace <-> audit <-> usage join key (observability roadmap PR D):
     # 32-hex-lowercase OTel trace id of the tool-call span that was current
     # when the middleware built this record, or None when there was no

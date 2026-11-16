@@ -37,7 +37,9 @@ async def store(postgres_dsn: str) -> AsyncIterator[PostgresUsageStore]:
 async def _truncate(dsn: str) -> None:
     conn = await asyncpg.connect(dsn)
     try:
-        await conn.execute("TRUNCATE af_mcp_usage_events, af_mcp_usage_daily")
+        await conn.execute(
+            "TRUNCATE af_mcp_usage_events, af_mcp_usage_daily, af_mcp_usage_daily_content CASCADE"
+        )
     finally:
         await conn.close()
 
@@ -108,7 +110,9 @@ async def test_start_adds_token_and_trace_columns_to_an_existing_table(
     migration is idempotent, and new records populate the columns."""
     conn = await asyncpg.connect(postgres_dsn)
     try:
-        await conn.execute("DROP TABLE IF EXISTS af_mcp_usage_events")
+        await conn.execute(
+            "DROP TABLE IF EXISTS af_mcp_usage_event_content, af_mcp_usage_events"
+        )
         await conn.execute(
             """
             CREATE TABLE af_mcp_usage_events (

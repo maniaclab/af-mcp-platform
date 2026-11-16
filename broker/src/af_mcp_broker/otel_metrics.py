@@ -35,6 +35,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
 from af_mcp_broker._version import version as __version__
+from af_mcp_broker.audit.measure import metric_content_type
 from af_mcp_broker.otel_resource import broker_resource
 from af_mcp_broker.usage import counts_as_usage
 
@@ -50,8 +51,11 @@ logger = structlog.get_logger(__name__)
 # The ONLY attribute names any instrument here may carry. ``service`` and
 # ``action_type`` come from the operator's services.yaml / policy.yaml;
 # ``method`` is a registered service's own fixed tool name; ``outcome`` is
-# success or error. See the cardinality policy in metrics.py.
-METRIC_ATTRIBUTES = ("service", "method", "action_type", "outcome")
+# success or error; ``content_type`` (the result_bytes / result_tokens_est
+# counters only) is MCP's own small type set, with anything the broker does
+# not recognize collapsed to ``other`` (audit.measure.metric_content_type).
+# See the cardinality policy in metrics.py.
+METRIC_ATTRIBUTES = ("service", "method", "action_type", "outcome", "content_type")
 
 # Same bucket layout as the Prometheus tool-duration histogram (metrics.py),
 # in seconds: tool calls can include credential minting via ephemeral k8s
@@ -132,13 +136,14 @@ def init_otel_metrics(settings: Settings, reader: MetricReader | None = None) ->
         result_bytes=meter.create_counter(
             "af_mcp.tool.result_bytes",
             unit="By",
-            description="Serialized size of tool results injected into the LLM "
-            "client's context (an estimate, not wire size).",
+            description="Wire size of tool results by content_type (base64 "
+            "payloads at their base64 length).",
         ),
         result_tokens_est=meter.create_counter(
             "af_mcp.tool.result_tokens_est",
             unit="{token}",
-            description="Estimated tokens of tool results (tiktoken estimate).",
+            description="Estimated tokens of tool results by content_type "
+            "(tiktoken for text, Claude's vision rule for images).",
         ),
     )
     _provider = provider
@@ -186,9 +191,17 @@ def record_tool_call(record: AuditRecord) -> None:
             instruments.errors.add(1, attributes)
         if record.duration_ms is not None:
             instruments.duration.record(record.duration_ms / 1000, attributes)
-        if record.result_bytes is not None:
-            instruments.result_bytes.add(record.result_bytes, attributes)
-        if record.result_tokens_est is not None:
-            instruments.result_tokens_est.add(record.result_tokens_est, attributes)
+        # Sizes are recorded per content type; unknown types share "other"
+        # (summed first so each label value gets one data point per call).
+        by_label: dict[str, tuple[int, int]] = {}
+        for content_type, m in (record.result_content or {}).items():
+            label = metric_content_type(content_type)
+            size_bytes, size_tokens = by_label.get(label, (0, 0))
+            by_label[label] = (size_bytes + m.bytes, size_tokens + m.tokens_est)
+        for label, (size_bytes, size_tokens) in by_label.items():
+            sized = {**attributes, "content_type": label}
+            instruments.result_bytes.add(size_bytes, sized)
+            if record.result_tokens_est is not None:
+                instruments.result_tokens_est.add(size_tokens, sized)
     except Exception as exc:  # noqa: BLE001 -- metrics must never affect a call
         logger.warning("otel_metrics_record_failed", error=str(exc))

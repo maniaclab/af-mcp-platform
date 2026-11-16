@@ -20,6 +20,7 @@ from broker_state_helpers import set_broker_state
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
 from af_mcp_broker.audit import AuditRecord
+from af_mcp_broker.audit.measure import ContentMeasure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,6 +108,38 @@ def test_usage_empty_store_returns_zeroed_window(app_client) -> None:
     }
     assert body["by_service"] == []
     assert body["by_day"] == []
+    assert body["by_content_type"] == []
+
+
+def test_usage_by_content_type_lists_the_breakdown(app_client) -> None:
+    """The response carries the totals AND the per-content-type breakdown; a
+    record with no breakdown adds to the totals but to no content type."""
+    client, _ = app_client
+    _seed(
+        client,
+        _record(
+            result_bytes=32_029,
+            result_tokens_est=428,
+            result_content={
+                "text": ContentMeasure(blocks=1, bytes=29, tokens_est=14),
+                "image": ContentMeasure(blocks=1, bytes=32_000, tokens_est=414),
+            },
+        ),
+        _record(
+            result_content={"image": ContentMeasure(blocks=1, bytes=10, tokens_est=64)},
+            result_bytes=10,
+            result_tokens_est=64,
+        ),
+        _record(result_content=None),
+    )
+
+    body = client.get("/v1/usage").json()
+
+    assert body["totals"]["result_bytes"] == 32_029 + 10 + 100
+    assert body["by_content_type"] == [
+        {"content_type": "image", "blocks": 2, "bytes": 32_010, "tokens_est": 478},
+        {"content_type": "text", "blocks": 1, "bytes": 29, "tokens_est": 14},
+    ]
 
 
 def test_usage_totals_by_service_and_by_day(app_client) -> None:
