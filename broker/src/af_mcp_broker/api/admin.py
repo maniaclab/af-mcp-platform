@@ -30,9 +30,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from af_mcp_broker import metrics
+from af_mcp_broker.api.auth import require_admin
 from af_mcp_broker.audit import AuditRecord, write_audit
 from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.identity import require_admin
 from af_mcp_broker.logging import current_correlation_id
 from af_mcp_broker.maintenance import (
     MaintenanceState,

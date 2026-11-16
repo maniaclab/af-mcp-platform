@@ -11,7 +11,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import pytest
 from test_usage_postgres import _record
 

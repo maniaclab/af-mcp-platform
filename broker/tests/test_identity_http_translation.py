@@ -17,8 +17,9 @@ import pytest
 from conftest import make_claims
 from fastapi import Header
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
-from af_mcp_broker.identity import get_principal, keycloak_dependency
+from af_mcp_broker.identity import get_principal
 
 URL = "/v1/identities"
 

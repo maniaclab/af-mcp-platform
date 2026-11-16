@@ -111,6 +111,8 @@ work once this is merged. Publishing to a public marketplace is not done yet.
 
 Deployment is via the Helm chart in [`charts/af-mcp-platform`](charts/af-mcp-platform) — `values.yaml` documents every configurable field. See [docs/architecture.md](docs/architecture.md) for the reference architecture and auth model.
 
+`values.schema.json` validates every value before anything renders: `helm install`, `upgrade`, `template` and `lint` list all violations in one error (a misspelt key, a wrong type, an unsupported backend, a missing `oidc.issuer`, `portal.oidc.clientId` or `portal.brokerOrigin`, an empty `aggregator.services`, or an empty `entitlements.group_permissions`). Free-form blocks (`broker.env`, `resources`, annotations, `entitlements.target_action_types`) stay open.
+
 ## For Developers
 
 The full new-contributor walkthrough lives in

@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization.rate_limit import (
     RateLimitStatus,
     rate_limit_statuses,
     read_rate_limit_usage,
 )
 from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 
 if TYPE_CHECKING:

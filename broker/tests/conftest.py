@@ -42,13 +42,13 @@ from pydantic import SecretStr
 from x509_fakes import FakeX509Store
 
 from af_mcp_broker import backend_client, identity, lint_observations
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app as broker_app
 from af_mcp_broker.audit import measure
 from af_mcp_broker.authorization import load_policy
 from af_mcp_broker.config import Settings, get_settings
 from af_mcp_broker.credentials import stores as credential_stores_module
 from af_mcp_broker.credmon.state import CredmonSyncState
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import AUDIT_LOGGER_NAME, configure_logging
 from af_mcp_broker.maintenance import InMemoryMaintenanceModeStore
 from af_mcp_broker.mcp import aggregator as aggregator_module

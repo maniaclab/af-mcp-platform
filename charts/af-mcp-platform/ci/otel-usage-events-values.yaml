@@ -30,3 +30,15 @@ broker:
       podSelector:
         app.kubernetes.io/name: "opentelemetry-collector"
       port: 4318
+
+# values.schema.json requires a non-empty service registry and group map.
+aggregator:
+  services:
+    - name: docs-example
+      prefix: docs
+      url: "http://docs-mcp.example.svc.cluster.local/mcp"
+      transport: http
+      required_permission: __none__
+entitlements:
+  group_permissions:
+    __authenticated__: [read_metadata]

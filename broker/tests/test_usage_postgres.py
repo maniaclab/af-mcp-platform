@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import pytest
 
 from af_mcp_broker.audit import AuditRecord
