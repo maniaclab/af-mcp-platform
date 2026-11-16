@@ -1,4 +1,4 @@
-"""Tests for identity.require_admin -- the admin-gating dependency."""
+"""Tests for api.auth.require_admin -- the admin-gating dependency."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ from broker_state_helpers import make_broker_state
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from af_mcp_broker.api.auth import keycloak_dependency, require_admin
 from af_mcp_broker.app import _identity_error_handler
 from af_mcp_broker.config import Settings, get_settings
-from af_mcp_broker.identity import IdentityError, keycloak_dependency, require_admin
+from af_mcp_broker.identity import IdentityError
 from af_mcp_broker.principal import Principal
 
 

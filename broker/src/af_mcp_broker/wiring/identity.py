@@ -80,7 +80,7 @@ def build_principal_cache(
     The Keycloak admin service account is therefore load-bearing for ALL
     authentication, not just PATs. The dev bypass
     (BROKER_DEV_INSECURE_PRINCIPAL) is the one exception: it short-circuits
-    identity.keycloak_dependency/mcp's AsgiAuthMiddleware before either ever
+    api.auth.keycloak_dependency/mcp's AsgiAuthMiddleware before either ever
     reaches the directory (see build_dev_principal), so it needs no directory
     at all. Neither configured is otherwise a genuine misconfiguration, not a
     degraded mode -- refuse to start rather than boot a broker that can never

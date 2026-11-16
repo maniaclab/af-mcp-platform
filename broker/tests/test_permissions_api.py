@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 from broker_state_helpers import set_broker_state
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import PERMISSIONS, EntitlementPolicy
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.service_registry import ServiceSpec
 
 

@@ -21,9 +21,9 @@ from test_request_logging import _capturing_info
 from af_mcp_broker import identity
 from af_mcp_broker import retry_after as retry_after_module
 from af_mcp_broker.api import tokens as tokens_api
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
 from af_mcp_broker.config import get_settings
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.pat import PAT_PREFIX
 from af_mcp_broker.token_registry import TokenRecord
 

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.types import ToolAnnotations  # noqa: TC002
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
     get_action_type,
@@ -28,7 +29,6 @@ from af_mcp_broker.backend_client import (
 )
 from af_mcp_broker.backend_errors import NotLinkedForListingError
 from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.service_status import holds_any_required_permission
 

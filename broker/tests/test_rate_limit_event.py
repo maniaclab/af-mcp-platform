@@ -10,11 +10,11 @@ from test_request_logging import _capturing_info
 
 from af_mcp_broker import app as app_module
 from af_mcp_broker import retry_after as retry_after_module
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.credentials.errors import (
     CredentialRateLimitedError,
     UnlockRateLimitError,
 )
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.logging import bind_subject
 from af_mcp_broker.retry_after import RateLimiter, log_rate_limited
 

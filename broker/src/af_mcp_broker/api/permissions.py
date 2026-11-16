@@ -6,6 +6,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import (
     PERMISSIONS,
     EntitlementPolicy,
@@ -14,7 +15,6 @@ from af_mcp_broker.authorization import (
     get_principal_permissions,
 )
 from af_mcp_broker.broker_state import get_broker_state
-from af_mcp_broker.identity import keycloak_dependency
 from af_mcp_broker.principal import Principal
 from af_mcp_broker.service_status import (
     LinkState,
