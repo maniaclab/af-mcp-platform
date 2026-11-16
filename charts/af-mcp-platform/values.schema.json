@@ -472,16 +472,7 @@
         "vault": {
           "type": "object",
           "properties": {
-            "x509KvPathPrefix": {
-              "type": "string"
-            },
-            "krb5KvPathPrefix": {
-              "type": "string"
-            },
-            "servicexKvPathPrefix": {
-              "type": "string"
-            },
-            "credmonKvPathPrefix": {
+            "kvRoot": {
               "type": "string"
             }
           },
@@ -520,9 +511,6 @@
                     },
                     "kvMount": {
                       "type": "string"
-                    },
-                    "kvPathPrefix": {
-                      "type": "string"
                     }
                   },
                   "additionalProperties": false
@@ -542,9 +530,6 @@
                 "in-memory",
                 "vault"
               ]
-            },
-            "kvPathPrefix": {
-              "type": "string"
             }
           },
           "additionalProperties": false
@@ -558,9 +543,6 @@
                 "in-memory",
                 "vault"
               ]
-            },
-            "kvPathPrefix": {
-              "type": "string"
             }
           },
           "additionalProperties": false
@@ -694,9 +676,6 @@
                 "vault",
                 "postgres"
               ]
-            },
-            "kvPathPrefix": {
-              "type": "string"
             },
             "cacheTtlSeconds": {
               "type": "number",

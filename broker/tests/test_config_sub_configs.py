@@ -15,7 +15,11 @@ from af_mcp_broker.config import (
     VaultMaintenanceStoreConfig,
 )
 
-_VAULT = {"vault_addr": "https://vault.example", "vault_auth_role": "af-mcp-broker"}
+_VAULT = {
+    "vault_addr": "https://vault.example",
+    "vault_auth_role": "af-mcp-broker",
+    "vault_kv_root": "mcp",
+}
 
 
 class TestVaultConfig:

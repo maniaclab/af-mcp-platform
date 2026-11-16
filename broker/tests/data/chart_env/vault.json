@@ -1,12 +1,9 @@
 {
   "env": {
     "ALLOW_PER_REPLICA_STATE": "true",
-    "CREDMON_STATE_KV_PATH_PREFIX": "mcp/credmon",
     "IDENTITY_PROVIDERS": "[{\"alias\":\"rucio-mcp-example\",\"authorization_endpoint\":\"https://rucio-mcp.example.com/authorize\",\"client_id\":null,\"confidential\":false,\"display_name\":\"\",\"enables\":\"\",\"issuer\":\"https://rucio-mcp.example.com\",\"revocation_endpoint\":\"https://rucio-mcp.example.com/revoke\",\"scope\":\"openid profile email\",\"targets\":[\"rucio-mcp-example\"],\"token_endpoint\":\"https://rucio-mcp.example.com/token\",\"type\":\"oauth21-direct\"}]",
-    "KRB5_KV_PATH_PREFIX": "mcp/krb5",
     "MAINTENANCE_MODE_BACKEND": "vault",
     "MAINTENANCE_MODE_CACHE_TTL_SECONDS": "5",
-    "MAINTENANCE_MODE_KV_PATH_PREFIX": "mcp/maintenance-mode",
     "MCP_REPLICA_COUNT": "2",
     "MCP_STATELESS_HTTP": "true",
     "METERING_BACKEND": "in_process",
@@ -18,11 +15,8 @@
     "POSIX_UID_ATTRIBUTE": "uid",
     "POSIX_UNIXNAME_ATTRIBUTE": "unixname",
     "PRINCIPAL_CACHE_BACKEND": "in_memory",
-    "PRINCIPAL_CACHE_KV_PATH_PREFIX": "mcp/principal-cache",
     "PRINCIPAL_DIRECTORY_GROUP_FULL_PATH": "false",
-    "SERVICEX_KV_PATH_PREFIX": "mcp/servicex",
     "TOKEN_REGISTRY_BACKEND": "in_memory",
-    "TOKEN_REGISTRY_KV_PATH_PREFIX": "mcp/token-registry",
     "TOKEN_STORE_BACKEND": "in_memory",
     "USAGE_BATCH_INTERVAL_MS": "1000",
     "USAGE_BATCH_MAX": "100",
@@ -33,7 +27,7 @@
     "VAULT_AUTH_MOUNT": "kubernetes",
     "VAULT_AUTH_ROLE": "af-mcp-broker-example",
     "VAULT_KV_MOUNT": "secret",
-    "X509_KV_PATH_PREFIX": "mcp/x509"
+    "VAULT_KV_ROOT": "mcp"
   },
   "error": "Value error, broker_state_key (BROKER_STATE_KEY) must be set when identity_providers contains an oauth21-direct entry \u2014 it protects in-flight OAuth 2.1 linking flows."
 }

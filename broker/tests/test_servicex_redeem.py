@@ -123,6 +123,7 @@ def servicex_redeem_env(
         # test_krb5_redeem.py's krb5_redeem_env does.
         monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
         monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+        monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
         monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
     return _apply

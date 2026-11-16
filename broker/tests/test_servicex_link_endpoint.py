@@ -74,6 +74,7 @@ def servicex_link_env(
         monkeypatch.setenv("BROKER_SIGNING_KEY_FILE", str(key_file))
         monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
         monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+        monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
         monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
 
     return _apply

@@ -62,6 +62,7 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(
         oidc_issuer="https://kc.invalid/realms/x",
         vault_addr="https://vault.invalid",
+        vault_kv_root="mcp",
         vault_auth_role="r",
         broker_public_origin=_ORIGIN,
         broker_state_key=Fernet.generate_key().decode(),

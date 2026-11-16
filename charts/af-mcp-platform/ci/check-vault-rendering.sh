@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Content assertions for the Vault connection env (VAULT_*), the per-store KV
-# path prefixes, and the oauth21-direct revocation endpoint. `helm lint` only
-# proves these values files render; this proves what lands in the output. Run
-# from the repository root.
+# Content assertions for the Vault connection env (VAULT_*), the KV root, and
+# the oauth21-direct revocation endpoint. `helm lint` only proves these values
+# files render; this proves what lands in the output. Run from the repository
+# root.
 set -euo pipefail
 
 chart=charts/af-mcp-platform
@@ -46,28 +46,27 @@ done
 rendered=$(render -f "$ci/vault-values.yaml" --set broker.maintenanceMode.backend=in-memory)
 expect_lacks "no vault consumer" 'name: VAULT_ADDR' "$rendered"
 
-# Per-store KV prefixes: broker defaults unless overridden per release.
+# The KV root is the only prefix setting; the broker derives every store's
+# prefix from it. A per-release root reaches the broker env, and the old
+# per-store prefix env vars are never rendered.
 rendered=$(render -f "$ci/vault-values.yaml")
-for pair in \
-  X509_KV_PATH_PREFIX:mcp/x509 \
-  KRB5_KV_PATH_PREFIX:mcp/krb5 \
-  SERVICEX_KV_PATH_PREFIX:mcp/servicex \
-  CREDMON_STATE_KV_PATH_PREFIX:mcp/credmon; do
-  expect_has "default ${pair%%:*}" "name: ${pair%%:*}" "$rendered"
-  expect_has "default ${pair%%:*}" "value: \"${pair#*:}\"" "$rendered"
-done
+expect_has "kvRoot" 'name: VAULT_KV_ROOT' "$rendered"
+expect_has "kvRoot" 'value: "mcp"' "$rendered"
+expect_lacks "per-store prefix" 'KV_PATH_PREFIX' "$rendered"
+rendered=$(render -f "$ci/vault-values.yaml" --set broker.vault.kvRoot=mcp-ops)
+expect_has "kvRoot override" 'value: "mcp-ops"' "$rendered"
+
+# A Vault consumer without a root fails the render, naming the value.
+if err=$(render -f "$ci/vault-values.yaml" --set broker.vault.kvRoot= 2>&1); then
+  echo "FAIL (missing kvRoot): render succeeded" >&2
+  exit 1
+fi
+expect_has "missing kvRoot" 'broker.vault.kvRoot is required' "$err"
+
+# No Vault consumer: no root needed and none rendered.
 rendered=$(render -f "$ci/vault-values.yaml" \
-  --set broker.vault.x509KvPathPrefix=mcp/b/x509 \
-  --set broker.vault.krb5KvPathPrefix=mcp/b/krb5 \
-  --set broker.vault.servicexKvPathPrefix=mcp/b/servicex \
-  --set broker.vault.credmonKvPathPrefix=mcp/b/credmon)
-for pair in \
-  X509_KV_PATH_PREFIX:mcp/b/x509 \
-  KRB5_KV_PATH_PREFIX:mcp/b/krb5 \
-  SERVICEX_KV_PATH_PREFIX:mcp/b/servicex \
-  CREDMON_STATE_KV_PATH_PREFIX:mcp/b/credmon; do
-  expect_has "override ${pair%%:*}" "value: \"${pair#*:}\"" "$rendered"
-done
+  --set broker.maintenanceMode.backend=in-memory --set broker.vault.kvRoot=)
+expect_lacks "no vault consumer" 'VAULT_KV_ROOT' "$rendered"
 
 # oauth21-direct revocation endpoint reaches IDENTITY_PROVIDERS.
 rendered=$(render -f "$ci/vault-values.yaml")

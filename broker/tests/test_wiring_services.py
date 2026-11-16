@@ -51,6 +51,7 @@ def _settings(tmp_path: Path, services: str | None, **overrides: Any) -> Setting
         policy_file=str(policy_file),
         services_file=str(services_file),
         vault_addr="https://vault.invalid",
+        vault_kv_root="mcp",
         vault_auth_role="r",
         **overrides,
     )

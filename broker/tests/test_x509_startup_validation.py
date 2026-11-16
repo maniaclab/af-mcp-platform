@@ -70,6 +70,7 @@ def boot_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., N
         monkeypatch.setenv("BROKER_PUBLIC_ORIGIN", "https://mcp.example.com")
         monkeypatch.setattr(VaultKV, "_authenticate", _fake_authenticate)
         monkeypatch.setenv("VAULT_ADDR", "https://vault.invalid")
+        monkeypatch.setenv("VAULT_KV_ROOT", "mcp")
         monkeypatch.setenv("VAULT_AUTH_ROLE", "af-mcp-broker")
         if with_signing_key:
             key_file = tmp_path / "signing-key.pem"
