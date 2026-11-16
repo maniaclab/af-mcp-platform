@@ -147,8 +147,9 @@ roots.
   (`POST /v1/x509/proxy`, the unlock endpoint). The broker
   mints via the service and stores passphrase + proxy in Vault. A bad
   passphrase is a 400 (and burns the unlock rate-limit budget);
-  a service outage is a 502 (and does not). The request body carries no VO:
-  the broker mints with the `voms` of the x509 identity provider entry.
+  a service outage is a 502 (and does not). The request body carries no VO
+  or lifetime: the broker mints with the `voms` and `valid` of the x509
+  identity provider entry.
 - **Hands-free renewal**: any consumer hitting an expired stored proxy —
   `issue()` on the `/v1` surface, or the redeem endpoint mid-tool-call —
   triggers a re-mint with the stored passphrase; the user does nothing.

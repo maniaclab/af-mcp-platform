@@ -90,7 +90,6 @@ class ProxyRequest(BaseModel):
 
     # SecretStr prevents the passphrase from appearing in repr/logs.
     passphrase: SecretStr
-    valid: str = "12:00"
     # Which x509 target to mint for; defaults to the first configured x509 target.
     target: str | None = None
     # Custody consent: True — store the passphrase in Vault for hands-free
