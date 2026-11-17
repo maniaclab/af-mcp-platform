@@ -588,7 +588,8 @@ entitlements:
 ```
 
 A key naming no registered service, or a glob matching no tool, silently
-overrides nothing.
+overrides nothing. A value other than `read` or `state_change` is a boot
+error, naming the service, glob and value.
 
 If an existing permission already covers the new service (e.g. a generic
 `read_metadata` that several services already require), reuse it and skip to
