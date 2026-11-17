@@ -12,6 +12,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import ValidationError
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -498,20 +499,13 @@ async def _dev_bypass_header(request: Request, call_next):  # type: ignore[no-un
 # Prometheus metrics
 # ---------------------------------------------------------------------------
 
-try:
-    from prometheus_fastapi_instrumentator import Instrumentator  # type: ignore[import]
-
-    # instrument() records request metrics into the default prometheus
-    # registry; the lifespan serves that registry on METRICS_PORT (9090).
-    # No expose() here — the API port must not serve /metrics (issue #11).
-    # metric_namespace prefixes the default http_* series to af_mcp_http_*,
-    # matching the custom metrics' naming and the Grafana dashboard's
-    # queries (issue #226).
-    Instrumentator().instrument(app, metric_namespace="af_mcp")
-except ImportError:
-    # prometheus-fastapi-instrumentator is an optional dependency. The broker
-    # functions correctly without it; metrics simply won't be available.
-    logger.debug("metrics.instrumentator_not_installed")
+# instrument() records request metrics into the default prometheus
+# registry; the lifespan serves that registry on METRICS_PORT (9090).
+# No expose() here — the API port must not serve /metrics (issue #11).
+# metric_namespace prefixes the default http_* series to af_mcp_http_*,
+# matching the custom metrics' naming and the Grafana dashboard's
+# queries (issue #226).
+Instrumentator().instrument(app, metric_namespace="af_mcp")
 
 
 # ---------------------------------------------------------------------------
