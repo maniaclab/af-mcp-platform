@@ -98,6 +98,18 @@ broker:
   # user is a member. Rendered comma-separated as ACCESS_GROUPS.
   accessGroups: []
 
+  # Settings for the admin user search (GET /v1/admin/users, the portal's user
+  # picker).
+  admin:
+    userDisplayName:
+      # Keycloak user fields (e.g. firstName, lastName) or custom user
+      # attributes joined with spaces into the name the search shows and
+      # matches on. A user with none of them set is shown by username.
+      # Rendered comma-separated as ADMIN_USER_DISPLAY_NAME_ATTRIBUTES.
+      attributes:
+        - firstName
+        - lastName
+
   # Whether the /mcp aggregator runs Streamable HTTP statelessly (issue #128).
   # Streamable-HTTP sessions
   # are in-process state, so a stateful session (false) only survives an

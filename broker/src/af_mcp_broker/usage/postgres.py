@@ -42,7 +42,12 @@ import structlog
 
 from af_mcp_broker.audit.measure import ContentMeasure
 from af_mcp_broker.constants import POOL_MAX_SIZE, POOL_MIN_SIZE
-from af_mcp_broker.usage.store import UsageAggregate, UsageStore, window_start
+from af_mcp_broker.usage.store import (
+    SubjectActivity,
+    UsageAggregate,
+    UsageStore,
+    window_start,
+)
 
 if TYPE_CHECKING:
     from af_mcp_broker.audit.logger import AuditRecord
@@ -289,17 +294,23 @@ FROM (
 GROUP BY day, service, method, outcome, content_type
 """  # noqa: S608 -- interpolates only the module-level constant _CONTENT_RAW_QUERY; request values are bound parameters ($1..$3)
 
-_RAW_SUBJECTS_QUERY = """
-SELECT DISTINCT subject
-FROM af_mcp_usage_events
-WHERE ts >= $1
+# Latest call per subject: the raw rows' own timestamps plus each rolled-up
+# day's midnight (a rolled-up row has no finer time than its day).
+_RAW_SUBJECT_ACTIVITY_QUERY = """
+SELECT subject, ts AS seen FROM af_mcp_usage_events WHERE ts >= $1
 """
 
-_LIST_SUBJECTS_QUERY = f"""
-{_RAW_SUBJECTS_QUERY}
-UNION
-SELECT subject FROM af_mcp_usage_daily WHERE day >= $2
-"""  # noqa: S608 -- interpolates only the module-level constant _RAW_SUBJECTS_QUERY; request values are bound parameters ($1, $2)
+_SUBJECT_ACTIVITY_QUERY = f"""
+SELECT subject, max(seen) AS last_seen
+FROM (
+    {_RAW_SUBJECT_ACTIVITY_QUERY}
+    UNION ALL
+    SELECT subject, day::timestamp AT TIME ZONE 'UTC' AS seen
+    FROM af_mcp_usage_daily WHERE day >= $2
+) AS merged
+GROUP BY subject
+ORDER BY last_seen DESC
+"""  # noqa: S608 -- interpolates only the module-level constant _RAW_SUBJECT_ACTIVITY_QUERY; request values are bound parameters ($1, $2)
 
 # Folds every raw row older than $1 into the daily rollup and deletes it in
 # ONE statement: the rows the DELETE returns are exactly the rows summed, so
@@ -487,12 +498,15 @@ class PostgresUsageStore(UsageStore):
             for row in rows
         ]
 
-    async def list_subjects(self, days: int) -> list[str]:
+    async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
         start = window_start(days)
         rows = await self._require_pool().fetch(
-            _LIST_SUBJECTS_QUERY, _utc_midnight(start), start
+            _SUBJECT_ACTIVITY_QUERY, _utc_midnight(start), start
         )
-        return sorted(row["subject"] for row in rows)
+        return [
+            SubjectActivity(subject=row["subject"], last_seen=row["last_seen"])
+            for row in rows
+        ]
 
     async def rollup_and_prune(self, retention_days: int) -> bool:
         """Fold raw rows older than *retention_days* UTC days into the daily rollup.

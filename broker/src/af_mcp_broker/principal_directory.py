@@ -99,6 +99,20 @@ class PrincipalAttributes:
     email: str
 
 
+@dataclass(frozen=True)
+class UserProfile:
+    """What an admin needs to recognise a user: the directory's username, POSIX unix name, email and display name.
+
+    ``display_name`` is built from ``Settings.admin_user_display_name_attributes``
+    and falls back to ``username``.
+    """
+
+    username: str
+    unixname: str | None
+    email: str
+    display_name: str
+
+
 class PrincipalNotActiveError(BrokerError):
     """Raised by ``PrincipalDirectory.resolve()`` when the directory answered, and the answer is that *principal_id* must not be granted access.
 
@@ -160,6 +174,23 @@ class PrincipalDirectory(ABC):
         """
 
 
+class UserProfileDirectory(ABC):
+    """Looks up a user's display details for the admin user search.
+
+    Separate from ``PrincipalDirectory`` because it is not an access decision:
+    it answers for disabled users too, where ``resolve()`` refuses them.
+    """
+
+    @abstractmethod
+    async def profile(self, principal_id: str) -> UserProfile:
+        """Return *principal_id*'s display details, whether or not the principal is enabled.
+
+        An admin looking up a user to cut off their tokens must still see a
+        disabled user. Raises ``PrincipalNotFoundError`` if the directory has
+        no such principal; any other failure propagates.
+        """
+
+
 def _admin_base_url(realm_url: str) -> str:
     """Derive the Keycloak Admin REST API base from a realm URL.
 
@@ -176,7 +207,7 @@ def _admin_base_url(realm_url: str) -> str:
     return realm_url.replace(marker, "/admin/realms/", 1)
 
 
-class KeycloakPrincipalDirectory(PrincipalDirectory):
+class KeycloakPrincipalDirectory(PrincipalDirectory, UserProfileDirectory):
     """``PrincipalDirectory`` backed by the Keycloak Admin REST API -- see this module's docstring for the exact endpoints and why ``name`` (not ``path``) is used for group membership."""
 
     def __init__(
@@ -247,6 +278,39 @@ class KeycloakPrincipalDirectory(PrincipalDirectory):
             unixname=str(unixname_values[0]) if unixname_values else None,
             groups=groups,
             email=str(user.get("email") or ""),
+        )
+
+    async def profile(self, principal_id: str) -> UserProfile:
+        token = await self._get_admin_token()
+        user_resp = await self._http_client.get(
+            f"{self._admin_base}/users/{principal_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        if user_resp.status_code == 404:
+            raise PrincipalNotFoundError(principal_id)
+        user_resp.raise_for_status()
+        user = user_resp.json()
+
+        attributes: dict[str, list[str]] = user.get("attributes") or {}
+        username = str(user.get("username") or "")
+        unixname_values = attributes.get(self._settings.posix_unixname_attribute)
+
+        # A configured name is a top-level Keycloak user field (firstName) or,
+        # failing that, a custom user attribute (a list; the first value wins).
+        name_parts: list[str] = []
+        for name in self._settings.admin_user_display_name_attributes:
+            value = user.get(name)
+            if not value and attributes.get(name):
+                value = attributes[name][0]
+            if value:
+                name_parts.append(str(value))
+
+        return UserProfile(
+            username=username,
+            unixname=str(unixname_values[0]) if unixname_values else None,
+            email=str(user.get("email") or ""),
+            display_name=" ".join(name_parts) or username,
         )
 
     async def _get_admin_token(self) -> str:

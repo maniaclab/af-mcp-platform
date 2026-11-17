@@ -93,9 +93,8 @@ async def _resolve_enabled_by(
 ) -> tuple[str | None, str]:
     """Resolve ``enabled_by`` (a bare Keycloak subject) to unixname/email for display.
 
-    Mirrors ``get_usage_subjects``'s resolution shape exactly (same cache,
-    same fallback) -- a `None` subject or an unresolvable one (e.g. a
-    deleted Keycloak user) degrades to ``(None, "")`` rather than failing
+    Resolved through the principal cache; a `None` subject or an unresolvable
+    one (e.g. a deleted Keycloak user) degrades to ``(None, "")`` rather than failing
     the request; the raw ``enabled_by`` subject is always shown regardless.
     """
     if enabled_by is None:

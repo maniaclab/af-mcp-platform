@@ -40,7 +40,7 @@ from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 
 from af_mcp_broker._version import version as __version__
 from af_mcp_broker.otel_resource import broker_resource
-from af_mcp_broker.usage.store import UsageAggregate, UsageStore
+from af_mcp_broker.usage.store import SubjectActivity, UsageAggregate, UsageStore
 
 if TYPE_CHECKING:
     from opentelemetry.sdk._logs.export import LogRecordExporter
@@ -179,5 +179,5 @@ class EventEmittingUsageStore(UsageStore):
     async def query(self, subject: str, days: int) -> list[UsageAggregate]:
         return await self._store.query(subject, days)
 
-    async def list_subjects(self, days: int) -> list[str]:
-        return await self._store.list_subjects(days)
+    async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
+        return await self._store.list_subject_activity(days)

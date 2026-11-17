@@ -1,5 +1,6 @@
 {
   "env": {
+    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "firstName,lastName",
     "ALLOW_PER_REPLICA_STATE": "true",
     "BROKER_TOKEN_ISSUER": "https://mcp.example.com",
     "KEYCLOAK_ADMIN_CLIENT_ID": "example-keycloak-admin-client",
@@ -32,6 +33,10 @@
   "settings": {
     "access_groups": [],
     "admin_group": "",
+    "admin_user_display_name_attributes": [
+      "firstName",
+      "lastName"
+    ],
     "allow_per_replica_state": true,
     "audit_log_file": "-",
     "broker_additional_public_keys_dir": "",

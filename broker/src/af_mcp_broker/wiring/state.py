@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from af_mcp_broker.shared_state import SharedState
     from af_mcp_broker.token_registry import TokenRegistry
     from af_mcp_broker.usage import UsageStore
+    from af_mcp_broker.user_search import UserSearch
     from af_mcp_broker.wiring.credentials import CredentialProviders
     from af_mcp_broker.wiring.services import IdentityTargets, ServiceCatalog
 
@@ -44,6 +45,7 @@ def build_broker_state(
     oauth21_state_cipher: Fernet | None,
     token_registry: TokenRegistry,
     principal_cache: PrincipalCache | None,
+    user_search: UserSearch,
     mcp_auth_code_store: McpAuthCodeStore | None,
     broker_token_issuer: BrokerTokenIssuer | None,
     usage_store: UsageStore,
@@ -79,6 +81,7 @@ def build_broker_state(
         oauth21_state_cipher=oauth21_state_cipher,
         token_registry=token_registry,
         principal_cache=principal_cache,
+        user_search=user_search,
         mcp_auth_code_store=mcp_auth_code_store,
         broker_token_issuer=broker_token_issuer,
         usage_store=usage_store,

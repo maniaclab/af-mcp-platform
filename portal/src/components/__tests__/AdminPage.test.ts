@@ -1,17 +1,16 @@
 /**
  * Component tests for AdminPage.vue — the /admin page body.
  *
- * Admins get a dropdown of subjects with recorded usage (GET
- * /v1/usage/subjects), labeled by unixname (falling back to email, then the
- * bare subject) since that's what's most recognizable to an operator.
- * Selecting one fetches that subject's usage (GET /v1/usage?subject=...)
- * and renders it via UsagePage.vue's existing rendering — this test only
- * pins the dropdown-to-fetch wiring, not the usage rendering itself (see
- * UsagePage.test.ts for that).
+ * Admins pick a user with the UserPicker typeahead (GET /v1/admin/users,
+ * never a full list). Selecting one fetches that subject's usage (GET
+ * /v1/usage?subject=...) and renders it via UsagePage.vue's existing
+ * rendering — this test only pins the picker-to-fetch wiring, not the usage
+ * rendering itself (see UsagePage.test.ts for that) or the picker's own
+ * behaviour (see UserPicker.test.ts).
  */
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AnnotationMismatch,
   AnnotationMismatchesReport,
@@ -20,8 +19,8 @@ import type {
   MaintenanceStatus,
   ToolMappingDrift,
   ToolMappingDriftReport,
+  AdminUser,
   UsageResponse,
-  UsageSubjectsResponse,
 } from '../../lib/api';
 
 // The usage view draws a chart; jsdom has no canvas.
@@ -40,7 +39,7 @@ vi.mock('basecoat-css/chart', () => ({}));
 vi.mock('../../lib/api', () => ({
   fetchUsage: vi.fn(),
   fetchCatalog: vi.fn(async () => ({ servers: [] })),
-  fetchUsageSubjects: vi.fn(),
+  searchAdminUsers: vi.fn(),
   fetchMaintenanceStatus: vi.fn(),
   setMaintenanceStatus: vi.fn(),
   fetchAnnotationMismatches: vi.fn(),
@@ -68,8 +67,8 @@ import {
   fetchMaintenanceStatus,
   fetchToolMappingDrift,
   fetchUsage,
-  fetchUsageSubjects,
   runCredmonSync,
+  searchAdminUsers,
   SessionExpiredError,
   setMaintenanceStatus,
 } from '../../lib/api';
@@ -101,13 +100,23 @@ const CREDMON_DISABLED: CredmonStatus = {
   last_run: null,
 };
 
-const SUBJECTS: UsageSubjectsResponse = {
-  subjects: [
-    { subject: 'sub-1', unixname: 'jdoe', email: 'jdoe@example.org' },
-    { subject: 'sub-2', unixname: null, email: 'nouser@example.org' },
-    { subject: 'sub-3', unixname: null, email: '' },
-  ],
-};
+const MATCHES: AdminUser[] = ['sub-1', 'sub-2'].map((subject, i) => ({
+  subject,
+  username: `user${i + 1}`,
+  email: `user${i + 1}@example.org`,
+  display_name: `User Number${i + 1}`,
+  last_seen: '2026-01-01T00:00:00Z',
+  pat_count: 0,
+}));
+
+/** Type into the usage picker, wait out its debounce, and pick the *index*th match. */
+async function pickUser(wrapper: VueWrapper, index: number): Promise<void> {
+  await wrapper.get('input[role="combobox"]').setValue('user');
+  await vi.advanceTimersByTimeAsync(250);
+  await flushPromises();
+  await wrapper.findAll('[role="option"]')[index].trigger('click');
+  await flushPromises();
+}
 
 const USAGE: UsageResponse = {
   subject: 'sub-1',
@@ -175,59 +184,46 @@ function reloadButton(wrapper: VueWrapper) {
 }
 
 describe('AdminPage', () => {
-  it('renders a dropdown of subjects, labeled by unixname/email/subject fallback', async () => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue(SUBJECTS);
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(searchAdminUsers).mockResolvedValue({
+      users: MATCHES,
+      more: false,
+      partial: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('offers a user search and loads no user list', async () => {
     const wrapper = mount(AdminPage);
     await flushPromises();
 
-    const options = wrapper.findAll('option[value]:not([value=""])');
-    expect(options).toHaveLength(3);
-    expect(options[0].text()).toBe('jdoe');
-    expect(options[1].text()).toBe('nouser@example.org');
-    expect(options[2].text()).toBe('sub-3');
+    expect(wrapper.find('input[role="combobox"]').exists()).toBe(true);
+    expect(wrapper.find('select').exists()).toBe(false);
+    expect(searchAdminUsers).not.toHaveBeenCalled();
   });
 
-  it("fetches and renders the selected subject's usage via UsagePage", async () => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue(SUBJECTS);
+  it("fetches and renders the selected user's usage via UsagePage", async () => {
     vi.mocked(fetchUsage).mockResolvedValue(USAGE);
     const wrapper = mount(AdminPage);
     await flushPromises();
 
     expect(fetchUsage).not.toHaveBeenCalled();
 
-    await wrapper.find('select').setValue('sub-1');
-    await flushPromises();
+    await pickUser(wrapper, 0);
 
     expect(fetchUsage).toHaveBeenCalledWith(30, 'sub-1');
     expect(wrapper.text()).toContain('900');
   });
 
-  it('renders the empty-state placeholder and no dropdown when no subject has recorded usage', async () => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
-    const wrapper = mount(AdminPage);
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('No subjects with recorded usage yet');
-    expect(wrapper.find('select').exists()).toBe(false);
-  });
-
-  it('renders an error state when fetchUsageSubjects fails', async () => {
-    vi.mocked(fetchUsageSubjects).mockRejectedValue(new Error('boom'));
-    const wrapper = mount(AdminPage);
-    await flushPromises();
-
-    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
-    expect(wrapper.text()).toContain('Could not load subjects');
-    expect(wrapper.text()).toContain('boom');
-  });
-
   it('renders the second selection when its usage resolves after a later selection was already made', async () => {
-    // Regression test for the :key-based remount contract in AdminPage.vue's
-    // template: switching subjects destroys the old UsagePage instance
+    // Regression test for the :key-based remount contract in AdminUsageSection.vue's
+    // template: switching users destroys the old UsagePage instance
     // rather than reusing it, so a late-resolving fetch from the FIRST
     // selection must not clobber the SECOND selection's rendered totals.
-    vi.mocked(fetchUsageSubjects).mockResolvedValue(SUBJECTS);
-
     let resolveFirst!: (value: UsageResponse) => void;
     let resolveSecond!: (value: UsageResponse) => void;
     const firstPromise = new Promise<UsageResponse>((resolve) => {
@@ -245,10 +241,8 @@ describe('AdminPage', () => {
     const wrapper = mount(AdminPage);
     await flushPromises();
 
-    await wrapper.find('select').setValue('sub-1');
-    await flushPromises();
-    await wrapper.find('select').setValue('sub-2');
-    await flushPromises();
+    await pickUser(wrapper, 0);
+    await pickUser(wrapper, 1);
 
     // Resolve out of order: the orphaned first selection's fetch settles
     // after the second selection's fetch has already been kicked off.
@@ -273,12 +267,6 @@ describe('AdminPage', () => {
 });
 
 describe('AdminPage maintenance mode', () => {
-  beforeEach(() => {
-    // These tests don't exercise the usage dropdown -- keep it a harmless
-    // empty state so its own assertions can't bleed into these.
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
-  });
-
   it('shows the current maintenance status when disabled', async () => {
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
     const wrapper = mount(AdminPage);
@@ -409,9 +397,8 @@ describe('AdminPage annotation mismatches', () => {
   };
 
   beforeEach(() => {
-    // These tests don't exercise the usage/maintenance sections -- keep
-    // them harmless empty states so their own assertions can't bleed in.
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
+    // These tests don't exercise the maintenance section -- keep it a
+    // harmless off state so its own assertions can't bleed in.
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
   });
 
@@ -513,7 +500,6 @@ describe('AdminPage tool mapping drift', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
   });
 
@@ -593,7 +579,6 @@ describe('AdminPage tool mapping drift', () => {
 
 describe('AdminPage maintenance confirmation', () => {
   beforeEach(() => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
   });
 
@@ -649,7 +634,6 @@ describe('AdminPage banner', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
   });
 
@@ -721,7 +705,6 @@ describe('AdminPage credmon', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
   });
 
@@ -799,7 +782,6 @@ describe('AdminPage lint observation status (issue #332)', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(fetchUsageSubjects).mockResolvedValue({ subjects: [] });
     vi.mocked(fetchMaintenanceStatus).mockResolvedValue(DISABLED);
   });
 

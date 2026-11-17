@@ -225,16 +225,33 @@ async def test_query_is_scoped_to_the_subject(store: PostgresUsageStore) -> None
     assert sum(a.calls for a in aggs) == 1
 
 
-async def test_list_subjects_returns_distinct_subjects_in_window(
+async def test_list_subject_activity_reports_latest_call_per_subject(
     store: PostgresUsageStore,
 ) -> None:
-    await store.record(_record(subject="alice"))
-    await store.record(_record(subject="bob", audit_id="audit-2"))
-    await store.record(_record(subject="alice", audit_id="audit-3"))
+    now = datetime.now(tz=UTC)
+    await store.record(
+        _record(
+            subject="alice",
+            audit_id="a-1",
+            timestamp=(now - timedelta(hours=2)).timestamp(),
+        )
+    )
+    await store.record(
+        _record(
+            subject="alice",
+            audit_id="a-2",
+            timestamp=(now - timedelta(hours=1)).timestamp(),
+        )
+    )
+    await store.record(
+        _record(subject="bob", audit_id="b-1", timestamp=now.timestamp())
+    )
 
-    subjects = await store.list_subjects(days=30)
+    activity = await store.list_subject_activity(days=30)
 
-    assert sorted(subjects) == ["alice", "bob"]
+    assert [a.subject for a in activity] == ["bob", "alice"]
+    alice = activity[1]
+    assert abs((alice.last_seen - (now - timedelta(hours=1))).total_seconds()) < 1
 
 
 async def test_record_many_writes_every_row(store: PostgresUsageStore) -> None:

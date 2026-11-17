@@ -166,36 +166,25 @@ async def test_query_excludes_records_outside_the_trailing_window() -> None:
     assert sum(a.calls for a in aggs_year) == 2
 
 
-async def test_list_subjects_returns_distinct_subjects_in_window() -> None:
+async def test_list_subject_activity_orders_by_most_recent_call() -> None:
     store = InMemoryUsageStore()
-    await store.record(_record(subject="alice"))
-    await store.record(_record(subject="bob"))
-    await store.record(_record(subject="alice"))
+    now = datetime.now(tz=UTC).timestamp()
+    await store.record(_record(subject="older", timestamp=now - 3600))
+    await store.record(_record(subject="newest", timestamp=now))
+    await store.record(_record(subject="older", timestamp=now - 7200))
 
-    subjects = await store.list_subjects(days=30)
+    activity = await store.list_subject_activity(days=30)
 
-    assert sorted(subjects) == ["alice", "bob"]
-
-
-async def test_list_subjects_dedups_a_subject_across_multiple_counter_keys() -> None:
-    """A subject's usage is keyed by (subject, day, service, method, outcome)
-    -- one subject spread across multiple keys (here, two services) must
-    still surface once, not once per key."""
-    store = InMemoryUsageStore()
-    await store.record(_record(subject="alice", mcp_service="rucio"))
-    await store.record(
-        _record(subject="alice", mcp_service="ami", action="ami_list_datasets")
-    )
-
-    assert await store.list_subjects(days=30) == ["alice"]
+    assert [a.subject for a in activity] == ["newest", "older"]
+    assert activity[1].last_seen == datetime.fromtimestamp(now - 3600, tz=UTC)
 
 
-async def test_list_subjects_excludes_outside_window() -> None:
+async def test_list_subject_activity_excludes_outside_window() -> None:
     store = InMemoryUsageStore()
     old_ts = (datetime.now(tz=UTC) - timedelta(days=90)).timestamp()
     await store.record(_record(subject="stale", timestamp=old_ts))
 
-    assert await store.list_subjects(days=30) == []
+    assert await store.list_subject_activity(days=30) == []
 
 
 # ---------------------------------------------------------------------------

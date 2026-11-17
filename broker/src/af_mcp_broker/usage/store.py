@@ -58,6 +58,19 @@ class UsageAggregate:
     content: dict[str, ContentMeasure] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class SubjectActivity:
+    """A subject with recorded usage and the latest moment it was seen.
+
+    ``last_seen`` is the timestamp of the subject's latest call; for usage
+    already folded into the daily rollup only the UTC day survives, so it is
+    that day's midnight.
+    """
+
+    subject: str
+    last_seen: datetime
+
+
 class UsageStore(abc.ABC):
     """Where per-user usage aggregates live.
 
@@ -94,12 +107,12 @@ class UsageStore(abc.ABC):
         """Return aggregates for *subject* over the trailing *days* UTC calendar days, today inclusive."""
 
     @abc.abstractmethod
-    async def list_subjects(self, days: int) -> list[str]:
-        """Return distinct principal subjects with recorded usage in the trailing *days*-day window.
+    async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
+        """Return each subject with usage in the trailing *days*-day window and when it was last seen, most recently seen first.
 
-        Backs the admin-only usage-for-other-users view -- this only ever
-        lists people with broker activity, never a full Keycloak user
-        directory.
+        Backs the admin user search, whose population is the people the
+        platform has seen. One row per subject however many calls it made,
+        so the result is bounded by the number of distinct users.
         """
 
 
@@ -126,6 +139,9 @@ def window_start(days: int) -> date:
     return datetime.now(tz=UTC).date() - timedelta(days=days - 1)
 
 
+_NEVER_SEEN = datetime.min.replace(tzinfo=UTC)
+
+
 @dataclass
 class _Counters:
     """Mutable accumulator behind one InMemoryUsageStore key."""
@@ -135,6 +151,7 @@ class _Counters:
     result_bytes: int = 0
     result_tokens_est: int = 0
     content: dict[str, ContentMeasure] = field(default_factory=dict)
+    last_seen: datetime = _NEVER_SEEN
 
 
 class InMemoryUsageStore(UsageStore):
@@ -173,6 +190,9 @@ class InMemoryUsageStore(UsageStore):
         )
         counters = self._counters.setdefault(key, _Counters())
         counters.calls += 1
+        counters.last_seen = max(
+            counters.last_seen, datetime.fromtimestamp(record.timestamp, tz=UTC)
+        )
         # None means "nothing measured" -- counts as a call, adds nothing.
         counters.duration_ms += record.duration_ms or 0.0
         counters.result_bytes += record.result_bytes or 0
@@ -202,8 +222,17 @@ class InMemoryUsageStore(UsageStore):
             if sub == subject and day >= start
         ]
 
-    async def list_subjects(self, days: int) -> list[str]:
+    async def list_subject_activity(self, days: int) -> list[SubjectActivity]:
         start = window_start(days)
-        return sorted(
-            {sub for (sub, day, _s, _m, _o) in self._counters if day >= start}
-        )
+        last_seen: dict[str, datetime] = {}
+        for (sub, day, _s, _m, _o), counters in self._counters.items():
+            if day < start:
+                continue
+            if sub not in last_seen or counters.last_seen > last_seen[sub]:
+                last_seen[sub] = counters.last_seen
+        return [
+            SubjectActivity(subject=sub, last_seen=seen)
+            for sub, seen in sorted(
+                last_seen.items(), key=lambda item: item[1], reverse=True
+            )
+        ]

@@ -1400,7 +1400,8 @@ An operator who needs to cut off another user's PATs uses endpoints gated on
 | `DELETE /v1/admin/tokens/{lookup_id}` | Revoke one PAT; the owner is resolved from the lookup index, so no owner check applies. |
 | `DELETE /v1/admin/tokens?subject=<sub>` | Revoke every active PAT of the principal in one CAS write. Already-revoked and expired tokens are left as they are. |
 
-`subject` is required on the collection routes. Each revoked token emits a
+The portal's Admin page drives these from its **User tokens** panel. Finding the `subject` to pass is `GET /v1/admin/users?search=<text>` (see
+[admin.md](admin.md)). `subject` is required on the collection routes. Each revoked token emits a
 `token.revoked` audit event, the same event an owner's own revoke emits,
 with the admin as the actor (`subject`) and the owner in `args_summary`
 as `subject=`. Revocation sets `revoked_at` on the record, so it takes effect

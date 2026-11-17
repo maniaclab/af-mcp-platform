@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from broker_state_helpers import set_broker_state
 
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.app import app
@@ -283,57 +282,16 @@ def test_usage_requires_authentication(app_client) -> None:
     assert resp.json()["detail"] == "Not authenticated"
 
 
-def test_usage_subjects_requires_admin(app_client_factory) -> None:
-    with app_client_factory() as (client, _state):
-        resp = client.get("/v1/usage/subjects")
-        assert resp.status_code == 403
-        assert (
-            resp.json()["detail"]
-            == "This action requires membership in the admin group."
-        )
-
-
-def test_usage_subjects_resolves_unixname(
-    app_client_factory, monkeypatch, make_principal, static_principal_cache
+def test_usage_subjects_route_is_gone(
+    app_client_factory, monkeypatch, make_principal
 ) -> None:
+    """The per-user dropdown it fed was replaced by GET /v1/admin/users."""
     monkeypatch.setenv("ADMIN_GROUP", "af-admins")
-    cache, directory = static_principal_cache
-    directory.groups_by_subject["someone-else"] = ["atlas"]
-    directory.posix_by_subject["someone-else"] = {"unixname": "sperson"}
-
     with app_client_factory() as (client, state):
         state["principal"] = make_principal(groups=["atlas", "af-admins"])
-        set_broker_state(client.app, principal_cache=cache)
-        _seed(client, _record(subject="someone-else"))
 
         resp = client.get("/v1/usage/subjects")
+        paths = client.get("/openapi.json").json()["paths"]
 
-    assert resp.status_code == 200, resp.text
-    assert {
-        "subject": "someone-else",
-        "unixname": "sperson",
-        "email": "",
-    } in resp.json()["subjects"]
-
-
-def test_usage_subjects_falls_back_to_bare_subject_when_unresolvable(
-    app_client_factory, monkeypatch, make_principal, static_principal_cache
-) -> None:
-    """A subject the principal directory no longer knows about (e.g. a
-    deleted user) still appears in the list -- with no unixname/email,
-    rather than 500ing or silently dropping them from the response."""
-    monkeypatch.setenv("ADMIN_GROUP", "af-admins")
-    cache, directory = static_principal_cache
-    directory.unavailable_subjects.add("ghost")
-
-    with app_client_factory() as (client, state):
-        state["principal"] = make_principal(groups=["atlas", "af-admins"])
-        set_broker_state(client.app, principal_cache=cache)
-        _seed(client, _record(subject="ghost"))
-
-        resp = client.get("/v1/usage/subjects")
-
-    assert resp.status_code == 200, resp.text
-    assert {"subject": "ghost", "unixname": None, "email": ""} in resp.json()[
-        "subjects"
-    ]
+    assert resp.status_code == 404, resp.text
+    assert "/v1/usage/subjects" not in paths

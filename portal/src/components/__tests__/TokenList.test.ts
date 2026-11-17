@@ -98,4 +98,18 @@ describe('TokenList', () => {
 
     expect(copyText).toHaveBeenCalledWith('LOOKUP-FULL-ID');
   });
+
+  it('offers no Delete on an inactive row when deletion is not allowed', () => {
+    const wrapper = mountList([token({ name: 'dead', revoked_at: iso(-1) })], {
+      deletable: false,
+    });
+
+    expect(wrapper.find('button[aria-label="Delete dead"]').exists()).toBe(false);
+  });
+
+  it('names its table by the label it is given', () => {
+    const wrapper = mountList([token({})], { label: "Ada's issued tokens" });
+
+    expect(wrapper.get('table').attributes('aria-label')).toBe("Ada's issued tokens");
+  });
 });

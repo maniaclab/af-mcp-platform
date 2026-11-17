@@ -351,7 +351,7 @@ async def test_ddl_renames_principal_sub_to_subject_in_every_table(
     store = await _start(fresh_dsn)
     try:
         aggregates = await store.query("sub-abc", days=365)
-        subjects = await store.list_subjects(365)
+        subjects = [a.subject for a in await store.list_subject_activity(365)]
     finally:
         await store.aclose()
     # Rows written before the rename (raw and rolled up) are read under the new name.

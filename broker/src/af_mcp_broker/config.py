@@ -513,6 +513,15 @@ class Settings(BaseSettings):
     # env value.
     access_groups: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
+    # Keycloak user fields (top-level, e.g. `firstName`, or custom user
+    # attributes) joined with spaces into the display name the admin user
+    # search shows and matches on. A user with none of them set is shown by
+    # username.
+    # Env form is a comma-separated list, like access_groups.
+    admin_user_display_name_attributes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["firstName", "lastName"]
+    )
+
     # Audit log destination; "-" means stdout
     audit_log_file: str = "-"
 
@@ -1226,9 +1235,11 @@ class Settings(BaseSettings):
             )
         return self
 
-    @field_validator("access_groups", mode="before")
+    @field_validator(
+        "access_groups", "admin_user_display_name_attributes", mode="before"
+    )
     @classmethod
-    def _parse_access_groups(cls, value: object) -> object:
+    def _parse_comma_list(cls, value: object) -> object:
         if isinstance(value, str):
             value = value.split(",")
         if isinstance(value, list):

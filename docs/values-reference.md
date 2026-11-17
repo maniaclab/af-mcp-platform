@@ -74,6 +74,7 @@ explained in the Deployment Runbook.
 | `broker.builtinServiceName` | string | `""` | no | Name of the builtin gateway service (issue #240) -- the entry the registry self-registers for the broker's own af_* methods (af_whoami, af_usage, ...), used as its catalog identity and its ... |
 | `broker.adminGroup` | string | `""` | no | Keycloak group whose members see and can use admin-only broker surfaces (the Admin portal page, the usage-for-other-users view, maintenance mode). |
 | `broker.accessGroups` | array | `[]` | no | Groups that gate the whole platform: a user holding ANY listed group (case insensitive, exact match -- a subgroup member must be listed explicitly, because the directory reports only direct ... |
+| `broker.admin.userDisplayName.attributes` | array | `[firstName, lastName]` | no | Keycloak user fields (e.g. firstName, lastName) or custom user attributes joined with spaces into the name the search shows and matches on. |
 | `broker.mcpStatelessHttp` | boolean | `true` | no | Whether the /mcp aggregator runs Streamable HTTP statelessly (issue #128). |
 | `broker.resources.requests.cpu` | string | `"100m"` | no | CPU and memory requests and limits of the broker container. |
 | `broker.resources.requests.memory` | string | `"256Mi"` | no | CPU and memory requests and limits of the broker container. |

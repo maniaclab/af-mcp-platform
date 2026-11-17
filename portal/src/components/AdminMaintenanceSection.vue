@@ -13,9 +13,8 @@ import AsyncState from './ui/AsyncState.vue';
 import ConfirmDialog from './ui/ConfirmDialog.vue';
 import StatusMark from './ui/StatusMark.vue';
 
-/** Same fallback chain as subjectLabel, applied to MaintenanceStatus's
- * enabled_by/enabled_by_unixname/enabled_by_email trio instead of a
- * UsageSubject -- kept separate since the two response shapes differ. */
+/** The most recognizable label for who enabled maintenance mode: unix name,
+ * then email, then the bare subject. */
 function enabledByLabel(status: MaintenanceStatus): string {
   return status.enabled_by_unixname || status.enabled_by_email || status.enabled_by || '';
 }

@@ -1,5 +1,6 @@
 {
   "env": {
+    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "firstName,lastName",
     "ALLOW_PER_REPLICA_STATE": "true",
     "BROKER_PUBLIC_ORIGIN": "https://mcp.example.com",
     "BROKER_STATE_KEY": "<secret:example-broker-state-key/broker-state-key>",
@@ -37,6 +38,10 @@
   "settings": {
     "access_groups": [],
     "admin_group": "",
+    "admin_user_display_name_attributes": [
+      "firstName",
+      "lastName"
+    ],
     "allow_per_replica_state": true,
     "audit_log_file": "-",
     "broker_additional_public_keys_dir": "",

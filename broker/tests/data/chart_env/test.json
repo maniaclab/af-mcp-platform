@@ -1,6 +1,7 @@
 {
   "env": {
     "ACCESS_GROUPS": "/example/af,/example/ops",
+    "ADMIN_USER_DISPLAY_NAME_ATTRIBUTES": "firstName,lastName",
     "BROKER_ADDITIONAL_PUBLIC_KEYS_DIR": "/etc/af-mcp/identity-token-public-keys",
     "BROKER_PUBLIC_ORIGIN": "https://portal.example.com",
     "BROKER_SIGNING_KEY_FILE": "/etc/af-mcp/identity-token/signing-key.pem",
@@ -48,6 +49,10 @@
       "/example/ops"
     ],
     "admin_group": "",
+    "admin_user_display_name_attributes": [
+      "firstName",
+      "lastName"
+    ],
     "allow_per_replica_state": false,
     "audit_log_file": "-",
     "broker_additional_public_keys_dir": "/etc/af-mcp/identity-token-public-keys",

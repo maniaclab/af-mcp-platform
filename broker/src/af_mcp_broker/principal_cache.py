@@ -371,6 +371,11 @@ class PrincipalCache:
         self._rejections: dict[str, tuple[float, str]] = {}
         self._log = structlog.get_logger(__name__).bind(component="PrincipalCache")
 
+    @property
+    def directory(self) -> PrincipalDirectory:
+        """The directory this cache fronts, for consumers that need a lookup the cache itself does not serve (the admin user search's profiles)."""
+        return self._directory
+
     def _lock_for(self, principal_id: str) -> asyncio.Lock:
         lock = self._locks.get(principal_id)
         if lock is None:

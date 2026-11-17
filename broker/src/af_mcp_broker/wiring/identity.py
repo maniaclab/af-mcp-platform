@@ -10,8 +10,12 @@ import structlog
 from af_mcp_broker.identity import build_dev_principal, issuer_is_local
 from af_mcp_broker.mcp_auth_codes import McpAuthCodeStore
 from af_mcp_broker.principal_cache import PrincipalCache, build_principal_cache_backend
-from af_mcp_broker.principal_directory import KeycloakPrincipalDirectory
+from af_mcp_broker.principal_directory import (
+    KeycloakPrincipalDirectory,
+    UserProfileDirectory,
+)
 from af_mcp_broker.token_registry import TokenRegistry, build_token_registry_backend
+from af_mcp_broker.user_search import UserSearch
 
 if TYPE_CHECKING:
     import httpx2
@@ -138,6 +142,14 @@ def build_principal_cache(
         refresh_interval_seconds=settings.principal_cache_refresh_seconds,
         max_staleness_seconds=settings.principal_cache_max_staleness_seconds,
         heartbeat_interval_seconds=settings.principal_cache_heartbeat_seconds,
+    )
+
+
+def build_user_search(principal_cache: PrincipalCache | None) -> UserSearch:
+    """Build the admin user search over the principal cache's directory; without one (the dev bypass) only subjects are searchable."""
+    directory = principal_cache.directory if principal_cache is not None else None
+    return UserSearch(
+        directory if isinstance(directory, UserProfileDirectory) else None
     )
 
 

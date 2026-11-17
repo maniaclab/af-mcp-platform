@@ -5,8 +5,8 @@
  * Base.astro's nav script -- this is a static build with no per-request
  * server auth state).
  *
- * A column of independent admin panels (usage across users, maintenance
- * mode, annotation mismatches, tool mapping drift, credmon sync), each its
+ * A column of independent admin panels (usage across users, user tokens,
+ * maintenance mode, annotation mismatches, tool mapping drift, credmon sync), each its
  * own component with its own fetch so one failing endpoint leaves the others
  * usable. The page itself only owns the banner, which needs the two lint
  * counts the mismatch and drift panels report.
@@ -17,6 +17,7 @@ import AdminDriftSection from './AdminDriftSection.vue';
 import AdminMaintenanceSection from './AdminMaintenanceSection.vue';
 import AdminMismatchesSection from './AdminMismatchesSection.vue';
 import AdminUsageSection from './AdminUsageSection.vue';
+import AdminUserTokensSection from './AdminUserTokensSection.vue';
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -65,6 +66,7 @@ const driftBannerText = computed(() => {
     </div>
 
     <AdminUsageSection />
+    <AdminUserTokensSection />
     <AdminMaintenanceSection />
     <AdminMismatchesSection @count="mismatchCount = $event" />
     <AdminDriftSection @count="driftCount = $event" />
