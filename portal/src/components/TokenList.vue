@@ -63,6 +63,18 @@ function formatRelativeIso(iso: string): string {
   return formatRelative(Date.parse(iso));
 }
 
+// A revoked token no longer expires, so its original expiry would only
+// mislead; the Status column already says "Revoked".
+function expiresText(row: TokenSummary): string {
+  if (tokenStatus(row) === 'revoked') return '—';
+  return row.expires_at ? formatRelativeIso(row.expires_at) : 'Never';
+}
+
+function expiresTitle(row: TokenSummary): string {
+  if (tokenStatus(row) === 'revoked') return 'Revoked';
+  return row.expires_at ? formatIsoDateTime(row.expires_at) : 'Never expires';
+}
+
 const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   active: 'Active',
   revoked: 'Revoked',
@@ -72,7 +84,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
 
 <template>
   <div class="table-container af-box" role="region" aria-label="Issued tokens" tabindex="0">
-    <table class="table" :aria-label="label">
+    <table class="tp__table table" :aria-label="label">
       <thead>
         <tr>
           <th scope="col">Name</th>
@@ -123,7 +135,7 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               </span>
             </div>
           </td>
-          <td>
+          <td data-label="Status">
             <StatusMark
               v-if="expiresSoon(row)"
               tone="warn"
@@ -135,22 +147,24 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
               :label="statusLabel[tokenStatus(row)]"
             />
           </td>
-          <td class="af-sub tp__scope" :title="permissionGrantIdentifiers(row.permission_grant)">
+          <td
+            data-label="Scope"
+            class="af-sub tp__scope"
+            :title="permissionGrantIdentifiers(row.permission_grant)"
+          >
             {{ permissionGrantLabel(row.permission_grant) }}
           </td>
-          <td
-            class="af-sub"
-            :title="row.expires_at ? formatIsoDateTime(row.expires_at) : 'Never expires'"
-          >
-            {{ row.expires_at ? formatRelativeIso(row.expires_at) : 'Never' }}
+          <td data-label="Expires" class="af-sub" :title="expiresTitle(row)">
+            {{ expiresText(row) }}
           </td>
           <td
+            data-label="Last used"
             class="af-sub"
             :title="row.last_used_at ? formatIsoDateTime(row.last_used_at) : 'Never used'"
           >
             {{ row.last_used_at ? formatRelativeIso(row.last_used_at) : 'Never' }}
           </td>
-          <td class="af-act af-sticky">
+          <td class="af-act af-sticky tp__actcell">
             <button
               v-if="tokenStatus(row) === 'active'"
               type="button"
@@ -218,5 +232,68 @@ const statusLabel: Record<ReturnType<typeof tokenStatus>, string> = {
   white-space: normal;
   min-width: 9rem;
   max-width: 12rem;
+}
+
+/* On a phone the six columns do not fit, and scrolling sideways hid the Scope
+   column under the Revoke button. Each row becomes a block instead: the name
+   and its action on the first line, then one "label  value" line per fact,
+   the label taken from each cell's data-label. */
+@media (max-width: 640px) {
+  .tp__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .tp__table,
+  .tp__table tbody {
+    display: block;
+  }
+
+  .tp__table tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: var(--space-4) var(--space-12);
+    padding: var(--space-12) var(--space-16);
+  }
+
+  .tp__table td {
+    display: block;
+    height: auto;
+    padding: 0;
+    white-space: normal;
+  }
+
+  .tp__table td[data-label] {
+    display: flex;
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    gap: var(--space-12);
+    min-width: 0;
+    max-width: none;
+    text-align: right;
+  }
+
+  .tp__table td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--color-af-text-secondary);
+    text-align: left;
+  }
+
+  .tp__namecell {
+    grid-column: 1;
+    max-width: none;
+  }
+
+  .tp__actcell {
+    grid-column: 2;
+    grid-row: 1;
+    position: static;
+    background: transparent;
+  }
 }
 </style>
