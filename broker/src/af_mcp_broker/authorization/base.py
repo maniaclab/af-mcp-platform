@@ -4,7 +4,7 @@ import fnmatch
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 import yaml
 
@@ -24,7 +24,8 @@ if TYPE_CHECKING:
 DISABLED_PERMISSION = "__disabled__"
 
 
-ACTION_TYPES = frozenset({"read", "state_change"})
+ActionType = Literal["read", "state_change"]
+ACTION_TYPES: frozenset[str] = frozenset(get_args(ActionType))
 
 # A bracket expression must be closed: fnmatch silently treats an unclosed
 # "[" as a literal character, which turns a typo into a rule matching nothing.
@@ -56,7 +57,7 @@ class RateLimitRule:
 @dataclass(frozen=True)
 class Permission:
     name: str
-    action_type: str  # "read" | "state_change"
+    action_type: ActionType
     description: str
 
 
@@ -97,11 +98,11 @@ class EntitlementPolicy:
     # group_name -> list[permission_name]
     group_permissions: dict[str, list[str]] = field(default_factory=dict)
     # target_name -> {tool_glob_pattern -> "read"|"state_change"}
-    target_action_types: dict[str, dict[str, str]] = field(default_factory=dict)
+    target_action_types: dict[str, dict[str, ActionType]] = field(default_factory=dict)
     # Site-defined permission name -> "read"|"state_change", for permissions
     # a services.yaml required_permission uses that PERMISSIONS doesn't
     # know. Without an entry, get_action_type could only guess "read".
-    custom_permissions: dict[str, str] = field(default_factory=dict)
+    custom_permissions: dict[str, ActionType] = field(default_factory=dict)
     # Per-principal call budgets; empty means no rate limiting at all.
     rate_limits: list[RateLimitRule] = field(default_factory=list)
 
@@ -264,7 +265,7 @@ def resolve_action_type(
     tool_name: str,
     permission: str | None,
     policy: EntitlementPolicy,
-) -> tuple[str, str]:
+) -> tuple[ActionType, str]:
     """Resolve the action type for a specific tool on a target, and say how.
 
     ``permission`` is the target's required permission as declared by the
@@ -294,7 +295,7 @@ def get_action_type(
     tool_name: str,
     permission: str | None,
     policy: EntitlementPolicy,
-) -> str:
+) -> ActionType:
     """Return the action type half of resolve_action_type, for callers that don't need to know how it was resolved."""
     return resolve_action_type(target, tool_name, permission, policy)[0]
 

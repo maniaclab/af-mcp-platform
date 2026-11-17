@@ -3,6 +3,7 @@ from __future__ import annotations
 from af_mcp_broker.authorization.base import (
     DISABLED_PERMISSION,
     PERMISSIONS,
+    ActionType,
     EntitlementPolicy,
     Permission,
     RateLimitRule,
@@ -20,6 +21,7 @@ from af_mcp_broker.authorization.base import (
 __all__ = [
     "DISABLED_PERMISSION",
     "PERMISSIONS",
+    "ActionType",
     "EntitlementPolicy",
     "Permission",
     "RateLimitRule",
