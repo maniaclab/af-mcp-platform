@@ -456,18 +456,23 @@ def shared_state_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         yield url
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def unpinned_loggers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give the aggregator, cache-invalidation and lint-observation modules fresh loggers for one test.
+    """Give the aggregator, backend-client, cache-invalidation and lint-observation modules fresh loggers for one test.
 
     A booted app configures structlog with ``cache_logger_on_first_use``, so a
     module logger first used under that configuration stays pinned to its
     processor list and ``structlog.testing.capture_logs`` in later tests stops
     seeing its events (see test_admin_api.py's ``_list_renamed_backend``).
-    Tests that list through the aggregator or run the invalidator use this so
-    their first use pins nothing.
+    Autouse, so no test's first use pins anything for the tests that follow it
+    in the same process, whichever file it lives in.
     """
-    for module in (aggregator_module, cache_invalidation, lint_observations):
+    for module in (
+        aggregator_module,
+        backend_client,
+        cache_invalidation,
+        lint_observations,
+    ):
         monkeypatch.setattr(module, "logger", structlog.get_logger(module.__name__))
 
 
