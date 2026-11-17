@@ -8,7 +8,7 @@ from __future__ import annotations
 # listing (api/catalog_tools.py), so both always see a backend the same way.
 import json
 import time
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import httpx2
 import structlog
@@ -316,6 +316,11 @@ def build_client(
     )
 
 
+# Why a service's tool listing came back empty, shared by the /mcp listing
+# path and the /v1 per-service listing.
+ListFailure = Literal["not_linked", "unauthorized", "unavailable"]
+
+
 class ListTimeCredential(NamedTuple):
     """What a list-time connection should carry, and why it carries nothing.
 
@@ -325,7 +330,7 @@ class ListTimeCredential(NamedTuple):
     """
 
     headers: dict[str, str] | None
-    skip_reason: str | None
+    skip_reason: ListFailure | None
     on_unauthorized: Callable[[], Awaitable[None]] | None = None
 
 
@@ -431,7 +436,9 @@ def _iter_leaf_exceptions(
         yield from _iter_leaf_exceptions(chained, _seen=seen)
 
 
-def classify_failure(exc: Exception, *, injected: bool, skip_reason: str | None) -> str:
+def classify_failure(
+    exc: Exception, *, injected: bool, skip_reason: ListFailure | None
+) -> ListFailure:
     """Classify failure decision for api access.
 
     Decision core shared by ``_classify_list_failure`` (the /mcp listing
@@ -646,7 +653,7 @@ class ToolListingCache:
 async def fetch_service_tool_listing(
     spec: ServiceSpec,
     credential: ListTimeCredential,
-) -> tuple[str, list[ToolListingEntry]]:
+) -> tuple[ListFailure | Literal["ok"], list[ToolListingEntry]]:
     """Connect to *spec* once and list its tools.
 
     *credential* comes from ``resolve_list_time_credential``.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request
@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import (
     PERMISSIONS,
+    ActionType,
     EntitlementPolicy,
     check_entitlement,
     get_action_type,
@@ -40,7 +41,7 @@ class PermissionGrant(BaseModel):
 
     permission: str
     targets: list[str]
-    action_types: list[Literal["read", "state_change"]]
+    action_types: list[ActionType]
 
 
 class PermissionsResponse(BaseModel):
@@ -59,7 +60,7 @@ class PermissionCatalogEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    action_type: Literal["read", "state_change"]
+    action_type: ActionType
     # None for a permission the policy declares without prose (every
     # custom_permissions entry).
     description: str | None
@@ -98,7 +99,7 @@ class AuthorizeResponse(BaseModel):
 
     allow: bool
     reason: str
-    action_type: Literal["read", "state_change"]
+    action_type: ActionType
     obligations: list[str] = []
 
 
@@ -123,7 +124,7 @@ class CatalogServer(BaseModel):
     # check GET /v1/catalog/{service}/tools' per-tool permission instead.
     permission: str | None
     auth_type: str
-    action_type: Literal["read", "state_change"]
+    action_type: ActionType
     credential_provider: str | None
     # Per-caller availability (issue #123) -- see service_status. Always
     # populated; status_detail is a short, human, internals-free sentence.
@@ -177,10 +178,10 @@ class CatalogResponse(BaseModel):
 
 def _action_type_for_permission(
     permission: str, policy: EntitlementPolicy
-) -> Literal["read", "state_change"]:
+) -> ActionType:
     # No target, so no target_action_types override can apply: this is the
     # permission's own built-in or custom_permissions action type.
-    return get_action_type("", "", permission, policy)  # type: ignore[return-value]
+    return get_action_type("", "", permission, policy)
 
 
 def _permission_catalog(policy: EntitlementPolicy) -> list[PermissionCatalogEntry]:
@@ -208,7 +209,7 @@ def _permission_catalog(policy: EntitlementPolicy) -> list[PermissionCatalogEntr
 
 def _action_type_for_service(
     spec: ServiceSpec, policy: EntitlementPolicy
-) -> Literal["read", "state_change"]:
+) -> ActionType:
     """Server-level read/write badge for a service target.
 
     Real enforcement (``get_action_type`` in authorization/base.py) resolves
@@ -346,7 +347,7 @@ async def authorize(
     return AuthorizeResponse(
         allow=allow,
         reason=reason,
-        action_type=action_type,  # type: ignore[arg-type]
+        action_type=action_type,
         obligations=[],
     )
 
