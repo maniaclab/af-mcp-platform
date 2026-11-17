@@ -112,4 +112,25 @@ describe('TokenList', () => {
 
     expect(wrapper.get('table').attributes('aria-label')).toBe("Ada's issued tokens");
   });
+
+  it('shows no expiry for a revoked token, which no longer expires', () => {
+    const wrapper = mountList([token({ name: 'dead', revoked_at: iso(-1), expires_at: iso(50) })]);
+
+    const expires = wrapper.get('td[data-label="Expires"]');
+    expect(expires.text()).toBe('—');
+    expect(expires.text()).not.toMatch(/in \d+ days?/);
+  });
+
+  it('still shows the expiry of an expired token', () => {
+    const wrapper = mountList([token({ name: 'old', expires_at: iso(-3) })]);
+
+    expect(wrapper.get('td[data-label="Expires"]').text()).toMatch(/ago$/);
+  });
+
+  it('labels every data cell so a narrow screen can stack the row as label and value', () => {
+    const wrapper = mountList([token({})]);
+
+    const labels = wrapper.findAll('tbody tr td').map((cell) => cell.attributes('data-label'));
+    expect(labels).toEqual([undefined, 'Status', 'Scope', 'Expires', 'Last used', undefined]);
+  });
 });
