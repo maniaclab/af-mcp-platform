@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from af_mcp_broker.api.auth import keycloak_dependency
 from af_mcp_broker.authorization import (
     DISABLED_PERMISSION,
+    ActionType,
     get_action_type,
     get_principal_permissions,
 )
@@ -101,7 +102,7 @@ class ServiceTool(BaseModel):
 
     name: str
     description: str
-    action_type: Literal["read", "state_change"]
+    action_type: ActionType
     # "__none__" covers both the explicit opt-in and an omitted (credential-
     # layer-only) required_permission -- same convention as
     # CatalogServer.permission (api/permissions.py). Always a concrete value
@@ -132,7 +133,7 @@ class ServiceToolsResponse(BaseModel):
 
 def _respond(
     spec: ServiceSpec,
-    status: str,
+    status: ToolListingStatus,
     tools: list[ToolListingEntry],
     policy: EntitlementPolicy,
     registry: ServiceRegistry,
@@ -162,7 +163,7 @@ def _respond(
             ServiceTool(
                 name=entry.name,
                 description=entry.description,
-                action_type=action_type,  # type: ignore[arg-type]
+                action_type=action_type,
                 permission=permission if permission is not None else "__none__",
                 annotations=entry.annotations,
                 has_output_schema=entry.has_output_schema,
@@ -172,7 +173,7 @@ def _respond(
         name=spec.name,
         display_name=spec.display_name or spec.name,
         description=spec.description,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         status_detail=_STATUS_DETAILS[status],
         tools=visible,
     )
@@ -231,7 +232,9 @@ async def list_service_tools(
             except NotLinkedForListingError as exc:
                 # A rejected credential reads as "unauthorized" (re-link), matching
                 # the catalog's "rejected" link state, not "not_linked".
-                status = "unauthorized" if exc.rejected else "not_linked"
+                status: ToolListingStatus = (
+                    "unauthorized" if exc.rejected else "not_linked"
+                )
                 logger.info(
                     "catalog.tools_list_skipped",
                     subject=principal.subject,
