@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -102,3 +104,24 @@ async def test_bind_request_logging_context_binds_a_fresh_request_id() -> None:
 
 def test_app_not_instrumented_by_default() -> None:
     assert not getattr(app_module.app, "_is_instrumented_by_opentelemetry", False)
+
+
+def test_missing_instrumentator_fails_the_app_import() -> None:
+    """prometheus-fastapi-instrumentator is a required dependency: an
+    environment without it must fail at import, not boot without HTTP metrics.
+    A child interpreter is used because ``af_mcp_broker.app`` builds the app
+    at import time and is already cached in this process."""
+    blocked_import = (
+        "import sys; sys.modules['prometheus_fastapi_instrumentator'] = None; "
+        "import af_mcp_broker.app"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", blocked_import],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "prometheus_fastapi_instrumentator" in result.stderr
