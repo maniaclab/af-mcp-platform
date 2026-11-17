@@ -254,6 +254,32 @@ def test_load_policy_rejects_bad_custom_permissions(
         load_policy(path)
 
 
+def test_load_policy_reads_target_action_types(tmp_path: Path) -> None:
+    path = _write_policy(
+        tmp_path,
+        "target_action_types:\n"
+        "  condor_service:\n"
+        '    "condor_exec_*": state_change\n'
+        '    "condor_get_*": read\n',
+    )
+    assert load_policy(path).target_action_types == {
+        "condor_service": {"condor_exec_*": "state_change", "condor_get_*": "read"}
+    }
+
+
+def test_load_policy_rejects_bad_target_action_type(tmp_path: Path) -> None:
+    path = _write_policy(
+        tmp_path,
+        'target_action_types:\n  condor_service:\n    "condor_exec_*": write\n',
+    )
+    with pytest.raises(ValueError, match="condor_service") as excinfo:
+        load_policy(path)
+    message = str(excinfo.value)
+    assert "condor_exec_*" in message
+    assert "'write'" in message
+    assert "['read', 'state_change']" in message
+
+
 # ---------------------------------------------------------------------------
 # DISABLED_PERMISSION ("__disabled__"): the per-tool required_permission
 # resolver's sentinel for "dict form declared, this tool isn't in it, and

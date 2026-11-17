@@ -161,12 +161,28 @@ def _parse_rate_limits(raw: object) -> list[RateLimitRule]:
     ]
 
 
+def _validate_target_action_types(overrides: dict[str, dict[str, str]]) -> None:
+    for target, globs in overrides.items():
+        for glob, action_type in globs.items():
+            if action_type not in ACTION_TYPES:
+                msg = (
+                    f"target_action_types '{target}' glob '{glob}' has "
+                    f"action_type '{action_type}'; must be one of "
+                    f"{sorted(ACTION_TYPES)}"
+                )
+                raise ValueError(msg)
+
+
 def load_policy(path: str) -> EntitlementPolicy:
     with Path(path).open() as fh:
         raw = yaml.safe_load(fh) or {}
     policy = EntitlementPolicy()
     policy.group_permissions = raw.get("group_permissions", {})
-    policy.target_action_types = raw.get("target_action_types", {})
+    # Validated as raw YAML before it becomes the typed field, whose type
+    # already promises every value is an ActionType.
+    target_action_types = raw.get("target_action_types", {})
+    _validate_target_action_types(target_action_types)
+    policy.target_action_types = target_action_types
     policy.custom_permissions = raw.get("custom_permissions", {})
     policy.rate_limits = _parse_rate_limits(raw.get("rate_limits"))
     for name, action_type in policy.custom_permissions.items():
