@@ -7,6 +7,8 @@ broker replicas (see the ``shared_state_url`` fixture); nothing is mocked.
 from __future__ import annotations
 
 import asyncio
+import math
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -84,6 +86,9 @@ def test_app_enforces_the_cap_other_replicas_already_spent(
     """The real app reads ``SHARED_STATE_URL``: mints another replica counted trigger 429 here."""
     monkeypatch.setenv("SHARED_STATE_URL", shared_state_url)
     subject = make_principal().subject
+    # The window opens at the first counted mint and keeps running while the
+    # app boots and handles the request.
+    window_opened_at = time.monotonic()
 
     async def spend_cap_on_another_replica() -> None:
         other_replica = RedisSharedState(shared_state_url)
@@ -100,9 +105,17 @@ def test_app_enforces_the_cap_other_replicas_already_spent(
             "/v1/tokens", json={"name": "t"}, headers={"Authorization": "Bearer test"}
         )
 
+    seconds_since_window_opened = time.monotonic() - window_opened_at
     assert resp.status_code == 429, resp.text
     body = resp.json()
-    assert body["retry_after_seconds"] == 3600
+    # The reported wait is the rest of the one-hour window, so it is the
+    # window length minus however long this test took to get here: exactly
+    # 3600 would only hold on an instantaneous machine.
+    assert (
+        3600 - math.ceil(seconds_since_window_opened)
+        <= body["retry_after_seconds"]
+        <= 3600
+    )
     assert body["detail"].startswith("Too many tokens minted")
 
 
