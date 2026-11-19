@@ -1784,7 +1784,34 @@ account to the narrowest roles that satisfy the two Admin REST API calls
    these realm-management client roles ONLY: **`view-users`** and
    **`query-groups`**. Do not grant broader `realm-admin` or `manage-users`
    — this account only ever needs to read, never write, user/group data.
-4. Note the client's **Client ID** and, from the **Credentials** tab, its
+4. **Client scopes → Add client scope → `kc-admin-api`, attached as
+   `Default`** — REQUIRED on Keycloak 26.8.2 and later. Keycloak 26.8.2
+   added an audience check to the Admin REST API (CVE-2026-19688): it
+   accepts a token only if the token carries the built-in `kc-admin-api`
+   client scope, meaning both the `kc-admin-api` scope name and its
+   audience, the realm's Admin REST API base URL resolved from the realm's
+   frontend URL (for example `https://auth.af.example.org/admin/realms/example`).
+   The 26.8.2 upgrade migration creates `kc-admin-api` in every realm but
+   assigns it only to the built-in `admin-cli` and `security-admin-console`
+   clients, so a custom client like this one needs it added by hand.
+   *Default* is required, not *Optional*: the broker's `client_credentials`
+   request sends no `scope=` parameter, so an Optional scope would never be
+   included in its token. The scope only exists once the realm has been
+   migrated, so on an older Keycloak this step is done right after the
+   upgrade, not before. The check can be disabled server-wide with
+   `--spi-admin--audience-check-enabled=false`; upstream strongly
+   discourages that, and the broker does not rely on it.
+   **Fail-closed symptom:** with the scope missing, the broker still
+   obtains its service-account token, but Keycloak answers every Admin REST
+   API call the broker makes with `401 Unauthorized`; see
+   [Admin API 401 after upgrading Keycloak to 26.8.2 or later](deployment-runbook.md#admin-api-401-after-upgrading-keycloak-to-2682-or-later).
+   Upstream references: the
+   [26.8.2 upgrade note](https://github.com/keycloak/keycloak/blob/26.8.2/docs/documentation/upgrading/topics/changes/changes-26_8_2.adoc)
+   ("Admin REST API now enforces an audience check"), the
+   [Admin REST API audience](https://github.com/keycloak/keycloak/blob/26.8.2/docs/documentation/server_admin/topics/admin-console-permissions/admin-api-audience.adoc)
+   server administration page, and the
+   [Upgrading Guide](https://www.keycloak.org/docs/latest/upgrading/index.html).
+5. Note the client's **Client ID** and, from the **Credentials** tab, its
    **Client secret**. These become `KEYCLOAK_ADMIN_CLIENT_ID` /
    `KEYCLOAK_ADMIN_CLIENT_SECRET` (`Settings.keycloak_admin_client_id`/
    `keycloak_admin_client_secret`) — like `TOKEN_MINT_CLIENT_ID`/`SECRET`
